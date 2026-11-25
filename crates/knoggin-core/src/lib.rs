@@ -17,6 +17,7 @@ pub mod sensitive;
 pub mod store;
 pub mod testing;
 pub mod time;
+pub mod transfer;
 
 pub use error::{EngineError, ErrorCode};
 pub use id::{MemoryId, NamespaceId, StoreId, UserId};
