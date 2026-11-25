@@ -4,6 +4,8 @@
 //! Every operation is a plain, synchronous, deterministic function. The engine reads no
 //! clock and no random source: the caller passes the current time and any new IDs.
 
+pub mod decay;
+pub mod embed;
 pub mod error;
 pub mod id;
 pub mod model;
