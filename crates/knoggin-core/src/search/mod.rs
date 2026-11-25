@@ -4,5 +4,6 @@
 
 pub mod entity;
 pub mod fts;
+mod pipeline;
 pub mod tags;
 pub mod vector;

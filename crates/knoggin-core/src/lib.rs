@@ -11,6 +11,7 @@ pub mod graph;
 pub mod id;
 pub mod model;
 pub mod ops;
+pub mod rif;
 pub mod search;
 pub mod sensitive;
 pub mod store;

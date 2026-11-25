@@ -2,6 +2,7 @@
 //! The in-memory graph: edges keyed by `(source, edge_type, target)` and an adjacency
 //! list per memory. Also the connection bonus and effective strength.
 
+mod activation;
 mod bonus;
 
 use std::collections::{BTreeMap, BTreeSet};
