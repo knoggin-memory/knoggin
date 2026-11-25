@@ -7,15 +7,18 @@
 pub mod decay;
 pub mod embed;
 pub mod error;
+pub mod graph;
 pub mod id;
 pub mod model;
 pub mod ops;
 pub mod search;
 pub mod sensitive;
+pub mod store;
 pub mod testing;
 pub mod time;
 
 pub use error::{EngineError, ErrorCode};
 pub use id::{MemoryId, NamespaceId, StoreId, UserId};
 pub use sensitive::Sensitive;
+pub use store::Store;
 pub use time::Timestamp;
