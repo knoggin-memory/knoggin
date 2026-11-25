@@ -126,7 +126,7 @@ impl FtsIndex {
     }
 
     /// Adds or replaces the row of one memory. `tags` is the tags column: the
-    /// memory's tag terms joined by spaces.
+    /// memory's plain tags joined by spaces.
     pub fn upsert(
         &mut self,
         namespace: NamespaceId,

@@ -17,7 +17,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use crate::embed::ModelIdentity;
 use crate::graph::Graph;
 use crate::id::{MemoryId, NamespaceId};
-use crate::model::{Edge, EdgeKey, EmbeddingState, Labels, Memory, Namespace, Phase};
+use crate::model::{Edge, EdgeKey, EmbeddingState, Labels, Memory, Namespace, Phase, Tag};
 use crate::search::entity::EntityIndex;
 use crate::search::fts::{FtsDoc, FtsIndex};
 use crate::search::tags::TagIndex;
@@ -79,13 +79,20 @@ fn count(counts: &mut NamespaceCounts, memory: &Memory, add: bool) {
     step(&mut counts.text_bytes, text as u64);
 }
 
+/// The tags column holds the plain tags only, without label terms: recalld's native
+/// write path keeps labels apart from tags, and the ranking fixture depends on it.
 fn index_text(fts: &mut FtsIndex, memory: &Memory) {
     fts.upsert(
         memory.namespace,
         memory.id,
         &memory.summary,
         memory.full_text.as_deref(),
-        &memory.tag_terms().join(" "),
+        &memory
+            .tags
+            .iter()
+            .map(Tag::as_str)
+            .collect::<Vec<_>>()
+            .join(" "),
     );
 }
 
@@ -668,10 +675,10 @@ mod tests {
         );
         let hits = s.fts().search(ns, "alpha", 10).unwrap();
         assert_eq!(hits[0].0, mid(1));
-        assert_eq!(
-            s.fts().search(ns, "maya", 10).unwrap().len(),
-            2,
-            "label terms are indexed"
+        assert_eq!(s.fts().search(ns, "travel", 10).unwrap().len(), 2);
+        assert!(
+            s.fts().search(ns, "maya", 10).unwrap().is_empty(),
+            "label terms are not indexed, as in recalld's native write path"
         );
         assert_eq!(s.estimated_bytes(), s.estimate_from_scratch());
         assert_matches_rebuild(&mut s);
