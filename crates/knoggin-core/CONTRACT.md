@@ -19,13 +19,17 @@ crates") is the authority; this file says how the code meets it.
 | `decay::fsrs` | `retrievability`, `stability_increase`, `review_stability` (quality 1 rule included), `effective_retrievability`, `days_until_threshold` |
 | `graph` | `Graph` (edges by key, adjacency, `degree`, `joined`), `spreading_edge_factor`, `fan_strength` |
 | `graph::bonus` | `Store::raw_strength`, `strengths`, `effective_strength`, `connection_bonus` |
+| `graph::activation` | `Store::spreading_activation` (seeds, namespace, depth, now) -> `Spread` (activated, trace seeds and spreads) |
+| `rif` | `rif_edge_factor`, `rif_activation`, `plasticity_multiplier`; `Store::rif_suppressions` |
+| `search::pipeline` | `Store::recall`, `resolve_namespace` (name or `default`), `successors` (supersedes walk), `compact_hits`, `HardFilter` |
+| `store::read` | `get_memory`, `find_similar`, `list_memories`, `list_namespaces`, `list_tags`, `namespace_stats`, `context` |
 | `search::vector` | `VectorTable` (`insert`, `remove` = swap-remove, `get`, `iter`, `top_k`), `dot`, `is_valid_vector` |
-| `search::fts` | `FtsIndex` (`upsert`, `remove`, `set_namespace`, `search`, `docs`), `match_query`, `FtsError` |
+| `search::fts` | `FtsIndex` (`upsert`, `remove`, `set_namespace`, `search`, `docs`), `match_query`, `FtsError`. The tags column holds plain tags only, no label terms (as recalld's native path; the ranking fixture needs it) |
 | `search::entity` | `canonicalize_entity`, `entity_overlap` (Jaccard), `EntityIndex` |
 | `search::tags` | `TagIndex` (plain tags only; `memories_with_all`, `counts`) |
 | `store` | `Store` (fields `pub(crate)`), `Store::create(id, model, now)`, accessors, `memory_view`, `summary`, `changes`, `estimated_bytes`, `IdempotencyEntry`, `NamespaceCounts` |
 | `store::index` | The index-maintenance helpers below, `rebuild_indexes_for_test`, `index_snapshot_for_test` |
-| `testing` | `FakeProvider` (`new` = `fake-64`, `with_dim(768)` = `fake-768`) |
+| `testing` | `FakeProvider` (`new` = `fake-64`, `with_dim(768)` = `fake-768`), `StoreBuilder` (namespaces, memories, vectors, edges as given; no linking), `memory` (a plain `Full` memory for tests) |
 
 ## Index maintenance (`store/index.rs`, all `pub(crate)`)
 
@@ -55,10 +59,13 @@ automatic links. The operations set those.
 
 Add files with their own `impl Store` blocks and one `mod` line in the parent:
 
-- `search/pipeline.rs` (recall, scoring, supersedes), `graph/activation.rs`, `rif.rs` (declare in `lib.rs`)
-- `graph/links.rs` (automatic links), `store/write.rs` (save to delete), `store/read.rs` (get, similar, list, stats, context)
+- `graph/links.rs` (automatic links), `store/write.rs` (save to delete)
 - `decay/sweep.rs` (phase planning, sweep), `store/idempotency.rs` (`run_idempotent`, request hash)
-- `snapshot.rs`, `transfer.rs`, and `StoreBuilder` in `testing.rs`; property, budget and ranking tests in `tests/`
+- `snapshot.rs`, `transfer.rs`; property and budget tests in `tests/`
+
+Reads record nothing. `recall` returns `hits` (kind per hit) for `record_access`; for
+`get_memory` the host passes the memory as `direct`, for `find_similar` the items as
+`associative`. Every read takes `now` as its last argument.
 
 When the write operations use the helpers, delete the two `cfg_attr(not(test), expect(dead_code))`
 attributes in `store/index.rs`; the compiler says when.
