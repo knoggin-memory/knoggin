@@ -10,7 +10,9 @@ pub mod error;
 pub mod id;
 pub mod model;
 pub mod ops;
+pub mod search;
 pub mod sensitive;
+pub mod testing;
 pub mod time;
 
 pub use error::{EngineError, ErrorCode};
