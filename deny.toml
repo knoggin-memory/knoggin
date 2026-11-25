@@ -1,0 +1,43 @@
+# cargo-deny configuration. Tab "Testing, CI, releases", deny.toml.
+
+[advisories]
+# Vulnerabilities are errors: that is the tool's default and has no key.
+# Written out so that a tool version with a stricter default does not fail
+# the build on an unmaintained crate deep in the graph.
+unmaintained = "workspace"
+# The default only warns about a yanked crate.
+yanked = "deny"
+# An unsound crate anywhere in the graph fails the check.
+unsound = "all"
+# An advisory without a fix gets an entry here with its reason:
+# { id = "RUSTSEC-YYYY-NNNN", reason = "..." }
+ignore = []
+
+[licenses]
+allow = [
+    "AGPL-3.0-only", # the workspace's own
+    "MIT",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0", # the root certificate list
+]
+
+[bans]
+deny = [
+    { name = "openssl" },
+    { name = "openssl-sys" },
+    { name = "native-tls" },
+    { name = "ring" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

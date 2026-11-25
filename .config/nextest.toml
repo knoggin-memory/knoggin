@@ -1,0 +1,16 @@
+# cargo-nextest settings.
+
+[test-groups]
+# The stack tests share Docker: two harnesses must never pick a port or a
+# network prefix at the same moment (tab "Testing, CI, releases").
+stack = { max-threads = 1 }
+
+# Overrides in the default profile apply to every profile.
+[[profile.default.overrides]]
+filter = 'binary(#stack_*)'
+test-group = 'stack'
+
+# CI: run every test and show all failures, not only the first.
+[profile.ci]
+fail-fast = false
+failure-output = "immediate-final"
