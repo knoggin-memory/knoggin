@@ -29,6 +29,13 @@ crates") is the authority; this file says how the code meets it.
 | `search::tags` | `TagIndex` (plain tags only; `memories_with_all`, `counts`) |
 | `store` | `Store` (fields `pub(crate)`), `Store::create(id, model, now)`, accessors, `memory_view`, `summary`, `changes`, `estimated_bytes`, `IdempotencyEntry`, `NamespaceCounts` |
 | `store::index` | The index-maintenance helpers below, `rebuild_indexes_for_test`, `index_snapshot_for_test` |
+| `store::write` | `store_memory`, `store_memories`, `supersede_memory`, `reinforce_memory`, `forget_memory(s)`, `move_memories`, `record_access`; `pub(crate) note_client_write` |
+| `store::namespaces` | `create_namespace`, `update_namespace_policy`, `delete_namespace`; `pub(crate) namespace_view` |
+| `store::queue` | `pending_embeddings`, `apply_embedding`, `fail_embedding`, `adopt_model`, `on_open` |
+| `store::idempotency` | `run_idempotent`; `request_hash_input` (re-exported as `store::request_hash_input`: the host SHA-256es it with aws-lc-rs) |
+| `graph::links` | Automatic entity, temporal and semantic links; the duplicate report |
+| `decay::sweep` | `plan_phase`, `PhaseStep`, `Store::sweep`, `would_change` (policy dry run) |
+| `transfer` | `TransferRecord` and its line types, `ExportCursor`, `ExportPage`, `OnConflict`, `ImportOutcome`, `export_page`, `import_record` |
 | `testing` | `FakeProvider` (`new` = `fake-64`, `with_dim(768)` = `fake-768`), `StoreBuilder` (namespaces, memories, vectors, edges as given; no linking), `memory` (a plain `Full` memory for tests) |
 
 ## Index maintenance (`store/index.rs`, all `pub(crate)`)
@@ -59,13 +66,11 @@ automatic links. The operations set those.
 
 Add files with their own `impl Store` blocks and one `mod` line in the parent:
 
-- `graph/links.rs` (automatic links), `store/write.rs` (save to delete)
-- `decay/sweep.rs` (phase planning, sweep), `store/idempotency.rs` (`run_idempotent`, request hash)
-- `snapshot.rs`, `transfer.rs`; property and budget tests in `tests/`
+- `snapshot.rs`; the snapshot round-trip and budget tests in `tests/`
 
 Reads record nothing. `recall` returns `hits` (kind per hit) for `record_access`; for
 `get_memory` the host passes the memory as `direct`, for `find_similar` the items as
 `associative`. Every read takes `now` as its last argument.
 
-When the write operations use the helpers, delete the two `cfg_attr(not(test), expect(dead_code))`
-attributes in `store/index.rs`; the compiler says when.
+Every write takes `now` (and a client write `ctx: &WriteContext`) as its last arguments.
+`remove_edge` keeps its `expect(dead_code)`: no operation removes a single edge yet.
