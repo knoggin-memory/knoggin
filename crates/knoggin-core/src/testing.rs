@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Test helpers: the fake embedding provider. `StoreBuilder` goes here too.
+//! Test helpers: the fake embedding provider and `StoreBuilder`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -10,7 +10,108 @@
 )]
 
 use crate::embed::{EmbedError, EmbeddingProvider, ModelIdentity};
+use crate::id::MemoryId;
+use crate::id::{NamespaceId, StoreId};
+use crate::model::{Edge, EmbeddingState, Labels, Memory, Namespace, NamespacePolicy, Phase};
 use crate::search::vector::dot;
+use crate::store::Store;
+use crate::time::Timestamp;
+
+/// A `Full` memory with no tags, labels or full text, anchored at `created_at`, with
+/// the default lifecycle numbers and embedding `Pending`. Tests change what they need.
+pub fn memory(
+    id: MemoryId,
+    namespace: NamespaceId,
+    summary: &str,
+    created_at: Timestamp,
+) -> Memory {
+    Memory {
+        id,
+        namespace,
+        created_at,
+        summary: summary.to_owned(),
+        full_text: None,
+        tags: Vec::new(),
+        labels: Labels::default(),
+        phase: Phase::Full,
+        stability: crate::model::limits::DEFAULT_INITIAL_STABILITY,
+        difficulty: crate::model::limits::DEFAULT_DIFFICULTY,
+        is_permastore: false,
+        decay_anchor_at: created_at,
+        retrieved_at: None,
+        reinforced_at: None,
+        phase_changed_at: created_at,
+        access_count: 0,
+        access_history: Vec::new(),
+        embedding: EmbeddingState::Pending,
+        embed_failures: 0,
+        saved_by: "local".into(),
+        client: None,
+    }
+}
+
+/// Builds a store from namespaces, memories (with their lifecycle numbers), vectors
+/// and edges exactly as given. It runs no linking and changes no counter: what goes in
+/// is what the store holds. Panics on anything the store refuses.
+#[derive(Debug)]
+pub struct StoreBuilder {
+    store: Store,
+}
+
+impl StoreBuilder {
+    /// A store with only the namespace `default`, made at `now`.
+    pub fn new(model: ModelIdentity, now: Timestamp) -> Self {
+        Self {
+            store: Store::create(StoreId::default(), model, now),
+        }
+    }
+
+    /// Adds a namespace and returns its ID.
+    pub fn namespace(
+        &mut self,
+        name: &str,
+        policy: NamespacePolicy,
+        created_at: Timestamp,
+    ) -> NamespaceId {
+        let id = self
+            .store
+            .allocate_namespace_id()
+            .expect("namespace IDs left");
+        assert!(self.store.insert_namespace(Namespace {
+            id,
+            name: name.to_owned(),
+            created_at,
+            policy,
+        }));
+        id
+    }
+
+    /// Adds a memory as given, with its vector if it has one. A memory with a vector
+    /// is `Ready`; one without stays as given, `Ready` becoming `Pending`.
+    pub fn memory(&mut self, memory: Memory, vector: Option<&[f32]>) -> &mut Self {
+        let id = memory.id;
+        assert!(
+            self.store.insert_memory(memory, vector),
+            "memory {id} refused: duplicate ID, unknown namespace or invalid vector"
+        );
+        self
+    }
+
+    /// Adds an edge between two memories already added.
+    pub fn edge(&mut self, edge: Edge) -> &mut Self {
+        assert!(
+            self.store.insert_edge(edge),
+            "edge {:?} refused: duplicate key, loop or unknown memory",
+            edge.key()
+        );
+        self
+    }
+
+    /// The store.
+    pub fn build(self) -> Store {
+        self.store
+    }
+}
 
 /// A deterministic stand-in for the model: texts that share words get a higher cosine.
 ///
