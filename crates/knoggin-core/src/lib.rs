@@ -6,6 +6,7 @@
 
 pub mod error;
 pub mod id;
+pub mod model;
 pub mod sensitive;
 pub mod time;
 
