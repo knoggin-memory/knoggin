@@ -1,0 +1,54 @@
+# Tab "Testing, CI, releases": weekly, a 7-day cooldown, one group per ecosystem.
+# The npm, uv and docker directories arrive with milestones 4, 8 and 6; until
+# then Dependabot reports those three entries as having no manifest.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /ui
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      npm:
+        patterns: ["*"]
+
+  - package-ecosystem: uv
+    directory: /sdk/python
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      uv:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /deploy
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      docker:
+        patterns: ["*"]
