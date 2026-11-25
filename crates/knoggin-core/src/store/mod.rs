@@ -5,6 +5,7 @@
 //! in step with the memories.
 
 mod index;
+mod read;
 
 use std::collections::BTreeMap;
 
