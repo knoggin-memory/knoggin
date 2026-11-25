@@ -1,0 +1,245 @@
+name: CI
+
+# Tab "Testing, CI, releases", CI. Jobs whose code lands in later milestones
+# are not here yet; each is added with its milestone and to `ci-ok.needs`:
+#   stack    (milestone 6) ubuntu-24.04, the stack tier
+#   web      (milestone 4) ubuntu-24.04, the web UI tier
+#   web-e2e  (milestone 4) ubuntu-24.04, UI build, release daemon, end-to-end tier
+#   openapi  (milestone 3) ubuntu-24.04, regenerate docs/openapi.json and the UI types
+#   sdk      (milestone 8) ubuntu-24.04, the SDK tier and `uv build`
+#   deploy   (milestone 7) ubuntu-24.04, the deploy tier
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_BUILD_WARNINGS: deny
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fmt:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Installs the toolchain that rust-toolchain.toml names.
+      - run: rustup toolchain install
+      - run: cargo fmt --all --check
+
+  clippy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --workspace --all-targets --locked
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            nextest: cargo-nextest-0.9.152-x86_64-unknown-linux-gnu.tar.gz
+            sha256: d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a
+          - runner: ubuntu-24.04-arm
+            nextest: cargo-nextest-0.9.152-aarch64-unknown-linux-gnu.tar.gz
+            sha256: ca1f81a5b86533eb45ab97e0064aa88e925e53aab9a698ca6331a7cad1f85f07
+          - runner: macos-15
+            nextest: cargo-nextest-0.9.152-universal-apple-darwin.tar.gz
+            sha256: 2fadf57df4243e691f088ee3bff4f4ab9af16da0c95a1db84b5cb1685e098a76
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-nextest
+        env:
+          ARCHIVE: ${{ matrix.nextest }}
+          SHA256: ${{ matrix.sha256 }}
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/$ARCHIVE" "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/$ARCHIVE"
+          echo "$SHA256  $RUNNER_TEMP/$ARCHIVE" | shasum -a 256 -c -
+          tar -xzf "$RUNNER_TEMP/$ARCHIVE" -C "$HOME/.cargo/bin" cargo-nextest
+      - run: cargo nextest run --workspace --locked --profile ci
+      - run: cargo test --doc --workspace --locked
+
+  budgets:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-nextest
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/nextest.tar.gz" https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-aarch64-unknown-linux-gnu.tar.gz
+          echo "ca1f81a5b86533eb45ab97e0064aa88e925e53aab9a698ca6331a7cad1f85f07  $RUNNER_TEMP/nextest.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/nextest.tar.gz" -C "$HOME/.cargo/bin" cargo-nextest
+      # Until crates/knoggin-core/tests/budgets.rs exists, the filter matches no
+      # test and nextest fails with "no tests to run". The guard skips the run
+      # only while the file is missing; once it exists, nextest's default
+      # (--no-tests=fail) applies, so a filter that stops matching still fails.
+      - name: Budget tier
+        run: |
+          if [ ! -f crates/knoggin-core/tests/budgets.rs ]; then
+            echo "::notice::crates/knoggin-core/tests/budgets.rs does not exist yet; budget tier skipped"
+            exit 0
+          fi
+          cargo nextest run -p knoggin-core --release --locked --run-ignored only -E 'binary(budgets)'
+
+  doc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  deny:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Install cargo-deny
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/deny.tar.gz" https://github.com/EmbarkStudios/cargo-deny/releases/download/0.21.0/cargo-deny-0.21.0-x86_64-unknown-linux-musl.tar.gz
+          echo "a2170b854ff697e79e39c4c538981c9c1bdd803addbae6719a4cb66b4585a903  $RUNNER_TEMP/deny.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/deny.tar.gz" -C "$HOME/.cargo/bin" --strip-components=1 cargo-deny-0.21.0-x86_64-unknown-linux-musl/cargo-deny
+      - run: cargo deny check
+
+  machete:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install cargo-machete
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/machete.tar.gz" https://github.com/bnjbvr/cargo-machete/releases/download/v0.10.1/cargo-machete-v0.10.1-x86_64-unknown-linux-musl.tar.gz
+          echo "785d381985140ffa172246d82089adeb7f2eb9c774d961c48f77a4494023afb5  $RUNNER_TEMP/machete.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/machete.tar.gz" -C "$HOME/.cargo/bin" --strip-components=1 cargo-machete-v0.10.1-x86_64-unknown-linux-musl/cargo-machete
+      # Called directly: it reads the manifests and sources and needs no toolchain.
+      - run: cargo-machete
+
+  workflows:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install actionlint and zizmor
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/actionlint.tar.gz" https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP/bin" actionlint
+          curl -fsSL -o "$RUNNER_TEMP/zizmor.tar.gz" https://github.com/zizmorcore/zizmor/releases/download/v1.32.0/zizmor-x86_64-unknown-linux-gnu.tar.gz
+          echo "bb110cc765eca9cd7efb2e284a956be5974c60027b0970f16397d86208a9957b  $RUNNER_TEMP/zizmor.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/zizmor.tar.gz" -C "$RUNNER_TEMP/bin" zizmor
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      # actionlint runs shellcheck on `run:` scripts; the runner image has it.
+      - run: actionlint
+      # The token lets zizmor's online audits check that pinned commits belong
+      # to the action's repository and that no pinned version has an advisory.
+      - run: zizmor --format=github .github
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  deps:
+    # Dependency review needs GitHub Advanced Security on a private repository,
+    # so it runs once the repository is public.
+    if: github.event_name == 'pull_request' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
+
+  dco:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - run: scripts/check-dco.sh "$BASE_SHA" "$HEAD_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+  # The one required check. Skipped jobs (deps and dco on a push) count as passed.
+  ci-ok:
+    if: always()
+    needs: [fmt, clippy, test, budgets, doc, deny, machete, workflows, deps, dco]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every job passed or was skipped
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for r in $RESULTS; do
+            case "$r" in
+              success | skipped) ;;
+              *) echo "::error::a required job ended with: $r"; exit 1 ;;
+            esac
+          done
