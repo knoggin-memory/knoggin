@@ -106,10 +106,6 @@ fn index_content(tags: &mut TagIndex, entities: &mut EntityIndex, fts: &mut FtsI
     index_text(fts, m);
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the write operations, added next, call it")
-)]
 fn purge_idempotency(
     idempotency: &mut BTreeMap<String, IdempotencyEntry>,
     estimated_bytes: &mut u64,
@@ -124,13 +120,6 @@ fn purge_idempotency(
     });
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the write operations, added next, call these helpers"
-    )
-)]
 impl Store {
     /// Adds a new memory to the store and every index. With `vector`, which must be
     /// valid for the store's model, the memory's embedding becomes `Ready`; without it a
@@ -367,6 +356,10 @@ impl Store {
     }
 
     /// Removes one edge.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "no operation removes a single edge yet")
+    )]
     pub(crate) fn remove_edge(&mut self, key: &EdgeKey) -> Option<Edge> {
         let edge = self.graph.remove(key)?;
         self.estimated_bytes = self.estimated_bytes.saturating_sub(EDGE_BYTES);

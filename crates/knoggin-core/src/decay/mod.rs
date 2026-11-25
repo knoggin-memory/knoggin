@@ -2,3 +2,4 @@
 //! Decay: retrievability, the stability update, phase planning and the sweep.
 
 pub mod fsrs;
+pub mod sweep;

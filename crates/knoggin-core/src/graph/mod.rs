@@ -4,6 +4,7 @@
 
 mod activation;
 mod bonus;
+mod links;
 
 use std::collections::{BTreeMap, BTreeSet};
 

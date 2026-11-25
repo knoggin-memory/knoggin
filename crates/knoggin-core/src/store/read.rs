@@ -174,13 +174,7 @@ impl Store {
         let mut out: Vec<NamespaceView> = self
             .namespaces
             .values()
-            .map(|n| NamespaceView {
-                name: n.name.clone(),
-                created_at: n.created_at,
-                memory_count: self.namespace_counts(n.id).memories,
-                policy: n.policy,
-                would_change: None,
-            })
+            .map(|n| self.namespace_view(n))
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
         out

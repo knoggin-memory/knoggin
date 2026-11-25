@@ -4,8 +4,12 @@
 //! constructor, the read accessors and (in `index`) the helpers that keep every index
 //! in step with the memories.
 
+mod idempotency;
 mod index;
+mod namespaces;
+mod queue;
 mod read;
+pub(crate) mod write;
 
 use std::collections::BTreeMap;
 
@@ -21,6 +25,7 @@ use crate::search::tags::TagIndex;
 use crate::search::vector::VectorTable;
 use crate::time::Timestamp;
 
+pub use idempotency::request_hash_input;
 pub use index::IndexSnapshot;
 
 /// One stored idempotent answer.
