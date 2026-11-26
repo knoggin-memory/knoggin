@@ -116,6 +116,24 @@ where
     B: hyper::body::Body + Send + 'static,
     B::Data: Send,
 {
+    peers_client(peers, true)
+}
+
+/// The forwarding client's twin that keeps no idle connection, so that every call opens
+/// a new one: the router's `status` call after a link failure or a silence.
+pub fn fresh_client<B>(peers: Arc<Peers>) -> Result<ForwardClient<B>, LinkError>
+where
+    B: hyper::body::Body + Send + 'static,
+    B::Data: Send,
+{
+    peers_client(peers, false)
+}
+
+fn peers_client<B>(peers: Arc<Peers>, pool: bool) -> Result<ForwardClient<B>, LinkError>
+where
+    B: hyper::body::Body + Send + 'static,
+    B::Data: Send,
+{
     let mut http = HttpConnector::new_with_resolver(PeerResolver(peers.clone()));
     http.enforce_http(false);
     http.set_nodelay(true);
@@ -125,7 +143,14 @@ where
         .https_only()
         .enable_all_versions()
         .wrap_connector(http);
-    Ok(pooled(https))
+    if pool {
+        Ok(pooled(https))
+    } else {
+        Ok(Client::builder(TokioExecutor::new())
+            .pool_max_idle_per_host(0)
+            .timer(TokioTimer::new())
+            .build(https))
+    }
 }
 
 /// Builds a container's client to the router. `local_address` binds its connections to

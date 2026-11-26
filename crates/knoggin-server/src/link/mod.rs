@@ -19,7 +19,7 @@ pub use calls::{
 pub use cert::{INTERNAL_CERT_NAME, ServerIdentity, new_internal_cert};
 pub use client::{
     CONNECT_TIMEOUT, ForwardClient, MAX_ANSWER_BYTES, Peer, PeerResolver, Peers, RouterClient,
-    UnpinnedReply, fetch_unpinned, forwarding_client, router_client,
+    UnpinnedReply, fetch_unpinned, forwarding_client, fresh_client, router_client,
 };
 pub use listen::{HEADER_READ_TIMEOUT, PeerAddr, serve_tls};
 pub use secret::{CertPin, InternalSecret, LaunchSecret, Nonce, Token};
