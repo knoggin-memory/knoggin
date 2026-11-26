@@ -46,6 +46,16 @@ async fn every_route_answers_success() {
         a["id"].as_str().unwrap().to_owned(),
         b["id"].as_str().unwrap().to_owned(),
     );
+    // The similar search needs `a`'s vector: wait for the queue rather than race it.
+    for _ in 0..500 {
+        let c = env
+            .call(Some(&ctx), Method::GET, "/v1/context", None, &[])
+            .await;
+        if c.json["embedding"]["pending"] == 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
     let cases: Vec<(Method, String, Option<Value>, StatusCode)> = vec![
         (
             Method::POST,
