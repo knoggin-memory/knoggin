@@ -99,8 +99,11 @@ impl VectorTable {
             return false;
         }
         if let Some(&slot) = self.slots.get(&id) {
-            let start = slot * self.dimensions;
-            return match self.data.get_mut(start..start + self.dimensions) {
+            let dst = slot
+                .checked_mul(self.dimensions)
+                .and_then(|start| Some(start..start.checked_add(self.dimensions)?))
+                .and_then(|range| self.data.get_mut(range));
+            return match dst {
                 Some(dst) => {
                     dst.copy_from_slice(vector);
                     true
@@ -116,19 +119,27 @@ impl VectorTable {
 
     /// Removes the vector of `id`, moving the last slot into its place.
     pub fn remove(&mut self, id: MemoryId) -> Option<Vec<f32>> {
-        let slot = self.slots.remove(&id)?;
+        let slot = *self.slots.get(&id)?;
         let dim = self.dimensions;
         let last = self.ids.len().checked_sub(1)?;
-        let removed = self.data.get(slot * dim..(slot + 1) * dim)?.to_vec();
+        let range = |s: usize| Some(s.checked_mul(dim)?..s.checked_add(1)?.checked_mul(dim)?);
+        let (hole, tail) = (range(slot)?, range(last)?);
+        let removed = self.data.get(hole.clone())?.to_vec();
+        let moved = *self.ids.get(last)?;
+        if self.data.len() < tail.end || slot > last {
+            return None;
+        }
+        // Every bound is checked above, so nothing below can fail half way.
+        self.slots.remove(&id);
         if slot != last {
-            let moved = *self.ids.get(last)?;
-            self.data
-                .copy_within(last * dim..(last + 1) * dim, slot * dim);
-            *self.ids.get_mut(slot)? = moved;
+            self.data.copy_within(tail.clone(), hole.start);
+            if let Some(entry) = self.ids.get_mut(slot) {
+                *entry = moved;
+            }
             self.slots.insert(moved, slot);
         }
         self.ids.pop();
-        self.data.truncate(last * dim);
+        self.data.truncate(tail.start);
         Some(removed)
     }
 
