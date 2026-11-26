@@ -131,6 +131,13 @@ export function dayLabel(date: string | null, now = new Date()): string {
   return new Date(Date.UTC(yy, mm - 1, dd)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
+/** A `return_to` the UI follows itself: a path on this site, by the server's rule (tab
+ *  "Sign-in and credentials"), else `/map`. A `//host` or backslash form would leave the site. */
+export function safeReturnTo(p: string | null): string {
+  // eslint-disable-next-line no-control-regex
+  return p && p.startsWith('/') && p[1] !== '/' && !p.includes('\\') && !/[\u0000-\u001f\u007f-\u009f]/.test(p) ? p : '/map';
+}
+
 /** The name to show for a user: the name, else the email, else "User" and 8 characters of the ID. */
 export function who(u: { id: string; name?: string | null; email?: string | null }) {
   const text = u.name || u.email || `User ${u.id.slice(0, 8)}`;

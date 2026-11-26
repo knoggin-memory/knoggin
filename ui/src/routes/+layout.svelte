@@ -9,7 +9,7 @@
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Palette from '$lib/components/Palette.svelte';
   import Standalone, { type Page } from '$lib/components/Standalone.svelte';
-  import { session } from '$lib/session.svelte';
+  import { safeReturnTo, session } from '$lib/session.svelte';
   import { store } from '$lib/store.svelte';
   import { status } from '$lib/status.svelte';
   import { live } from '$lib/live.svelte';
@@ -83,7 +83,7 @@
       if (denied()) return 'redirect';
       if (!s.webSignIn) return { kind: 'open-local' };
       if (!onSignin) return 'redirect';
-      const returnTo = params.get('return_to') ?? '/map';
+      const returnTo = safeReturnTo(params.get('return_to'));
       if (params.get('reason') === 'expired') return { kind: 'expired', returnTo };
       if (params.get('reason') === 'signed_out') return { kind: 'signed-out' };
       return { kind: 'signin', returnTo };
@@ -103,7 +103,7 @@
       goto(`/signin?error=${reason}`, { replace: true });
     } else if (s.signedIn) {
       // With sign-in off, or already signed in, /signin goes on to the app.
-      goto(params.get('return_to') ?? '/map', { replace: true });
+      goto(safeReturnTo(params.get('return_to')), { replace: true });
     } else {
       const reason = s.signedOutReason === 'expired' ? '&reason=expired' : '';
       goto(`/signin?return_to=${encodeURIComponent(here)}${reason}`, { replace: true });

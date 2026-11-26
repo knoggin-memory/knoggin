@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { lockSentence, modelCause, signInError } from './sentences';
 import { setupSteps } from './setup';
-import { dayLabel, who } from './session.svelte';
+import { dayLabel, safeReturnTo, who } from './session.svelte';
 import { resolveTheme } from './prefs.svelte';
 
 describe('fixed sentences', () => {
@@ -66,5 +66,12 @@ describe('set-up steps', () => {
     expect(steps[0].keysElsewhere).toBe(true);
     expect(steps.every((s) => !s.code || !s.code.includes('knoggin_live_'))).toBe(true);
     expect(steps.map((s) => s.code)).toContain('KNOGGIN_BASE_URL=https://m.example\nKNOGGIN_API_KEY=<key>');
+  });
+});
+
+describe('return_to', () => {
+  it('follows a path on this site and nothing else', () => {
+    for (const ok of ['/', '/explore', '/apps/x?tab=keys#a']) expect(safeReturnTo(ok)).toBe(ok);
+    for (const bad of [null, '', 'map', '//evil.example', '/\\evil.example', '/a\\b', 'https://evil.example', '/a\nb', 'javascript:alert(1)']) expect(safeReturnTo(bad)).toBe('/map');
   });
 });
