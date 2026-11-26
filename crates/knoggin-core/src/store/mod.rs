@@ -232,6 +232,12 @@ impl Store {
         self.estimated_bytes
     }
 
+    /// The idempotency table, for tests that compare a whole store.
+    #[doc(hidden)]
+    pub fn idempotency_for_test(&self) -> &BTreeMap<String, IdempotencyEntry> {
+        &self.idempotency
+    }
+
     /// Counts for status pages.
     pub fn summary(&self) -> StoreSummary {
         let (mut pending, mut ghosts) = (0_u64, 0_u64);

@@ -12,11 +12,12 @@
 )]
 
 use knoggin_core::embed::EmbeddingProvider;
-use knoggin_core::model::AccessKind;
+use knoggin_core::model::{AccessKind, EmbeddingState};
 use knoggin_core::ops::{
-    AccessHit, DeleteNamespace, ForgetMemories, ForgetMemory, MoveMemories, ReinforceMemory,
-    StoreMemories, StoreMemory, SupersedeMemory, UpdatePolicy, WriteContext,
+    AccessHit, ChangeCounters, DeleteNamespace, ForgetMemories, ForgetMemory, MoveMemories,
+    ReinforceMemory, StoreMemories, StoreMemory, SupersedeMemory, UpdatePolicy, WriteContext,
 };
+use knoggin_core::store::IdempotencyEntry;
 use knoggin_core::testing::FakeProvider;
 use knoggin_core::transfer::{OnConflict, TransferRecord};
 use knoggin_core::{EngineError, MemoryId, Store, StoreId, Timestamp};
@@ -64,6 +65,8 @@ const POOL: u8 = 30;
 const T0: i64 = 1_700_000_000_000;
 const DAY: i64 = 86_400_000;
 const MULTIPLIERS: [Option<f32>; 5] = [None, Some(0.0), Some(0.01), Some(1.0), Some(50.0)];
+/// Names of imported namespace lines: the pool, then one that is not a valid name.
+const IMPORTED_NAMES: [&str; 4] = ["default", "work", "Life", "not valid!"];
 
 fn mid(slot: u8) -> MemoryId {
     let mut b = [0_u8; 16];
@@ -183,6 +186,13 @@ enum Op {
         phase: u8,
         content: Content,
     },
+    ImportNamespace {
+        name: u8,
+        /// An index into `MULTIPLIERS`; one past the end is a negative multiplier.
+        multiplier: Option<u8>,
+        /// Days before now; 2 days ahead is refused.
+        created_days_ago: Option<i64>,
+    },
     ImportEdge {
         source: u8,
         target: u8,
@@ -254,6 +264,8 @@ fn op() -> impl Strategy<Value = Op> {
         1 => Just(Op::OnOpen),
         2 => (slot(), 0..4_u8, 0..3_u8, content())
             .prop_map(|(slot, ns, phase, content)| Op::ImportMemory { slot, ns, phase, content }),
+        2 => (0..IMPORTED_NAMES.len() as u8, prop::option::of(0..=MULTIPLIERS.len() as u8), prop::option::weighted(0.5, -2_i64..=400))
+            .prop_map(|(name, multiplier, created_days_ago)| Op::ImportNamespace { name, multiplier, created_days_ago }),
         2 => (slot(), slot(), 0..5_u8, any::<bool>())
             .prop_map(|(source, target, edge_type, auto)| Op::ImportEdge { source, target, edge_type, auto }),
         2 => (0..3_u8, 0..2_u8, slot(), content())
@@ -516,6 +528,32 @@ impl Harness {
                     .import_record(record, OnConflict::Error, now)
                     .map(drop)
             }
+            Op::ImportNamespace {
+                name,
+                multiplier,
+                created_days_ago,
+            } => {
+                let mut v =
+                    json!({ "type": "namespace", "name": IMPORTED_NAMES[usize::from(*name)] });
+                if let Some(m) = multiplier {
+                    let policy = knoggin_core::model::NamespacePolicy {
+                        decay_rate_multiplier: MULTIPLIERS
+                            .get(usize::from(*m))
+                            .copied()
+                            .unwrap_or(Some(-1.0)),
+                        ..Default::default()
+                    };
+                    v["policy"] = serde_json::to_value(policy).unwrap();
+                }
+                if let Some(days) = created_days_ago {
+                    let at = Timestamp::from_millis(self.now - days * DAY);
+                    v["createdAt"] = json!(at.to_rfc3339().unwrap());
+                }
+                let record: TransferRecord = serde_json::from_value(v).unwrap();
+                self.store
+                    .import_record(record, OnConflict::Error, now)
+                    .map(drop)
+            }
             Op::ImportEdge {
                 source,
                 target,
@@ -549,30 +587,28 @@ impl Harness {
                 let req: StoreMemory = serde_json::from_value(v).unwrap();
                 let vector = self.vector_for(content, true);
                 let id = mid(*slot);
-                let result = self.store.run_idempotent(
-                    &format!("k{key}"),
-                    [*hash; 32],
-                    now,
-                    move |s: &mut Store| {
-                        let r = s.store_memory(req, id, vector, &ctx(), now)?;
-                        let ids = r
-                            .near_duplicates
-                            .iter()
-                            .flat_map(|d| d.matches.iter().map(|m| m.id))
-                            .collect();
-                        Ok((r, ids))
-                    },
-                );
-                // A lookup may drop an expired entry before the operation fails, so this
-                // step is not held to "unchanged".
-                let _ = result;
-                Ok(())
+                self.store
+                    .run_idempotent(
+                        &format!("k{key}"),
+                        [*hash; 32],
+                        now,
+                        move |s: &mut Store| {
+                            let r = s.store_memory(req, id, vector, &ctx(), now)?;
+                            let ids = r
+                                .near_duplicates
+                                .iter()
+                                .flat_map(|d| d.matches.iter().map(|m| m.id))
+                                .collect();
+                            Ok((r, ids))
+                        },
+                    )
+                    .map(drop)
             }
         }
     }
 
-    /// Everything a failed step must leave alone: every exported line and the counters.
-    fn state(&self) -> (Vec<String>, knoggin_core::ops::ChangeCounters) {
+    /// Everything a failed step must leave alone.
+    fn state(&self) -> State {
         let mut lines = Vec::new();
         let mut after = None;
         loop {
@@ -586,14 +622,50 @@ impl Harness {
             );
             match page.next {
                 Some(c) => after = Some(c),
-                None => return (lines, self.store.changes()),
+                None => break,
             }
+        }
+        State {
+            lines,
+            changes: self.store.changes(),
+            embeddings: self
+                .store
+                .memories()
+                .map(|m| (m.id, m.embedding, m.embed_failures))
+                .collect(),
+            vectors: self
+                .store
+                .vectors()
+                .iter()
+                .map(|(id, v)| (id, v.iter().map(|x| x.to_bits()).collect()))
+                .collect(),
+            idempotency: self
+                .store
+                .idempotency_for_test()
+                .clone()
+                .into_iter()
+                .collect(),
+            estimated_bytes: self.store.estimated_bytes(),
         }
     }
 }
 
+/// The observable state of a store: every exported line, both counters, every
+/// embedding state with its failure count, the vectors, the idempotency table and
+/// the size estimate.
+#[derive(Debug, PartialEq)]
+struct State {
+    lines: Vec<String>,
+    changes: ChangeCounters,
+    embeddings: Vec<(MemoryId, EmbeddingState, u8)>,
+    vectors: Vec<(MemoryId, Vec<u32>)>,
+    idempotency: Vec<(String, IdempotencyEntry)>,
+    estimated_bytes: u64,
+}
+
 proptest! {
-    #![proptest_config(ProptestConfig { max_shrink_iters: 2_000, ..ProptestConfig::default() })]
+    // 256 cases, pinned so that PROPTEST_CASES cannot lower it (tab "Engineering rules").
+    #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 2_000, ..ProptestConfig::default() })]
 
     #[test]
     fn live_indexes_equal_a_rebuild(ops in prop::collection::vec((op(), 0_i64..=120_000), 1..=200)) {
