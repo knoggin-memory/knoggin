@@ -1322,3 +1322,38 @@ async fn a_request_without_its_listeners_tag_is_internal() {
         .unwrap();
     assert_eq!(env.send(request).await.error(), Code::Internal);
 }
+
+#[tokio::test]
+async fn the_mcp_endpoint_sits_behind_the_credential_check() {
+    let env = EdgeEnv::new().await;
+    let body = Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }));
+    for uri in ["/mcp", "/mcp/plugin"] {
+        let r = env
+            .call(fixed(), Method::POST, uri, body.clone(), &[])
+            .await;
+        assert_eq!(r.error(), Code::Unauthenticated, "{uri}");
+    }
+    let (secret, _) = env.key(env.personal, json!(["memory:read"]), 90).await;
+    let r = env
+        .bearer(fixed(), &secret, Method::POST, "/mcp", body.clone())
+        .await;
+    assert_ne!(
+        r.status,
+        StatusCode::UNAUTHORIZED,
+        "{}",
+        String::from_utf8_lossy(&r.bytes)
+    );
+    let r = env
+        .call(
+            fixed(),
+            Method::POST,
+            "/mcp",
+            body,
+            &[
+                ("authorization", &format!("Bearer {secret}")),
+                ("origin", "http://evil.example"),
+            ],
+        )
+        .await;
+    assert_eq!(r.error(), Code::PermissionDenied);
+}
