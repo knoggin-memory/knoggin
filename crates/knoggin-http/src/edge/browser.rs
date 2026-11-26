@@ -231,8 +231,8 @@ fn content_type(request: &Request) -> Result<(), ApiError> {
     }
 }
 
-/// The headers of every answer. Every answer of the edge is an API answer, so every one
-/// carries `Cache-Control: no-store`.
+/// The headers of every answer, with `Cache-Control: no-store`, which a UI file then
+/// replaces with its own (`edge::finish`).
 pub(crate) fn response_headers(response: &mut Response) {
     let h = response.headers_mut();
     h.insert(

@@ -15,6 +15,7 @@ pub mod limits;
 pub mod listen;
 pub mod openapi;
 pub(crate) mod shapes;
+pub(crate) mod ui;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -277,8 +278,18 @@ pub fn edge_layer(edge: EdgeState, store_routes: Router, mode_routes: Router) ->
     let store = store_routes.layer(middleware::from_fn_with_state(edge.clone(), check::store));
     control
         .merge(store)
-        .fallback(|| async { ApiError::not_found("No such route") })
+        .fallback(fallback)
         .layer(middleware::from_fn_with_state(edge, entry))
+}
+
+/// What no route takes: the web UI's files for a `GET` off the API's paths, else
+/// `not_found`.
+pub(crate) async fn fallback(request: Request) -> Response {
+    if ui::is_ui(&request) {
+        ui::serve(&request)
+    } else {
+        ApiError::not_found("No such route").into_response()
+    }
 }
 
 /// The outermost step of every request: the request ID, the tag check, the daemon's fixed
@@ -299,10 +310,12 @@ async fn entry(State(edge): State<EdgeState>, mut request: Request, next: Next) 
             ApiError::internal().into_response()
         }
         Some(arrival) => {
-            // Step 1, the daemon's fixed bucket, then step 2, the browser checks.
+            // Step 1, the daemon's fixed bucket (the UI's files are not counted), then step
+            // 2, the browser checks.
             let charged = match arrival {
                 Arrival::Fixed { .. }
-                    if !check::sends_credential(request.headers(), edge.0.config.auth_mode) =>
+                    if !ui::is_ui(&request)
+                        && !check::sends_credential(request.headers(), edge.0.config.auth_mode) =>
                 {
                     edge.0.unauthenticated.take(&(), "address")
                 }
@@ -324,13 +337,18 @@ pub(crate) fn browser_check(request: &Request, arrival: &Arrival) -> Result<(), 
 }
 
 /// The way out of every request: the store layer's error shape (shared with it), the
-/// request ID header and the browser headers.
+/// request ID header and the browser headers. A UI file keeps the `Cache-Control` it
+/// asked for; every other answer is `no-store`.
 pub(crate) fn finish(response: Response, id: Uuid) -> Response {
     let mut response = shape_answer(response, Some(id));
     if let Ok(value) = HeaderValue::from_str(&id.to_string()) {
         response.headers_mut().insert(headers::REQUEST_ID, value);
     }
     browser::response_headers(&mut response);
+    if let Some(ui::CacheControl(cache)) = response.extensions().get::<ui::CacheControl>().cloned()
+    {
+        response.headers_mut().insert(header::CACHE_CONTROL, cache);
+    }
     response
 }
 

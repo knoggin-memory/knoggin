@@ -586,8 +586,9 @@ pub fn web_authority(label: &str, port: u16) -> String {
     }
 }
 
-/// The daemon in locked mode: `/healthz` and `/readyz` answer as usual, every other route
-/// `store_locked` with the reason, and `GET /v1/session` also carries `docsUrl`.
+/// The daemon in locked mode: `/healthz`, `/readyz` and the web UI's files answer as
+/// usual, every other route `store_locked` with the reason, and `GET /v1/session` also
+/// carries `docsUrl`.
 pub fn locked_router(reason: LockReason, version: String, docs_url: String) -> Router {
     let health = version.clone();
     Router::new()
@@ -610,7 +611,13 @@ pub fn locked_router(reason: LockReason, version: String, docs_url: String) -> R
                 async move { e }
             }),
         )
-        .fallback(move || async move { ApiError::store_locked(reason) })
+        .fallback(move |request: Request| async move {
+            if crate::edge::ui::is_ui(&request) {
+                crate::edge::ui::serve(&request)
+            } else {
+                ApiError::store_locked(reason).into_response()
+            }
+        })
         .layer(middleware::from_fn(locked_entry))
 }
 

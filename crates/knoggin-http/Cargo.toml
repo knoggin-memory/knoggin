@@ -25,6 +25,7 @@ knoggin-crypto = { path = "../knoggin-crypto" }
 knoggin-state = { path = "../knoggin-state" }
 metrics = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
+rust-embed = { workspace = true }
 rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
