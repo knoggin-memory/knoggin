@@ -306,7 +306,13 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
         200,
         "recall while streaming",
     );
-    while !String::from_utf8_lossy(&seen).contains(&format!("\"namespace\":\"{NAMESPACE}\"")) {
+    let carried = |seen: &[u8]| {
+        let text = String::from_utf8_lossy(seen);
+        text.contains(&format!("\"namespace\":\"{NAMESPACE}\""))
+            && text.contains("event: store")
+            && text.contains("event: recall")
+    };
+    while !carried(&seen) {
         let n = stream
             .read(&mut buf)
             .expect("the stream carried no marker event");
