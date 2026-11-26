@@ -46,7 +46,7 @@ fn main() -> ExitCode {
             std::process::exit(101);
         }
     }));
-    no_core_dumps();
+    let warnings = no_core_dumps();
     let env = match config::Env::from_process() {
         Ok(env) => env,
         Err(e) => return cli::fail_early(&format!("{e:#}")),
@@ -60,25 +60,28 @@ fn main() -> ExitCode {
         Ok(rt) => rt,
         Err(e) => return cli::fail_early(&format!("could not start the runtime: {e}")),
     };
-    let code = runtime.block_on(cli::run(args, env));
+    let code = runtime.block_on(cli::run(args, env, warnings));
     // Blocking reads of stdin (the bridge) must not hold the exit up.
     runtime.shutdown_timeout(std::time::Duration::from_secs(1));
     ExitCode::from(code)
 }
 
-/// Sets the core-dump limit to 0 and, on Linux, marks the process not dumpable.
-fn no_core_dumps() {
+/// Sets the core-dump limit to 0 and, on Linux, marks the process not dumpable. Returns
+/// the warnings, which are logged once logging exists.
+fn no_core_dumps() -> Vec<&'static str> {
+    let mut warnings = Vec::new();
     let zero = rustix::process::Rlimit {
         current: Some(0),
         maximum: Some(0),
     };
     if rustix::process::setrlimit(rustix::process::Resource::Core, zero).is_err() {
-        tracing::warn!("could not set the core-dump limit to 0");
+        warnings.push("could not set the core-dump limit to 0");
     }
     #[cfg(target_os = "linux")]
     if rustix::process::set_dumpable_behavior(rustix::process::DumpableBehavior::NotDumpable)
         .is_err()
     {
-        tracing::warn!("could not mark the process not dumpable");
+        warnings.push("could not mark the process not dumpable");
     }
+    warnings
 }

@@ -244,9 +244,9 @@ pub(crate) fn fail_early(message: &str) -> ExitCode {
     ExitCode::from(1)
 }
 
-/// Runs the command and returns the exit code.
-pub(crate) async fn run(cli: Cli, env: Env) -> u8 {
-    match dispatch(cli, &env).await {
+/// Runs the command and returns the exit code. `warnings` came before logging existed.
+pub(crate) async fn run(cli: Cli, env: Env, warnings: Vec<&'static str>) -> u8 {
+    match dispatch(cli, &env, warnings).await {
         Ok(code) => code,
         Err(e) => {
             let code = e.downcast_ref::<Failure>().map_or(1, |f| f.exit);
@@ -286,7 +286,7 @@ impl Ctx<'_> {
     }
 }
 
-async fn dispatch(cli: Cli, env: &Env) -> anyhow::Result<u8> {
+async fn dispatch(cli: Cli, env: &Env, warnings: Vec<&'static str>) -> anyhow::Result<u8> {
     let ctx = Ctx {
         env,
         home: env.paths(),
@@ -309,6 +309,9 @@ async fn dispatch(cli: Cli, env: &Env) -> anyhow::Result<u8> {
         _ => Sink::Stderr,
     };
     logging::init(&config, sink, log_file.as_deref())?;
+    for w in warnings {
+        tracing::warn!(kind = "core_dumps", "{w}");
+    }
     match cli.command {
         Command::Daemon { new_session } => {
             if new_session {
