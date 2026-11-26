@@ -1,0 +1,29 @@
+# Pinned ONNX Runtime 1.31.1 shared libraries, one table per target triple.
+# scripts/fetch-onnxruntime.sh reads this file with awk: keep each key on a line
+# of its own, as key = "value".
+#
+# url     the archive
+# sha256  SHA-256 of the archive
+# path    the library inside the archive
+#
+# The GitHub release (github.com/microsoft/onnxruntime) returned HTTP 404 on
+# 2026-11-25, so the archive is Microsoft's official NuGet package
+# Microsoft.ML.OnnxRuntime 1.31.1, which holds the libraries of every target.
+# Its SHA-512 matched the packageHash of the nuget.org catalog entry
+# (QvE8+JyhEccfOL7Oz1m+cSXZGYd4QK7/BtsdoCan0eaF2qqgOSVDV/H7hN5D5JJGesJ5vINCDLDVdHLnO0xjJw==).
+# The package has no osx-x64 library (measurement M12).
+
+[x86_64-unknown-linux-gnu]
+url = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.31.1/microsoft.ml.onnxruntime.1.31.1.nupkg"
+sha256 = "6871ccbc97f3d5bdb4095a1dcec33aa78d56f6ed8de5980ef5fa1d9f2e7c679a"
+path = "runtimes/linux-x64/native/libonnxruntime.so"
+
+[aarch64-unknown-linux-gnu]
+url = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.31.1/microsoft.ml.onnxruntime.1.31.1.nupkg"
+sha256 = "6871ccbc97f3d5bdb4095a1dcec33aa78d56f6ed8de5980ef5fa1d9f2e7c679a"
+path = "runtimes/linux-arm64/native/libonnxruntime.so"
+
+[aarch64-apple-darwin]
+url = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.31.1/microsoft.ml.onnxruntime.1.31.1.nupkg"
+sha256 = "6871ccbc97f3d5bdb4095a1dcec33aa78d56f6ed8de5980ef5fa1d9f2e7c679a"
+path = "runtimes/osx-arm64/native/libonnxruntime.dylib"
