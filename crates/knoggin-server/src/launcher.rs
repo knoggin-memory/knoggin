@@ -18,6 +18,10 @@ use zeroize::Zeroizing;
 
 use crate::link::{CertPin, LaunchSecret};
 
+pub mod docker;
+
+pub use docker::DockerLauncher;
+
 /// Starts, describes, lists and stops user containers.
 #[async_trait]
 pub trait Launcher: Send + Sync {

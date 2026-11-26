@@ -12,6 +12,7 @@ pub mod broker;
 pub mod container;
 mod hex;
 pub mod launcher;
+pub mod launcher_service;
 pub mod lease;
 pub mod lifecycle;
 pub mod link;
