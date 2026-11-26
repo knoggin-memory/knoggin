@@ -165,6 +165,12 @@ fn list_pages_newest_first_by_an_opaque_cursor() {
         (serde_json::json!({ "limit": 201 }), "limit"),
         (serde_json::json!({ "cursor": "nonsense" }), "cursor"),
         (serde_json::json!({ "cursor": "1.not-a-uuid" }), "cursor"),
+        // Base64url of text that is not a cursor, and of bytes that are not UTF-8.
+        (
+            serde_json::json!({ "cursor": "MS5ub3QtYS11dWlk" }),
+            "cursor",
+        ),
+        (serde_json::json!({ "cursor": "_w" }), "cursor"),
         (serde_json::json!({ "tags": ["bad tag"] }), "tags"),
     ] {
         let err = s.list_memories(&json(v), now).unwrap_err();
@@ -218,6 +224,14 @@ fn tags_count_plain_tags_by_count_then_name() {
     );
     let first = tags(serde_json::json!({ "limit": 2 }));
     assert_eq!(first.items.len(), 2);
+    let cursor = first.next_cursor.as_deref().unwrap();
+    assert!(
+        !cursor.contains("b-tag")
+            && cursor
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
+        "a cursor is base64url and does not show the tag: {cursor}"
+    );
     let rest = tags(serde_json::json!({ "limit": 2, "cursor": first.next_cursor.unwrap() }));
     let names: Vec<&str> = rest.items.iter().map(|t| t.tag.as_str()).collect();
     assert_eq!(names, ["a-tag", "other"]);
@@ -229,6 +243,13 @@ fn tags_count_plain_tags_by_count_then_name() {
             .unwrap_err()
             .field(),
         Some("cursor")
+    );
+    // "3" alone: base64url of a cursor without its separator.
+    assert_eq!(
+        s.list_tags(&json(serde_json::json!({ "cursor": "Mw" })))
+            .unwrap_err()
+            .code(),
+        crate::ErrorCode::InvalidArgument
     );
 }
 

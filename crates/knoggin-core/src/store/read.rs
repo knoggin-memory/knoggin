@@ -4,6 +4,8 @@
 //! host calls `record_access` afterwards: for get with the memory as `direct` (unless
 //! it is a ghost), for similar with the hits as `associative`.
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use uuid::Uuid;
 
 use crate::error::EngineError;
@@ -39,12 +41,24 @@ fn bad_cursor() -> EngineError {
     EngineError::invalid("cursor", "cursor is not one this server gave out")
 }
 
+/// A cursor is base64url text (tab "REST API"), so the tag it may name does not
+/// travel in clear.
+fn encode_cursor(plain: &str) -> String {
+    URL_SAFE_NO_PAD.encode(plain)
+}
+
+fn decode_cursor(text: &str) -> Result<String, EngineError> {
+    let bytes = URL_SAFE_NO_PAD.decode(text).map_err(|_| bad_cursor())?;
+    String::from_utf8(bytes).map_err(|_| bad_cursor())
+}
+
 /// The opaque cursor of a memory list: the last `(created_at, id)` seen.
 fn memory_cursor(created_at: Timestamp, id: MemoryId) -> String {
-    format!("{}.{id}", created_at.millis())
+    encode_cursor(&format!("{}.{id}", created_at.millis()))
 }
 
 fn parse_memory_cursor(text: &str) -> Result<(Timestamp, MemoryId), EngineError> {
+    let text = decode_cursor(text)?;
     let (millis, id) = text.split_once('.').ok_or_else(bad_cursor)?;
     let millis: i64 = millis.parse().map_err(|_| bad_cursor())?;
     let id = Uuid::parse_str(id).map_err(|_| bad_cursor())?;
@@ -53,10 +67,11 @@ fn parse_memory_cursor(text: &str) -> Result<(Timestamp, MemoryId), EngineError>
 
 /// The opaque cursor of a tag list: the last `(count, tag)` seen.
 fn tag_cursor(count: u64, tag: &str) -> String {
-    format!("{count}.{tag}")
+    encode_cursor(&format!("{count}.{tag}"))
 }
 
 fn parse_tag_cursor(text: &str) -> Result<(u64, String), EngineError> {
+    let text = decode_cursor(text)?;
     let (count, tag) = text.split_once('.').ok_or_else(bad_cursor)?;
     Ok((count.parse().map_err(|_| bad_cursor())?, tag.to_owned()))
 }
