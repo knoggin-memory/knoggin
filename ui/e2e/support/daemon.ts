@@ -2,15 +2,18 @@
 // A Knoggin daemon in test mode in a temporary home: never ~/.knoggin. The
 // daemon is started and stopped with `knoggin start` and `knoggin stop`, so a
 // test may restart it and the teardown still finds it.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
+import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export interface DaemonInfo {
   bin: string;
   home: string;
+  /** Settings beyond test mode's defaults, as `KNOGGIN_` variables. */
+  extra?: Record<string, string>;
 }
 
 export function env(d: DaemonInfo): NodeJS.ProcessEnv {
@@ -21,6 +24,7 @@ export function env(d: DaemonInfo): NodeJS.ProcessEnv {
     KNOGGIN_TEST_MODE: '1',
     KNOGGIN_LOCAL__MASTER_KEY: 'key_file',
     KNOGGIN_SERVER__BIND: '127.0.0.1:0',
+    ...d.extra,
   };
 }
 
@@ -93,4 +97,29 @@ export function api<T>(d: DaemonInfo, method: string, path: string, body?: unkno
     if (data) req.write(data);
     req.end();
   });
+}
+
+/** A loopback port that was free a moment ago, for an address that must be known before start. */
+export function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const s = createServer().listen(0, '127.0.0.1', () => {
+      const { port } = s.address() as { port: number };
+      s.close(() => resolve(port));
+    });
+    s.on('error', reject);
+  });
+}
+
+/** `knoggin test-issuer` on a loopback port, in test mode: the only identity provider the tests use. */
+export async function startIssuer(d: DaemonInfo): Promise<{ url: string; process: ChildProcess }> {
+  const port = await freePort();
+  const url = `http://127.0.0.1:${port}`;
+  const child = spawn(d.bin, ['test-issuer', '--bind', `127.0.0.1:${port}`, '--issuer-url', url], { env: env({ bin: d.bin, home: d.home }), stdio: 'ignore' });
+  for (let i = 0; i < 120; i++) {
+    if (child.exitCode !== null) break;
+    if (await fetch(`${url}/.well-known/openid-configuration`).then((r) => r.ok, () => false)) return { url, process: child };
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  child.kill('SIGTERM');
+  throw new Error('the test issuer did not start');
 }
