@@ -14,6 +14,7 @@
   import { session, dayLabel } from '$lib/session.svelte';
   import { days, daysUntil, longDate } from '$lib/format';
   import type { ApiKey } from '$lib/api/shapes';
+  import { KEYS_ELSEWHERE } from '$lib/sentences';
 
   const stores = storesQuery();
   const current = $derived(stores.data?.find((s) => s.id === store.id));
@@ -37,7 +38,7 @@
     <p class="lede">A key reaches {current?.kind === 'app' ? name : 'your personal store'} and nothing else. Use one for an agent that cannot sign in, such as a bot or a script.</p>
     {#if own}<div class="end"><button type="button" class="btn-primary" onclick={() => (creating = true)}>New key</button></div>{/if}
   </div>
-  {#if !own}<p class="caption">Keys are managed on the machine that runs Knoggin. Run <span class="mono">knoggin open</span> there.</p>{/if}
+  {#if !own}<p class="caption">{KEYS_ELSEWHERE}</p>{/if}
 
   {#if keys.isPending}
     <Loading />

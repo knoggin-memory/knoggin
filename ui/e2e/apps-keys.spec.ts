@@ -86,3 +86,27 @@ test('switching stores shows that store’s memories', async ({ page }) => {
   await page.getByRole('menuitemradio', { name: /Personal/ }).click();
   await expect(page.getByRole('button', { name: PERSONAL[0] })).toBeVisible();
 });
+
+test('a cookie session at a local install’s public address manages no keys', async ({ page }) => {
+  // A cookie session: sign-in is on and the page holds no token. The test's token rides on each request instead.
+  await open(page, '/apps');
+  const token = await page.evaluate(() => localStorage.getItem('knoggin.sessionToken'));
+  await page.route(/\/v1\//, (r) => r.continue({ headers: { ...r.request().headers(), authorization: `Bearer ${token}` } }));
+  await page.route(/\/v1\/session$/, async (r) => {
+    const real = await (await r.fetch({ headers: { ...r.request().headers(), authorization: `Bearer ${token}` } })).json();
+    await r.fulfill({ json: { ...real, auth: 'oauth', webSignIn: true } });
+  });
+  await page.evaluate(() => localStorage.removeItem('knoggin.sessionToken'));
+  await page.reload();
+  const elsewhere = 'Keys are managed on the machine that runs Knoggin. Run knoggin open there.';
+
+  await page.getByRole('link', { name: 'Support bot' }).click();
+  await expect(page.getByRole('heading', { name: 'Support bot' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'API keys' }).getByText(elsewhere)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Manage keys' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'More actions' })).toHaveCount(0);
+
+  await page.goto(page.url().replace(/\/apps\/.*$/, '/keys'));
+  await expect(page.getByText(elsewhere)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New key' })).toHaveCount(0);
+});

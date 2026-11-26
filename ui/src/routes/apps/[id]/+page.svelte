@@ -20,6 +20,7 @@
   import { ApiError, del, downloadExport, post } from '$lib/api/client';
   import { queryClient } from '$lib/query';
   import { ago, count, days, daysUntil, ms } from '$lib/format';
+  import { KEYS_ELSEWHERE } from '$lib/sentences';
 
   const id = $derived(page.params.id ?? '');
   const stores = storesQuery();
@@ -125,14 +126,14 @@
       <section class="card wide" aria-label="API keys">
         <div class="card-head">
           <h2 class="card-title">API keys</h2>
-          {#if !deleted}<button type="button" class="link small" onclick={() => openIn('/keys')}>Manage keys</button>{/if}
+          {#if !deleted && own}<button type="button" class="link small" onclick={() => openIn('/keys')}>Manage keys</button>{/if}
         </div>
         {#if deleted}
           <p class="muted">Keys are turned off while the app is scheduled for deletion.</p>
         {:else if keys.data && !live.length}
           <p class="muted">No keys yet. Create one to connect an agent.</p>
         {/if}
-        {#if !own}<p class="caption">Keys are managed on the machine that runs Knoggin. Run <span class="mono">knoggin open</span> there.</p>{/if}
+        {#if !own}<p class="caption">{KEYS_ELSEWHERE}</p>{/if}
         {#if !deleted}
           {#each live.slice(0, 4) as k (k.id)}
             {@const left = daysUntil(k.expiresAt)}
