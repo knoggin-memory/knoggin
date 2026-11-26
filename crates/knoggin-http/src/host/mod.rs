@@ -245,17 +245,18 @@ impl fmt::Debug for OpenStore {
 }
 
 impl OpenStore {
-    fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-        m.lock().unwrap_or_else(PoisonError::into_inner)
+    fn unsaved(&self) -> bool {
+        *lock(&self.current) != *lock(&self.saved)
     }
 
-    fn unsaved(&self) -> bool {
-        *Self::lock(&self.current) != *Self::lock(&self.saved)
+    /// Refused a write for the budget, or served for reading only.
+    fn is_full(&self) -> bool {
+        self.full.load(Ordering::Relaxed) || self.read_only.load(Ordering::Relaxed)
     }
 
     /// Notes what one operation changed and arms the timers for it.
     fn note(&self, before: ChangeCounters, after: ChangeCounters, store: &Store) {
-        *Self::lock(&self.current) = after;
+        *lock(&self.current) = after;
         self.estimated
             .store(store.estimated_bytes(), Ordering::Relaxed);
         let summary = store.summary();
@@ -265,7 +266,7 @@ impl OpenStore {
             .store(summary.pending_embeddings, Ordering::Relaxed);
         self.embeddable.store(summary.embeddable, Ordering::Relaxed);
         let now = Instant::now();
-        let mut t = Self::lock(&self.timers);
+        let mut t = lock(&self.timers);
         let mut armed = false;
         if after.content != before.content {
             t.content_first.get_or_insert(now);
@@ -1000,8 +1001,7 @@ impl StoreHost {
             return match entry.open() {
                 Some(open) => StoreStatus {
                     state: StoreState::Ready,
-                    full: open.full.load(Ordering::Relaxed)
-                        || open.read_only.load(Ordering::Relaxed),
+                    full: open.is_full(),
                     embedding: Some(EmbeddingProgress {
                         pending: open.pending.load(Ordering::Relaxed),
                         total: open.embeddable.load(Ordering::Relaxed),
@@ -1045,8 +1045,7 @@ impl StoreHost {
                     last_sequence: open.last_sequence.load(Ordering::Relaxed),
                     pending_embeddings: open.pending.load(Ordering::Relaxed),
                     total_embeddable: open.embeddable.load(Ordering::Relaxed),
-                    full: open.full.load(Ordering::Relaxed)
-                        || open.read_only.load(Ordering::Relaxed),
+                    full: open.is_full(),
                 }),
                 None => report.opening.push(*entry.0),
             }

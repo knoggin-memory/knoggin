@@ -9,7 +9,7 @@ use std::io::{self, BufReader, Write};
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use async_trait::async_trait;
 use knoggin_core::snapshot::SnapshotName;
@@ -218,7 +218,7 @@ impl super::backend::StoreBackend for LocalBackend {
         tokio::task::spawn_blocking(move || {
             write_file(&dir, name, chunks)?;
             // Retention is tidying: a failure there does not undo the save.
-            if let Err(e) = thin(&dir, floor, retention_days, now_ms()) {
+            if let Err(e) = thin(&dir, floor, retention_days, super::now().millis()) {
                 tracing::warn!(kind = ?e.kind(), "removing old snapshot files failed");
             }
             Ok::<(), BackendError>(())
@@ -241,12 +241,6 @@ impl super::backend::StoreBackend for LocalBackend {
         }
         Ok(())
     }
-}
-
-fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 /// A blocking task that did not finish: a panic is a bug (`internal`), anything else is
@@ -472,12 +466,18 @@ mod tests {
         let names: Vec<_> = (1..=6).map(|s| touch(dir, 1, s)).collect();
         // All are from today: the 3 newest stay, today's newest is among them, and the
         // recorded one stays.
-        thin(dir, Some(names[0]), 7, now_ms()).unwrap();
+        thin(dir, Some(names[0]), 7, crate::host::now().millis()).unwrap();
         let mut left = super::names(dir).unwrap();
         left.sort();
         assert_eq!(left, vec![names[0], names[3], names[4], names[5]]);
         // Seen from 30 days on, no file is in a daily window.
-        thin(dir, None, 7, now_ms() + 30 * MILLIS_PER_DAY).unwrap();
+        thin(
+            dir,
+            None,
+            7,
+            crate::host::now().millis() + 30 * MILLIS_PER_DAY,
+        )
+        .unwrap();
         assert_eq!(super::names(dir).unwrap().len(), 3);
     }
 }
