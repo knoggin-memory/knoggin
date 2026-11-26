@@ -7,6 +7,7 @@
 use std::io::{BufRead, Write as _};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow, bail};
@@ -108,6 +109,18 @@ enum Command {
     /// Recovery tools that also work on a local install.
     #[command(subcommand)]
     Admin(AdminCommand),
+    /// Run the router (server).
+    Router,
+    /// Run inside a user container; reads its settings from the environment only.
+    Serve,
+    /// Run the lifecycle pass once, or with `--every 10m` forever (server).
+    Lifecycle {
+        /// Repeat after this long: a whole number followed by s, m or h.
+        #[arg(long, value_parser = crate::server::parse_every)]
+        every: Option<Duration>,
+    },
+    /// Run the launcher service (one host only).
+    Launcher,
     /// A small identity provider for tests; needs test mode. Never for real users.
     TestIssuer {
         /// The address to listen on.
@@ -189,6 +202,11 @@ enum KeyCommand {
         file: PathBuf,
     },
     Rotate,
+    /// Make a new key set file, mode 0600: a master key, or on one host the state key.
+    Generate {
+        #[arg(long)]
+        out: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -222,6 +240,33 @@ enum ConfigCommand {
 enum AdminCommand {
     #[command(subcommand)]
     Snapshot(SnapshotCommand),
+    /// Check the state database, the key provider and the bucket.
+    Selftest,
+    /// List a store's snapshots.
+    Snapshots {
+        #[arg(long)]
+        store: String,
+    },
+    /// Restore a store from one of its snapshots, or cancel a restore.
+    #[command(group = clap::ArgGroup::new("what").required(true).args(["snapshot", "cancel"]))]
+    Restore {
+        #[arg(long)]
+        store: String,
+        /// `<generation>-<sequence>`; shorter numbers are padded.
+        #[arg(long)]
+        snapshot: Option<String>,
+        #[arg(long)]
+        cancel: bool,
+    },
+    /// Wrap every key again under a new master key (one host, router stopped).
+    RotateMasterKey,
+    /// Park containers started before a time: `now`, an RFC 3339 time, or `clear`.
+    RetireBefore { when: String },
+    /// Make the routers' shared internal certificate and key.
+    InternalCert {
+        #[arg(long)]
+        out_dir: PathBuf,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -237,9 +282,26 @@ enum SnapshotCommand {
 }
 
 impl Cli {
-    /// `daemon` exits with 101 from the panic hook; commands do not.
+    /// `daemon` and `serve` exit with 101 from the panic hook; the router and the
+    /// commands do not.
     pub(crate) fn exits_on_panic(&self) -> bool {
-        self.is_daemon()
+        self.is_daemon() || self.is_serve()
+    }
+
+    pub(crate) fn is_serve(&self) -> bool {
+        matches!(self.command, Command::Serve)
+    }
+
+    /// The daemon and the server roles get every core; a command gets two.
+    pub(crate) fn is_long_running(&self) -> bool {
+        matches!(
+            self.command,
+            Command::Daemon { .. }
+                | Command::Router
+                | Command::Serve
+                | Command::Lifecycle { .. }
+                | Command::Launcher
+        )
     }
 
     pub(crate) fn is_daemon(&self) -> bool {
@@ -307,7 +369,14 @@ async fn dispatch(cli: Cli, env: &Env, warnings: Vec<&'static str>) -> anyhow::R
     };
     let role = match &cli.command {
         Command::Config(ConfigCommand::Check { role }) => *role,
-        Command::Healthcheck { .. } | Command::Admin(_) | Command::TestIssuer { .. } => Role::Admin,
+        Command::Healthcheck { .. }
+        | Command::Admin(_)
+        | Command::TestIssuer { .. }
+        | Command::Key(KeyCommand::Generate { .. }) => Role::Admin,
+        Command::Router => Role::Router,
+        Command::Serve => Role::Serve,
+        Command::Lifecycle { .. } => Role::Lifecycle,
+        Command::Launcher => Role::Launcher,
         _ => Role::Local,
     };
     let config = ctx.config(role)?;
@@ -407,6 +476,10 @@ async fn dispatch(cli: Cli, env: &Env, warnings: Vec<&'static str>) -> anyhow::R
             drop(issuer);
             Ok(0)
         }
+        Command::Router => crate::server::router(&config, env).await,
+        Command::Serve => crate::server::serve(&config, env).await,
+        Command::Lifecycle { every } => crate::server::lifecycle(&config, every).await,
+        Command::Launcher => crate::server::launcher(&config, env).await,
         Command::Admin(AdminCommand::Snapshot(SnapshotCommand::Inspect { file })) => {
             let i = transfer::inspect(&file)?;
             let v = serde_json::to_value(&i)?;
@@ -421,6 +494,158 @@ async fn dispatch(cli: Cli, env: &Env, warnings: Vec<&'static str>) -> anyhow::R
             );
             Ok(0)
         }
+        Command::Admin(c) => admin(&ctx, &config, c).await,
+    }
+}
+
+/// The server's admin commands (tab "Config, CLI, local install", Server commands).
+async fn admin(ctx: &Ctx<'_>, config: &Config, c: AdminCommand) -> anyhow::Result<u8> {
+    use knoggin_server::admin::{self, Admin, RestoreOutcome};
+    use knoggin_state::system_clock;
+
+    use crate::server;
+    let clock = system_clock();
+    let store_id = |text: &str| {
+        uuid::Uuid::parse_str(text)
+            .map(knoggin_core::StoreId::from_uuid)
+            .map_err(|_| anyhow!("--store {text:?} is not a store ID"))
+    };
+    if let AdminCommand::InternalCert { out_dir } = &c {
+        let now = knoggin_core::Timestamp::from_millis(clock());
+        let (cert, key) = knoggin_server::link::new_internal_cert(now)
+            .map_err(|e| anyhow!("making the certificate: {e}"))?;
+        let cert_path = out_dir.join("internal_cert.pem");
+        let key_path = out_dir.join("internal_key.pem");
+        transfer::create_private(&cert_path)?.write_all(cert.as_bytes())?;
+        transfer::create_private(&key_path)?.write_all(key.as_bytes())?;
+        ctx.print(
+            &json!({ "cert": cert_path.display().to_string(), "key": key_path.display().to_string() }),
+            || format!("Wrote {} and {}.", cert_path.display(), key_path.display()),
+        );
+        return Ok(0);
+    }
+    if matches!(c, AdminCommand::RotateMasterKey)
+        && config.keys.provider == Some(crate::config::KeyProviderKind::Kms)
+    {
+        ctx.print(&json!({ "rotated": false }), || {
+            "KMS rotates its own key material; nothing to do.".into()
+        });
+        return Ok(0);
+    }
+    let keys = server::keys_setting(config)?;
+    let state = server::state_setting(config, Role::Admin)?;
+    let storage_settings = server::storage_settings(config)?;
+    let db: Arc<dyn knoggin_state::StateDb> =
+        server::connect_state(&state, clock.clone(), false).await?;
+    if let AdminCommand::RotateMasterKey = c {
+        let server::Keys::File(path) = &keys;
+        let (kek, stores) = admin::rotate_master_key(db, path).await?;
+        ctx.print(&json!({ "kekId": kek, "stores": stores }), || {
+            format!("The new master key is {kek}; {stores} store keys were wrapped again.")
+        });
+        return Ok(0);
+    }
+    let provider = server::key_provider(&keys)?;
+    let storage = server::storage(&storage_settings).await;
+    if let AdminCommand::Selftest = c {
+        let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?;
+        let report = admin::selftest(
+            db,
+            &*provider,
+            &*storage,
+            &http,
+            knoggin_core::Timestamp::from_millis(clock()),
+        )
+        .await;
+        let show = |r: Result<(), String>| r.err().unwrap_or_else(|| "ok".into());
+        let v = json!({
+            "stateDatabase": show(report.database.clone()),
+            "keyProvider": show(report.key_provider.clone()),
+            "bucket": show(report.bucket.clone().map_err(|e| e.to_string())),
+            "passed": report.passed(),
+        });
+        ctx.print(&v, || flat_text(&v));
+        return Ok(u8::from(!report.passed()));
+    }
+    let fields = Arc::new(
+        knoggin_state::Meta::new(db.clone())
+            .field_keys(&*provider)
+            .await
+            .map_err(|e| anyhow!("the field key: {e}"))?,
+    );
+    let admin = Admin::new(db, fields, storage, clock);
+    match c {
+        AdminCommand::Snapshots { store } => {
+            let v = admin
+                .snapshots(store_id(&store)?, config.retention.days)
+                .await?;
+            ctx.print(&v, || {
+                v["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|i| {
+                        format!(
+                            "{}  {} bytes  {}  {}",
+                            i["name"].as_str().unwrap_or(""),
+                            i["sizeBytes"],
+                            i["lastModified"].as_str().unwrap_or(""),
+                            i["keptBecause"]
+                                .as_str()
+                                .unwrap_or("(goes at the next lifecycle run)")
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            });
+            Ok(0)
+        }
+        AdminCommand::Restore {
+            store,
+            snapshot,
+            cancel,
+        } => {
+            let store = store_id(&store)?;
+            if cancel {
+                admin.cancel_restore(store).await?;
+                ctx.print(&json!({ "cancelled": true }), || {
+                    "The restore is cancelled.".into()
+                });
+                return Ok(0);
+            }
+            let name = admin::parse_snapshot(snapshot.as_deref().unwrap_or_default())?;
+            match admin.restore(store, name, admin::RESTORE_WAIT).await? {
+                RestoreOutcome::Parked => {
+                    ctx.print(
+                        &json!({ "snapshot": name.to_string(), "parked": true }),
+                        || format!("The store opens from {name} on its next request."),
+                    );
+                    Ok(0)
+                }
+                RestoreOutcome::Waiting => {
+                    ctx.print(&json!({ "snapshot": name.to_string(), "parked": false }), || {
+                        format!(
+                            "The user's container did not park within 150 seconds; the restore of \
+                             {name} takes effect when it next parks."
+                        )
+                    });
+                    Ok(1)
+                }
+            }
+        }
+        AdminCommand::RetireBefore { when } => {
+            let active = admin.retire_before(when.parse()?).await?;
+            ctx.print(&json!({ "activeLeases": active }), || {
+                format!("{active} leases are still active.")
+            });
+            Ok(0)
+        }
+        AdminCommand::Snapshot(_)
+        | AdminCommand::Selftest
+        | AdminCommand::RotateMasterKey
+        | AdminCommand::InternalCert { .. } => Ok(0),
     }
 }
 
@@ -931,6 +1156,21 @@ async fn key(ctx: &Ctx<'_>, config: &Config, c: KeyCommand) -> anyhow::Result<u8
             ctx.print(&json!({ "source": source.as_str() }), || {
                 format!("Loaded the master key into the {}.", source.as_str())
             });
+        }
+        KeyCommand::Generate { out } => {
+            let set = knoggin_crypto::MasterKeySet::generate()?;
+            knoggin_crypto::source::create_key_file(&out, &set)
+                .with_context(|| format!("writing {}", out.display()))?;
+            ctx.print(
+                &json!({ "out": out.display().to_string(), "kekId": set.current_kek_id() }),
+                || {
+                    format!(
+                        "Wrote the key set {} to {}.",
+                        set.current_kek_id(),
+                        out.display()
+                    )
+                },
+            );
         }
         KeyCommand::Rotate => {
             let r = keys::rotate(config, &ctx.home).await?;

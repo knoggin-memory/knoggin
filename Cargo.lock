@@ -2408,8 +2408,10 @@ dependencies = [
  "aws-lc-rs",
  "axum",
  "base64 0.23.1",
+ "bollard",
  "bytes",
  "clap",
+ "futures-util",
  "http",
  "http-body-util",
  "hyper",
@@ -2420,6 +2422,7 @@ dependencies = [
  "knoggin-embed",
  "knoggin-http",
  "knoggin-import-recalld",
+ "knoggin-server",
  "knoggin-state",
  "metrics-exporter-prometheus",
  "reqwest",
@@ -2434,6 +2437,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

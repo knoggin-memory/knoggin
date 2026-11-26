@@ -141,6 +141,8 @@ pub(crate) enum Role {
     Launcher,
     /// `admin`, `healthcheck`, `key generate`, `test-issuer`.
     Admin,
+    /// `serve`, inside a user container: no file, only the environment.
+    Serve,
 }
 
 impl Role {
@@ -745,11 +747,21 @@ impl Config {
             Some(p) => (p.to_owned(), true),
             None => (default_file(env, role), false),
         };
-        let mut table = match std::fs::read_to_string(&path) {
+        let read = if role == Role::Serve {
+            // A user container reads no config file (tab "Config, CLI, local install").
+            Err(std::io::Error::from(std::io::ErrorKind::NotFound))
+        } else {
+            std::fs::read_to_string(&path)
+        };
+        let mut table = match read {
             Ok(text) => text
                 .parse::<Table>()
                 .with_context(|| format!("config file {}", path.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound && !named => Table::new(),
+            Err(e)
+                if e.kind() == std::io::ErrorKind::NotFound && (!named || role == Role::Serve) =>
+            {
+                Table::new()
+            }
             Err(e) => return Err(e).with_context(|| format!("config file {}", path.display())),
         };
         for secret in SECRETS {
@@ -973,6 +985,7 @@ fn default_file(env: &Env, role: Role) -> PathBuf {
     match role {
         Role::Local => home,
         Role::Router | Role::Lifecycle | Role::Launcher => PathBuf::from(ETC_CONFIG),
+        Role::Serve => PathBuf::new(),
         Role::Admin if Path::new(ETC_CONFIG).exists() => PathBuf::from(ETC_CONFIG),
         Role::Admin => home,
     }

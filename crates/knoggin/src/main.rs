@@ -10,6 +10,7 @@ mod daemon;
 mod keys;
 mod logging;
 mod model;
+mod server;
 mod transfer;
 
 use std::process::ExitCode;
@@ -51,12 +52,18 @@ fn main() -> ExitCode {
         Ok(env) => env,
         Err(e) => return cli::fail_early(&format!("{e:#}")),
     };
-    let mut runtime = tokio::runtime::Builder::new_multi_thread();
-    if !args.is_daemon() {
-        // A command needs little: keep it off the machine's other cores.
-        runtime.worker_threads(2);
-    }
-    let runtime = match runtime.enable_all().build() {
+    let runtime = if args.is_serve() {
+        // At most 128 blocking threads: a user container may hold only 256 threads.
+        knoggin_server::container::runtime()
+    } else {
+        let mut runtime = tokio::runtime::Builder::new_multi_thread();
+        if !args.is_long_running() {
+            // A command needs little: keep it off the machine's other cores.
+            runtime.worker_threads(2);
+        }
+        runtime.enable_all().build()
+    };
+    let runtime = match runtime {
         Ok(rt) => rt,
         Err(e) => return cli::fail_early(&format!("could not start the runtime: {e}")),
     };

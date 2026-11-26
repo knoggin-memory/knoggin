@@ -371,7 +371,7 @@ struct Wiring {
 }
 
 /// The `auth.*` settings of mode `oauth` for the edge (`None` with sign-in off).
-fn oauth_config(config: &Config) -> anyhow::Result<Option<OauthConfig>> {
+fn oauth_config(config: &Config, role: Role) -> anyhow::Result<Option<OauthConfig>> {
     if config.auth_mode() != AuthMode::Oauth {
         return Ok(None);
     }
@@ -382,7 +382,7 @@ fn oauth_config(config: &Config) -> anyhow::Result<Option<OauthConfig>> {
         provider_name: a.provider_name.clone(),
         web_client_id: a.web_client_id.clone().unwrap_or_default(),
         web_client_secret: config
-            .secret("auth.web_client_secret", Role::Local)?
+            .secret("auth.web_client_secret", role)?
             .unwrap_or_else(|| Sensitive::new(String::new())),
         admin_emails: a.admin_emails.clone(),
         admin_subjects: a.admin_subjects.clone(),
@@ -394,7 +394,12 @@ fn oauth_config(config: &Config) -> anyhow::Result<Option<OauthConfig>> {
     }))
 }
 
-fn edge_config(config: &Config, own_url: String, test_mode: bool) -> anyhow::Result<EdgeConfig> {
+pub(crate) fn edge_config(
+    config: &Config,
+    own_url: String,
+    test_mode: bool,
+    role: Role,
+) -> anyhow::Result<EdgeConfig> {
     let l = &config.limits;
     let mut e = EdgeConfig::local(own_url, env!("CARGO_PKG_VERSION").to_owned());
     e.auth_mode = match config.auth_mode() {
@@ -411,7 +416,7 @@ fn edge_config(config: &Config, own_url: String, test_mode: bool) -> anyhow::Res
     };
     e.limits = store_limits(config);
     e.test_mode = test_mode;
-    e.oauth = oauth_config(config)?;
+    e.oauth = oauth_config(config, role)?;
     Ok(e)
 }
 
@@ -453,7 +458,7 @@ async fn go_live(w: &Wiring, u: Unlocked) -> anyhow::Result<(Router, Live)> {
     );
     let host = StoreHost::new(host_config, backend.clone(), embedder);
     let edge = EdgeState::new(
-        edge_config(config, w.own_url.clone(), w.test_mode)?,
+        edge_config(config, w.own_url.clone(), w.test_mode, Role::Local)?,
         EdgeParts {
             db: db.clone(),
             field_keys: u.fields.clone(),
