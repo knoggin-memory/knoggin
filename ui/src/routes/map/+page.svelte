@@ -7,7 +7,7 @@
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import LoadFailed from '$lib/components/LoadFailed.svelte';
   import Loading from '$lib/components/Loading.svelte';
-  import { storeKey } from '$lib/queries';
+  import { memoryTotal, namespacesQuery, storeKey } from '$lib/queries';
   import Screen from '$lib/components/Screen.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import ScopeChip from '$lib/components/ScopeChip.svelte';
@@ -45,6 +45,9 @@
     queryFn: () => fetchGraph(scope.current),
     staleTime: 60_000,
   }));
+  // The header's count is the live count from GET /v1/namespaces, as in the sidebar.
+  const namespaces = namespacesQuery();
+  const total = $derived(namespaces.data ? memoryTotal(namespaces.data, scope.current) : null);
   // A store or forget event changes the counts and the namespaces' sums.
   const client = useQueryClient();
   $effect(() =>
@@ -141,10 +144,10 @@
 <Screen title="Memory map">
   <PageHeader
     title="Memory map"
-    meta={graph.data && shown
+    meta={graph.data && shown && total !== null
       ? shown.ids.length === graph.data.ids.length
-        ? `${count(graph.data.ids.length)} ${graph.data.ids.length === 1 ? 'memory' : 'memories'}`
-        : `${count(shown.ids.length)} of ${count(graph.data.ids.length)} memories`
+        ? `${count(total)} ${total === 1 ? 'memory' : 'memories'}`
+        : `${count(shown.ids.length)} of ${count(total)} memories`
       : undefined}
   />
 

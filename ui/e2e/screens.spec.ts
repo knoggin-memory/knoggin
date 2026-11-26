@@ -15,6 +15,18 @@ test('the memory map draws the store and its counts', async ({ page }) => {
   await expect(scope.getByRole('button', { name: /project-harbor\s*2/ })).toBeVisible();
 });
 
+test('the map header and the sidebar count the live namespace counts', async ({ page }) => {
+  // The graph still holds six memories; the counts say 106, so the header must read them.
+  await page.route(/\/v1\/namespaces$/, async (r) => {
+    const real = await (await r.fetch()).json();
+    real.items[0].memoryCount += 100;
+    await r.fulfill({ json: real });
+  });
+  await open(page, '/map');
+  await expect(page.getByText('106 memories')).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Namespace scope' }).getByRole('button', { name: /All namespaces\s*106/ })).toBeVisible();
+});
+
 test('Explore lists the memories and opens one', async ({ page }) => {
   await open(page, '/explore');
   await expect(page.getByText('6 memories')).toBeVisible();

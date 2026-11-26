@@ -18,6 +18,10 @@ export const namespacesQuery = () =>
     staleTime: 10_000,
   }));
 
+/** The count for a scope: the sum of the live counts for all namespaces (`null`), else that namespace's. */
+export const memoryTotal = (namespaces: Namespace[], scope: string | null) =>
+  scope === null ? namespaces.reduce((a, n) => a + n.memoryCount, 0) : (namespaces.find((n) => n.name === scope)?.memoryCount ?? 0);
+
 /** GET /v1/stores, a control route: every figure on the Apps pages comes from it. */
 export const storesQuery = () =>
   createQuery(() => ({

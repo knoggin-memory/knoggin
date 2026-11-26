@@ -11,7 +11,7 @@
   import { prefs } from '$lib/prefs.svelte';
   import { session, who } from '$lib/session.svelte';
   import { status } from '$lib/status.svelte';
-  import { namespacesQuery } from '$lib/queries';
+  import { memoryTotal, namespacesQuery } from '$lib/queries';
   import { count } from '$lib/format';
 
   const views: { href: string; label: string; icon: IconName }[] = [
@@ -31,7 +31,7 @@
   );
 
   const namespaces = namespacesQuery();
-  const total = $derived((namespaces.data ?? []).reduce((a, n) => a + n.memoryCount, 0));
+  const total = $derived(memoryTotal(namespaces.data ?? [], null));
   const current = (href: string) => page.url.pathname === href || page.url.pathname.startsWith(href + '/');
   const collapsed = $derived(prefs.sidebarCollapsed);
   // The profile row and Sign out exist only for a cookie session.
