@@ -548,6 +548,14 @@ pub(crate) async fn control(
         Ok(None) => return edge.refused(&p, unauthenticated()).into_response(),
         Err(e) => return edge.refused(&p, e).into_response(),
     };
+    // Step 12, by credential and by user.
+    if let Err(e) = edge.rate_limit(&caller) {
+        return e.into_response();
+    }
+    let _in_flight = match edge.inner().caps.take(caller.user.value.id, Cap::InFlight) {
+        Ok(g) => g,
+        Err(e) => return e.into_response(),
+    };
     // Step 13: control routes need the socket, a session, or sign-in off.
     if !caller.credential.is_control() {
         return ApiError::permission_denied("This credential reaches memories only")
@@ -556,13 +564,6 @@ pub(crate) async fn control(
     if access == Access::Admin && !caller.is_admin {
         return ApiError::permission_denied("This route needs an admin").into_response();
     }
-    if let Err(e) = edge.rate_limit(&caller) {
-        return e.into_response();
-    }
-    let _in_flight = match edge.inner().caps.take(caller.user.value.id, Cap::InFlight) {
-        Ok(g) => g,
-        Err(e) => return e.into_response(),
-    };
     edge.bookkeeping(&caller).await;
     request.extensions_mut().insert(caller);
     next.run(request).await

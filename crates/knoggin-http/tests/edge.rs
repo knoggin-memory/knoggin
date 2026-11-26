@@ -1204,6 +1204,36 @@ async fn rate_limits() {
 }
 
 #[tokio::test]
+async fn each_bucket_runs_before_the_checks_after_it() {
+    let env = EdgeEnv::with(tight).await;
+    // Step 1 before step 2: a request the browser checks refuse still takes from the fixed
+    // bucket (3 here), and an empty bucket answers before those checks.
+    let cross_origin = [("origin", "http://evil.example")];
+    for _ in 0..3 {
+        let r = env
+            .call(fixed(), Method::GET, "/healthz", None, &cross_origin)
+            .await;
+        assert_eq!(r.error(), Code::PermissionDenied);
+    }
+    let r = env
+        .call(fixed(), Method::GET, "/healthz", None, &cross_origin)
+        .await;
+    assert_eq!(r.error(), Code::RateLimited);
+    // Step 12 before step 13: an API key on a control route spends its bucket (2 here).
+    let (secret, _) = env.key(env.personal, json!(["memory:read"]), 90).await;
+    for _ in 0..2 {
+        let r = env
+            .bearer(fixed(), &secret, Method::GET, "/v1/stores", None)
+            .await;
+        assert_eq!(r.error(), Code::PermissionDenied);
+    }
+    let r = env
+        .bearer(fixed(), &secret, Method::GET, "/v1/stores", None)
+        .await;
+    assert_eq!(r.error(), Code::RateLimited);
+}
+
+#[tokio::test]
 async fn a_cookie_does_not_get_around_the_fixed_listeners_bucket() {
     // Mode `none` ignores a cookie, so a request with only a cookie is charged at step 1.
     let env = EdgeEnv::with(tight).await;

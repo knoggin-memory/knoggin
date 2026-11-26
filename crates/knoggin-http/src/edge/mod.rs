@@ -281,8 +281,8 @@ pub fn edge_layer(edge: EdgeState, store_routes: Router, mode_routes: Router) ->
         .layer(middleware::from_fn_with_state(edge, entry))
 }
 
-/// The outermost step of every request: the request ID, the tag check, the browser checks
-/// and the daemon's fixed bucket (steps 1 and 2), then the response headers and the error
+/// The outermost step of every request: the request ID, the tag check, the daemon's fixed
+/// bucket and the browser checks (steps 1 and 2), then the response headers and the error
 /// shape on the way out.
 async fn entry(State(edge): State<EdgeState>, mut request: Request, next: Next) -> Response {
     let id = Uuid::now_v7();
@@ -298,21 +298,22 @@ async fn entry(State(edge): State<EdgeState>, mut request: Request, next: Next) 
             );
             ApiError::internal().into_response()
         }
-        Some(arrival) => match browser::check(&request, &arrival, edge.0.public.as_ref()) {
-            Err(e) => e.into_response(),
-            Ok(()) => {
-                let bare = !check::sends_credential(request.headers(), edge.0.config.auth_mode);
-                match (arrival, bare) {
-                    (Arrival::Fixed { .. }, true) => {
-                        match edge.0.unauthenticated.take(&(), "address") {
-                            Ok(()) => next.run(request).await,
-                            Err(e) => e.into_response(),
-                        }
-                    }
-                    _ => next.run(request).await,
+        Some(arrival) => {
+            // Step 1, the daemon's fixed bucket, then step 2, the browser checks.
+            let charged = match arrival {
+                Arrival::Fixed { .. }
+                    if !check::sends_credential(request.headers(), edge.0.config.auth_mode) =>
+                {
+                    edge.0.unauthenticated.take(&(), "address")
                 }
+                _ => Ok(()),
+            };
+            match charged.and_then(|()| browser::check(&request, &arrival, edge.0.public.as_ref()))
+            {
+                Ok(()) => next.run(request).await,
+                Err(e) => e.into_response(),
             }
-        },
+        }
     };
     finish(response, id)
 }
