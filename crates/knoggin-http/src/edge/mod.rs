@@ -40,7 +40,7 @@ pub use self::check::{Caller, Credential};
 pub use self::limits::Rate;
 use self::limits::{Buckets, Caps, CredentialKey};
 use crate::ctx::headers;
-use crate::error::{ApiError, fill_request_id};
+use crate::error::{ApiError, shape_answer};
 use crate::host::StoreHost;
 use crate::local::LocalSessions;
 use crate::settings::{DEFAULT_BODY_BYTES, StoreLimits};
@@ -323,18 +323,10 @@ pub(crate) fn browser_check(request: &Request, arrival: &Arrival) -> Result<(), 
     browser::check(request, arrival, None)
 }
 
-/// The way out of every request: the error shape, the request ID and the headers.
-pub(crate) fn finish(mut response: Response, id: Uuid) -> Response {
-    if response.extensions().get::<ApiError>().is_none()
-        && let Some(e) = ApiError::from_bare_status(response.status())
-    {
-        let allow = response.headers().get(header::ALLOW).cloned();
-        response = e.into_response();
-        if let Some(allow) = allow {
-            response.headers_mut().insert(header::ALLOW, allow);
-        }
-    }
-    let mut response = fill_request_id(response, id);
+/// The way out of every request: the store layer's error shape (shared with it), the
+/// request ID header and the browser headers.
+pub(crate) fn finish(response: Response, id: Uuid) -> Response {
+    let mut response = shape_answer(response, Some(id));
     if let Ok(value) = HeaderValue::from_str(&id.to_string()) {
         response.headers_mut().insert(headers::REQUEST_ID, value);
     }

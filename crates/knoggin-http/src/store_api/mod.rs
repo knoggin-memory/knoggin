@@ -29,7 +29,7 @@ use tower_http::timeout::TimeoutLayer;
 
 use self::extract::{Ctx, IdempotencyKey, JsonBody, QueryMap, has_content_type, memory_id};
 use crate::ctx::headers;
-use crate::error::{ApiError, fill_request_id};
+use crate::error::{ApiError, shape_answer};
 use crate::host::{Reply, StoreHost};
 use crate::settings::DEFAULT_BODY_BYTES;
 use crate::trace;
@@ -99,31 +99,10 @@ pub fn store_layer(host: Arc<StoreHost>) -> Router {
         .layer(middleware::from_fn(trace::observe))
 }
 
-/// Turns the bare answers of library layers into `ApiError`s, puts the request ID in
-/// every error body, and marks every answer `Cache-Control: no-store`.
+/// The store layer's way out (see [`shape_answer`]).
 async fn normalize(request: Request, next: Next) -> Response {
     let id = trace::request_id(&request);
-    let mut response = next.run(request).await;
-    if response.extensions().get::<ApiError>().is_none()
-        && response
-            .extensions()
-            .get::<crate::mcp::Answered>()
-            .is_none()
-        && let Some(e) = ApiError::from_bare_status(response.status())
-    {
-        let allow = response.headers().get(header::ALLOW).cloned();
-        response = e.into_response();
-        if let Some(allow) = allow {
-            response.headers_mut().insert(header::ALLOW, allow);
-        }
-    }
-    if let Some(id) = id {
-        response = fill_request_id(response, id);
-    }
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    response
+    shape_answer(next.run(request).await, id)
 }
 
 fn json(status: StatusCode, body: Vec<u8>) -> Response {

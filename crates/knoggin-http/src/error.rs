@@ -424,6 +424,33 @@ pub fn fill_request_id(response: Response, id: Uuid) -> Response {
     }
 }
 
+/// The shared way out of the store layer and the edge: turns the bare answers of library
+/// layers (a 413, 504, 405, 404 or 500 without an `ApiError`) into `ApiError`s, except an
+/// MCP answer, which keeps its JSON-RPC body; puts the request ID in every error body; and
+/// marks the answer `Cache-Control: no-store`.
+pub(crate) fn shape_answer(mut response: Response, id: Option<Uuid>) -> Response {
+    if response.extensions().get::<ApiError>().is_none()
+        && response
+            .extensions()
+            .get::<crate::mcp::Answered>()
+            .is_none()
+        && let Some(e) = ApiError::from_bare_status(response.status())
+    {
+        let allow = response.headers().get(header::ALLOW).cloned();
+        response = e.into_response();
+        if let Some(allow) = allow {
+            response.headers_mut().insert(header::ALLOW, allow);
+        }
+    }
+    if let Some(id) = id {
+        response = fill_request_id(response, id);
+    }
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

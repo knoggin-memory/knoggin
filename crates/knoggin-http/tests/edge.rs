@@ -1469,6 +1469,23 @@ async fn the_mcp_endpoint_sits_behind_the_credential_check() {
         "{}",
         String::from_utf8_lossy(&r.bytes)
     );
+    // The edge's way out keeps an MCP answer's JSON-RPC body, as the store layer's does.
+    let auth = format!("Bearer {secret}");
+    let r = env
+        .call(
+            fixed(),
+            Method::POST,
+            "/mcp",
+            Some(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" })),
+            &[
+                ("authorization", &auth),
+                ("mcp-session-id", "no-such-session"),
+            ],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND);
+    assert_eq!(r.json["error"]["code"], -32600, "{}", r.json);
+    assert_eq!(r.json["id"], 2);
     let r = env
         .call(
             fixed(),
