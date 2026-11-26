@@ -181,6 +181,16 @@ impl std::fmt::Debug for ContentRef<'_> {
 ///
 /// Steps 7 and 8, the namespace and the parent, need the store.
 pub fn validate_content(content: ContentRef<'_>, now: Timestamp) -> Result<Vec<Tag>, EngineError> {
+    validate_content_within(content, now, FULL_TEXT_MAX_BYTES)
+}
+
+/// [`validate_content`] with another full-text limit: an import line may carry a
+/// longer full text than a save, and is otherwise checked the same, in the same order.
+pub fn validate_content_within(
+    content: ContentRef<'_>,
+    now: Timestamp,
+    full_text_max_bytes: usize,
+) -> Result<Vec<Tag>, EngineError> {
     if content.summary.is_empty() {
         return Err(EngineError::invalid("summary", "summary must not be empty"));
     }
@@ -192,7 +202,7 @@ pub fn validate_content(content: ContentRef<'_>, now: Timestamp) -> Result<Vec<T
                 "fullText must not be empty; leave it out instead",
             ));
         }
-        validate_text_len("fullText", full_text, FULL_TEXT_MAX_BYTES)?;
+        validate_text_len("fullText", full_text, full_text_max_bytes)?;
     }
     let tags = validate_tags("tags", content.tags)?;
     for (field, items, max_items, max_bytes) in [

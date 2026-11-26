@@ -14,12 +14,9 @@ use serde::{Deserialize, Serialize};
 use crate::error::EngineError;
 use crate::id::MemoryId;
 use crate::model::limits::{
-    ACCESS_HISTORY_MAX, DIFFICULTY_MAX, DIFFICULTY_MIN, EMOTION_MAX_BYTES, ENTITY_MAX_BYTES,
-    MAX_EMOTIONS, MAX_ENTITIES, MAX_TOPICS, STABILITY_CEILING, STABILITY_FLOOR, SUMMARY_MAX_BYTES,
-    TOPIC_MAX_BYTES, validate_created_at, validate_labels, validate_namespace_name, validate_tags,
-    validate_text_len,
+    ACCESS_HISTORY_MAX, ContentRef, DIFFICULTY_MAX, DIFFICULTY_MIN, STABILITY_CEILING,
+    STABILITY_FLOOR, validate_content_within, validate_created_at, validate_namespace_name,
 };
-use crate::model::markup::reject_client_markup;
 use crate::model::{
     AccessEvent, Edge, EdgeKey, EdgeType, EmbeddingState, Labels, Memory, Namespace,
     NamespacePolicy, Phase,
@@ -461,58 +458,51 @@ impl Store {
         on_conflict: OnConflict,
         now: Timestamp,
     ) -> Result<ImportOutcome, EngineError> {
-        let tags = validate_tags("tags", r.tags.as_deref().unwrap_or_default())?;
+        // The phase rules first (rule 3 of "Import rules"), then the checks of a save in
+        // the save's order, so a line reports the same first error as the request would.
+        let ghost = r.phase == Phase::Ghost;
+        match (ghost, &r.summary) {
+            (false, None) => return Err(EngineError::invalid("summary", "summary is required")),
+            (true, Some(_)) => {
+                return Err(EngineError::invalid("summary", "a ghost has no summary"));
+            }
+            _ => {}
+        }
+        if r.full_text.is_some() && r.phase != Phase::Full {
+            return Err(EngineError::invalid(
+                "fullText",
+                "only a memory in the phase 'full' has full text",
+            ));
+        }
+        let raw_tags = r.tags.unwrap_or_default();
         let labels = Labels {
             entities: r.entities.unwrap_or_default(),
             topics: r.topics.unwrap_or_default(),
             emotions: r.emotions.unwrap_or_default(),
         };
-        validate_labels("entities", &labels.entities, MAX_ENTITIES, ENTITY_MAX_BYTES)?;
-        validate_labels("topics", &labels.topics, MAX_TOPICS, TOPIC_MAX_BYTES)?;
-        validate_labels(
-            "emotions",
-            &labels.emotions,
-            MAX_EMOTIONS,
-            EMOTION_MAX_BYTES,
-        )?;
-        let ghost = r.phase == Phase::Ghost;
-        let summary = match (ghost, r.summary) {
-            (true, None) => String::new(),
-            (true, Some(_)) => {
-                return Err(EngineError::invalid("summary", "a ghost has no summary"));
+        let summary = r.summary.unwrap_or_default();
+        let tags = if ghost {
+            if !raw_tags.is_empty() || labels != Labels::default() {
+                return Err(EngineError::invalid(
+                    "tags",
+                    "a ghost has no tags or labels",
+                ));
             }
-            (false, None) => return Err(EngineError::invalid("summary", "summary is required")),
-            (false, Some(s)) => s,
+            validate_created_at(r.created_at, now)?;
+            Vec::new()
+        } else {
+            let content = ContentRef {
+                summary: &summary,
+                full_text: r.full_text.as_deref(),
+                tags: &raw_tags,
+                entities: &labels.entities,
+                topics: &labels.topics,
+                emotions: &labels.emotions,
+                created_at: Some(r.created_at),
+            };
+            // Full text may be as long as the line limit allows.
+            validate_content_within(content, now, usize::MAX)?
         };
-        if !ghost {
-            if summary.is_empty() {
-                return Err(EngineError::invalid("summary", "summary must not be empty"));
-            }
-            validate_text_len("summary", &summary, SUMMARY_MAX_BYTES)?;
-            reject_client_markup("summary", &summary)?;
-        }
-        if let Some(full_text) = &r.full_text {
-            if r.phase != Phase::Full {
-                return Err(EngineError::invalid(
-                    "fullText",
-                    "only a memory in the phase 'full' has full text",
-                ));
-            }
-            if full_text.is_empty() {
-                return Err(EngineError::invalid(
-                    "fullText",
-                    "fullText must not be empty",
-                ));
-            }
-            reject_client_markup("fullText", full_text)?;
-        }
-        if ghost && (!tags.is_empty() || labels != Labels::default()) {
-            return Err(EngineError::invalid(
-                "tags",
-                "a ghost has no tags or labels",
-            ));
-        }
-        check_time("createdAt", Some(r.created_at), now)?;
         for (field, at) in [
             ("decayAnchorAt", r.decay_anchor_at),
             ("retrievedAt", r.retrieved_at),
@@ -854,6 +844,11 @@ mod tests {
             Some("tags")
         );
         assert_eq!(field(&mut s, json!({ "tags": ["Bad Tag"] })), Some("tags"));
+        // The first error of a save with the same content: the summary before the tags.
+        assert_eq!(
+            field(&mut s, json!({ "summary": "", "tags": ["Bad Tag"] })),
+            Some("summary")
+        );
         assert_eq!(
             field(&mut s, json!({ "createdAt": "2999-01-01T00:00:00Z" })),
             Some("createdAt")
