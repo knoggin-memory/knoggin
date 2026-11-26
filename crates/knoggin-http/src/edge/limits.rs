@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -83,6 +84,16 @@ impl<K: Hash + Eq> Buckets<K> {
         if let Some(b) = map.get_mut(key) {
             b.tokens = (b.tokens + 1.0).min(self.rate.burst);
         }
+    }
+}
+
+/// The bucket an address is counted in (tab "Server", Rate limits): an IPv4 address (an
+/// IPv4-mapped IPv6 address counts as that IPv4 address) is its own bucket; IPv6
+/// addresses share one per /64.
+pub fn address_key(ip: IpAddr) -> IpAddr {
+    match ip.to_canonical() {
+        IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & !((1u128 << 64) - 1))),
+        v4 => v4,
     }
 }
 
@@ -188,6 +199,18 @@ mod tests {
         tokio::time::advance(Duration::from_millis(500)).await;
         b.take(&1, "credential").unwrap();
         assert!(b.take(&1, "credential").is_err());
+    }
+
+    #[test]
+    fn addresses_are_keyed_canonically_and_ipv6_by_its_64() {
+        let v4: IpAddr = "192.0.2.7".parse().unwrap();
+        let mapped: IpAddr = "::ffff:192.0.2.7".parse().unwrap();
+        assert_eq!(address_key(mapped), v4);
+        let a: IpAddr = "2001:db8:1:2:aaaa::1".parse().unwrap();
+        let b: IpAddr = "2001:db8:1:2:bbbb::9".parse().unwrap();
+        let c: IpAddr = "2001:db8:1:3::1".parse().unwrap();
+        assert_eq!(address_key(a), address_key(b));
+        assert_ne!(address_key(a), address_key(c));
     }
 
     #[test]

@@ -168,6 +168,8 @@ struct Presented {
     cookie: Option<Sensitive<String>>,
     /// A request that is not `GET` or `HEAD` and lacks `X-Knoggin-UI: 1`.
     bare_write: bool,
+    /// The router's client address, for the bucket per address.
+    client: Option<super::ClientAddr>,
 }
 
 /// The value of the cookie `name`, from every `Cookie` header.
@@ -195,6 +197,7 @@ impl Presented {
                 .filter(|v| !v.is_empty())
                 .map(Sensitive::new);
         }
+        p.client = request.extensions().get::<super::ClientAddr>().copied();
         p.bare_write = method != Method::GET
             && method != Method::HEAD
             && map.get("x-knoggin-ui").is_none_or(|v| v != "1");
@@ -225,6 +228,7 @@ impl Presented {
             sent: sends_credential(map, session_cookie),
             cookie: None,
             bare_write: false,
+            client: None,
         }
     }
 }
@@ -645,11 +649,11 @@ impl EdgeState {
         }
     }
 
-    /// Charges a refused credential to the daemon's fixed bucket (step 1).
+    /// Charges a refused credential to the daemon's fixed bucket or the router's bucket
+    /// per address (step 1).
     fn refused(&self, p: &Presented, e: ApiError) -> ApiError {
-        if matches!(p.arrival, Arrival::Fixed { .. })
-            && p.sent
-            && let Err(limited) = self.inner().unauthenticated.take(&(), "address")
+        if p.sent
+            && let Err(limited) = self.charge_address(&p.arrival, p.client)
         {
             return limited;
         }
@@ -666,10 +670,13 @@ impl EdgeState {
         HeaderValue::from_str(&text).ok()
     }
 
-    /// Step 12, the bucket per credential.
+    /// Step 12, the bucket per credential and, on the router, the bucket per user.
     fn rate_limit(&self, caller: &Caller) -> Result<(), ApiError> {
-        match caller.credential.bucket() {
-            Some(key) => self.inner().per_credential.take(&key, "credential"),
+        if let Some(key) = caller.credential.bucket() {
+            self.inner().per_credential.take(&key, "credential")?;
+        }
+        match &self.inner().per_user {
+            Some(b) => b.take(&caller.user.value.id, "user"),
             None => Ok(()),
         }
     }
@@ -822,9 +829,9 @@ pub(crate) async fn control(
         // Step 1 for a route that needs no credential: a credential sent to it is never
         // checked, so on the fixed listener it is charged as a bare request is at entry.
         // A successful sign-in gives its token back (`signin::callback`).
-        if matches!(arrival, Arrival::Fixed { .. })
-            && sends_credential(request.headers(), edge.session_cookie())
-            && let Err(e) = edge.inner().unauthenticated.take(&(), "address")
+        let client = request.extensions().get::<super::ClientAddr>().copied();
+        if sends_credential(request.headers(), edge.session_cookie())
+            && let Err(e) = edge.charge_address(&arrival, client)
         {
             return e.into_response();
         }

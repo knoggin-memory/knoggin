@@ -6,6 +6,7 @@
 
 use std::future::Future;
 use std::io;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -63,7 +64,36 @@ pub async fn serve_tcp(
     config: ListenConfig,
     shutdown: impl Future<Output = ()>,
 ) {
-    let accept = || async { listener.accept().await.map(|(s, _)| (Stream::Tcp(s), true)) };
+    let accept = || async {
+        let (s, peer) = listener.accept().await?;
+        let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
+        Ok((Stream::Tcp(s), Some(Peer(peer))))
+    };
+    run(accept, router, arrival, config, shutdown).await;
+}
+
+/// The peer of a connection on a listener served by [`serve_tcp_admitted`], in every
+/// request's extensions, with its IP made canonical (`IpAddr::to_canonical`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Peer(pub SocketAddr);
+
+/// Like [`serve_tcp`], for the router's public and metrics listeners: `admit` runs for
+/// every accepted connection before anything is read and closes a refused peer's
+/// connection without an answer, and each request carries the connection's [`Peer`].
+pub async fn serve_tcp_admitted(
+    listener: TcpListener,
+    router: Router,
+    arrival: Arrival,
+    config: ListenConfig,
+    admit: impl Fn(SocketAddr) -> bool,
+    shutdown: impl Future<Output = ()>,
+) {
+    let accept = || async {
+        let (stream, peer) = listener.accept().await?;
+        let peer = SocketAddr::new(peer.ip().to_canonical(), peer.port());
+        let allowed = admit(peer);
+        Ok((Stream::Tcp(stream), allowed.then_some(Peer(peer))))
+    };
     run(accept, router, arrival, config, shutdown).await;
 }
 
@@ -87,10 +117,14 @@ pub async fn serve_unix(
                 "closed a socket connection from another user"
             );
         }
-        Ok((Stream::Unix(stream), allowed))
+        Ok((Stream::Unix(stream), allowed.then_some(Peer(UNIX_PEER))))
     };
     run(accept, router, Arrival::Socket, config, shutdown).await;
 }
+
+/// The [`Peer`] of a Unix socket connection, which has no address.
+const UNIX_PEER: SocketAddr =
+    SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0);
 
 /// Whether a socket peer may be served: only this process's own user.
 pub fn peer_allowed(peer_uid: u32, own_uid: u32) -> bool {
@@ -111,7 +145,7 @@ async fn run<A, F>(
     shutdown: impl Future<Output = ()>,
 ) where
     A: Fn() -> F,
-    F: Future<Output = io::Result<(Stream, bool)>>,
+    F: Future<Output = io::Result<(Stream, Option<Peer>)>>,
 {
     let builder = Arc::new(builder(config));
     let graceful = GracefulShutdown::new();
@@ -121,8 +155,8 @@ async fn run<A, F>(
         while connections.try_join_next().is_some() {}
         tokio::select! {
             accepted = accept() => match accepted {
-                Ok((stream, true)) => {
-                    let service = service(router.clone(), arrival.clone());
+                Ok((stream, Some(peer))) => {
+                    let service = service(router.clone(), arrival.clone(), peer);
                     connections.spawn(connection(
                         stream,
                         service,
@@ -131,7 +165,7 @@ async fn run<A, F>(
                         config.header_read_timeout,
                     ));
                 }
-                Ok((_, false)) => {}
+                Ok((_, None)) => {}
                 Err(e) => {
                     tracing::warn!(kind = ?e.kind(), "accept failed");
                     // A full descriptor table would otherwise spin.
@@ -145,10 +179,10 @@ async fn run<A, F>(
     connections.abort_all();
 }
 
-type Service = TowerToHyperService<AddExtension<Router, Arrival>>;
+type Service = TowerToHyperService<AddExtension<AddExtension<Router, Peer>, Arrival>>;
 
-fn service(router: Router, arrival: Arrival) -> Service {
-    TowerToHyperService::new(Extension(arrival).layer(router))
+fn service(router: Router, arrival: Arrival, peer: Peer) -> Service {
+    TowerToHyperService::new(Extension(arrival).layer(Extension(peer).layer(router)))
 }
 
 async fn connection(

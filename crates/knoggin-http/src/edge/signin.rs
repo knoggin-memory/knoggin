@@ -212,6 +212,7 @@ async fn callback(
     Extension(arrival): Extension<Arrival>,
     request: Request,
 ) -> Response {
+    let client = request.extensions().get::<super::ClientAddr>().copied();
     let o = match edge.sign_in_here(&arrival, request.headers()) {
         Ok(o) => o,
         Err(e) => return e.into_response(),
@@ -223,9 +224,7 @@ async fn callback(
         Ok((session, to)) => {
             // Only a callback that does not sign in counts against the fixed listener's
             // bucket (step 1), which charged every callback before its code exchange.
-            if matches!(arrival, Arrival::Fixed { .. }) {
-                edge.inner().unauthenticated.give_back(&());
-            }
+            edge.give_back_address(&arrival, client);
             redirect(
                 &to,
                 [set_cookie(c.session, session.expose(), c.attributes), clear],
