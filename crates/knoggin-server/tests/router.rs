@@ -204,6 +204,20 @@ async fn two_routers_claim_one_ready_container_for_two_users_and_the_loser_keeps
 }
 
 #[tokio::test]
+async fn while_the_launcher_starts_another_build_a_waiting_request_launches_once_a_minute() {
+    let w = World::new().await;
+    // One host: the launcher's containers report 0.2.0, the router is 0.1.0.
+    w.launcher
+        .set_runner(stub_runner("0.2.0", true, w.control.clone()));
+    let f = w.fleet(BUILD, true, |_| {});
+    let e = f.acquire(user(), Duration::from_secs(4)).await.unwrap_err();
+    assert_eq!(e.code, Code::Unavailable);
+    // The first launch shows the other build; after it, one launch in the minute.
+    let launched = w.launcher.handles().len();
+    assert!((1..=2).contains(&launched), "{launched} launches");
+}
+
+#[tokio::test]
 async fn a_failed_claim_marks_the_container_gone_and_does_not_count_against_the_user() {
     let w = World::new().await;
     let f = w.fleet(BUILD, true, |c| c.containers.claim_wait_ms = 1_500);

@@ -402,7 +402,13 @@ impl Fleet {
             if self.at_max(&records) {
                 return Err(ApiError::unavailable(30));
             }
-            self.launch(build).await.map_err(db_error)?;
+            // While the launcher's containers report another build than this router's,
+            // no launch can bring a claimable container: one a minute, as the pool does.
+            if self.launches_mismatch() {
+                self.launch_slowly(build).await.map_err(db_error)?;
+            } else {
+                self.launch(build).await.map_err(db_error)?;
+            }
             return Ok(Step::Wait);
         };
         let generation = lease.next_generation(now);
