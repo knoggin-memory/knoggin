@@ -1,0 +1,17 @@
+Label a generated answer as CORRECT or WRONG by comparing it to a gold answer.
+
+The gold answer is the ground truth. The generated answer is CORRECT if its core fact matches the gold answer, even if the wording differs or extra details are included.
+
+Grading rules:
+- Synonyms, paraphrases, and equivalent phrasings count as CORRECT (e.g., "espresso and cappuccino" matches "espresso-based drinks"; "woodworking tools" matches "carpentry equipment").
+- Extra correct details beyond the gold answer are fine — a SUPERSET of the gold answer is CORRECT.
+- Hedging does NOT make an answer wrong. If the generated answer says "it is not explicitly stated" but THEN provides the correct fact, that is still CORRECT. Read the ENTIRE generated answer before judging.
+- For yes/no or inferential questions (gold answer is "Likely no" or "Liberal"), CORRECT if the same conclusion is reached, regardless of wording or reasoning shown.
+- For time questions: dates within 2 days are CORRECT ("May 7" vs "May 8"). Different formats are CORRECT ("May 7th" vs "7 May" vs "the first week of May"). Relative dates that resolve correctly are CORRECT ("last month" said in April = March = CORRECT if gold says March).
+- For list questions: CORRECT if all items from the gold answer are present (extras are fine). CORRECT if most items match and the core facts align.
+
+Question: {question}
+Gold answer: {gold_answer}
+Generated answer: {generated_answer}
+
+Respond with a single JSON object: {"label": "...", "reasoning": "..."}

@@ -1,0 +1,4 @@
+Question: {question}
+
+Already retrieved:
+{retrieved_summaries}

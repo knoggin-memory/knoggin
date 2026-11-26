@@ -1,0 +1,8 @@
+{date_context}Retrieved memories:
+{memory_context}
+
+Question: {question}
+
+{reasoning_hint}
+
+Answer:
