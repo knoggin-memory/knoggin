@@ -109,7 +109,7 @@ One line for every place where the build departed from the tech spec, with the r
 - Edge, session route with an API key: `personalStoreId` is `null` (the tab does not say), so a key learns nothing of the user's other stores.
 - Edge, path IDs that are not UUIDs answer `invalid_argument` on `id`; an API key whose store record is gone answers `unauthenticated`.
 - Edge, `GET /v1/users` cursor: the last user's ID in its simple form (32 hex digits), which is base64url text.
-- Edge, the fixed listener's bucket: a request without any credential is charged once, at step 1; a request whose credential is refused is charged at the refusing step, the session route included.
+- Edge, the fixed listener's bucket: a request without any credential is charged once, at step 1; a request whose credential is refused is charged at the refusing step, the session route included. "A cookie" in step 1 is read as a cookie that the mode reads: in mode `none` a cookie is ignored (step 8), so a request with only a cookie is charged at step 1 like one without any credential.
 - Edge, every answer of the edge carries `Cache-Control: no-store`, since in milestone 3 every answer is an API answer; the web UI's files (milestone 4) will need their own rule.
 - Edge, local routes: `POST /v1/local/browser-code` off the socket, `POST /v1/local/session` and `POST /auth/logout` off the web listener answer `not_found`; logout on the web listener with another credential than a local web session answers `permission_denied`.
 - Edge, account deletion on a local install also ends the other local web sessions (the tab says "other sessions end").

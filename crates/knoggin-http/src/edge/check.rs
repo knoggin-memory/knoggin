@@ -122,16 +122,29 @@ pub struct Caller {
     pub is_admin: bool,
 }
 
+/// Whether a request carries a credential that this mode reads: an `Authorization` header,
+/// or in mode `oauth` a cookie (step 8). In mode `none` a cookie is ignored, so a request
+/// with only a cookie is charged to the fixed listener's bucket at step 1.
+pub(super) fn sends_credential(map: &HeaderMap, mode: AuthMode) -> bool {
+    map.contains_key(header::AUTHORIZATION)
+        || match mode {
+            AuthMode::Oauth => map.contains_key(header::COOKIE),
+            AuthMode::None => false,
+        }
+}
+
 /// What a request presented, kept so that a transfer can be checked again.
 #[derive(Clone)]
 struct Presented {
     arrival: Arrival,
     bearer: Option<Sensitive<String>>,
     malformed: bool,
+    /// See [`sends_credential`].
+    sent: bool,
 }
 
 impl Presented {
-    fn read(arrival: Arrival, map: &HeaderMap) -> Self {
+    fn read(arrival: Arrival, map: &HeaderMap, mode: AuthMode) -> Self {
         let mut values = map.get_all(header::AUTHORIZATION).iter();
         let (bearer, malformed) = match (values.next(), values.next()) {
             (None, _) => (None, false),
@@ -145,11 +158,8 @@ impl Presented {
             arrival,
             bearer,
             malformed,
+            sent: sends_credential(map, mode),
         }
-    }
-
-    fn sent_credential(&self) -> bool {
-        self.bearer.is_some() || self.malformed
     }
 }
 
@@ -351,7 +361,7 @@ impl EdgeState {
     /// Charges a refused credential to the daemon's fixed bucket (step 1).
     fn refused(&self, p: &Presented, e: ApiError) -> ApiError {
         if matches!(p.arrival, Arrival::Fixed { .. })
-            && p.sent_credential()
+            && p.sent
             && let Err(limited) = self.inner().unauthenticated.take(&(), "address")
         {
             return limited;
@@ -499,7 +509,7 @@ pub(crate) async fn control(
     if access == Access::Open {
         return next.run(request).await;
     }
-    let p = Presented::read(arrival, request.headers());
+    let p = Presented::read(arrival, request.headers(), edge.inner().config.auth_mode);
     let resolved = edge.resolve(&p, access).await;
     if access == Access::Session {
         // The session route answers `signedIn: false` where a step would refuse.
@@ -615,7 +625,7 @@ async fn prepare(
     route: &str,
 ) -> Result<Prepared, ApiError> {
     let arrival = arrival(request)?;
-    let p = Presented::read(arrival, request.headers());
+    let p = Presented::read(arrival, request.headers(), edge.inner().config.auth_mode);
     let caller = match edge.resolve(&p, Access::Control).await {
         Ok(Some(c)) => c,
         Ok(None) => return Err(edge.refused(&p, unauthenticated())),
@@ -807,18 +817,18 @@ mod tests {
     fn authorization_forms() {
         let mut map = HeaderMap::new();
         map.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic abc"));
-        assert!(Presented::read(Arrival::Public, &map).malformed);
+        assert!(Presented::read(Arrival::Public, &map, AuthMode::None).malformed);
         map.insert(
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer abc"),
         );
-        let p = Presented::read(Arrival::Public, &map);
+        let p = Presented::read(Arrival::Public, &map, AuthMode::None);
         assert_eq!(p.bearer.unwrap().expose(), "abc");
         map.append(
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer def"),
         );
-        assert!(Presented::read(Arrival::Public, &map).malformed);
+        assert!(Presented::read(Arrival::Public, &map, AuthMode::None).malformed);
     }
 
     #[tokio::test(start_paused = true)]

@@ -1153,6 +1153,23 @@ async fn rate_limits() {
 }
 
 #[tokio::test]
+async fn a_cookie_does_not_get_around_the_fixed_listeners_bucket() {
+    // Mode `none` ignores a cookie, so a request with only a cookie is charged at step 1.
+    let env = EdgeEnv::with(tight).await;
+    let cookie = [("cookie", "knoggin_session=whatever")];
+    for _ in 0..3 {
+        let r = env
+            .call(fixed(), Method::GET, "/healthz", None, &cookie)
+            .await;
+        assert_eq!(r.status, StatusCode::OK);
+    }
+    for uri in ["/healthz", "/v1/memories", "/v1/stores"] {
+        let r = env.call(fixed(), Method::GET, uri, None, &cookie).await;
+        assert_eq!(r.error(), Code::RateLimited, "{uri}");
+    }
+}
+
+#[tokio::test]
 async fn export_with_the_store_parameter_and_the_caps() {
     let env = EdgeEnv::new().await;
     let app = env.app("Work notes").await;

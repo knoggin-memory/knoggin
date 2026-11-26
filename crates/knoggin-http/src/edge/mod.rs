@@ -301,8 +301,7 @@ async fn entry(State(edge): State<EdgeState>, mut request: Request, next: Next) 
         Some(arrival) => match browser::check(&request, &arrival, edge.0.public.as_ref()) {
             Err(e) => e.into_response(),
             Ok(()) => {
-                let bare = !request.headers().contains_key(header::AUTHORIZATION)
-                    && !request.headers().contains_key(header::COOKIE);
+                let bare = !check::sends_credential(request.headers(), edge.0.config.auth_mode);
                 match (arrival, bare) {
                     (Arrival::Fixed { .. }, true) => {
                         match edge.0.unauthenticated.take(&(), "address") {
