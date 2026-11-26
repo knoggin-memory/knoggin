@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The reads other than recall: get, similar, list, namespaces, tags, statistics and
-//! the start-of-session context. None of them records access: get and similar return
-//! what the host passes to `record_access` (the memory, all `direct` unless a ghost;
-//! the similar hits, all `associative`).
+//! the start-of-session context. None of them records access. With recording on, the
+//! host calls `record_access` afterwards: for get with the memory as `direct` (unless
+//! it is a ghost), for similar with the hits as `associative`.
 
 use uuid::Uuid;
 
@@ -10,8 +10,7 @@ use crate::error::EngineError;
 use crate::id::MemoryId;
 use crate::model::Phase;
 use crate::model::limits::{
-    CONTEXT_FULL_TEXT_COUNT, MAX_CONTEXT_LIMIT, MAX_PAGE_LIMIT, MAX_SIMILAR_LIMIT, QUERY_MAX_BYTES,
-    validate_tags, validate_text_len,
+    CONTEXT_FULL_TEXT_COUNT, MAX_CONTEXT_LIMIT, MAX_PAGE_LIMIT, MAX_SIMILAR_LIMIT, validate_tags,
 };
 use crate::ops::{
     ContextResult, Detail, EmbeddingCounts, EmbeddingProgress, FindSimilar, GetContext, GetMemory,
@@ -273,7 +272,6 @@ impl Store {
         let topic = req.topic.as_deref().filter(|t| !t.trim().is_empty());
         let (memories, degraded) = match topic {
             Some(topic) => {
-                validate_text_len("topic", topic, QUERY_MAX_BYTES)?;
                 let recall = Recall {
                     query: topic.to_owned(),
                     namespace: Some(ns.name.clone()),
@@ -290,7 +288,21 @@ impl Store {
                     detail: Detail::Compact,
                     record_access: false,
                 };
-                match self.recall(&recall, query_vector, false, now)?.response {
+                // The recall checks the topic as its query; the error names the
+                // field that the client sent.
+                let result =
+                    self.recall(&recall, query_vector, false, now)
+                        .map_err(|e| match e {
+                            EngineError::InvalidArgument {
+                                field: "query",
+                                message,
+                            } => EngineError::InvalidArgument {
+                                field: "topic",
+                                message: message.replacen("query", "topic", 1),
+                            },
+                            other => other,
+                        })?;
+                match result.response {
                     RecallResponse::Compact(c) => (c.memories, c.degraded),
                     RecallResponse::Full(_) => (Vec::new(), None),
                 }

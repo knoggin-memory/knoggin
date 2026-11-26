@@ -333,10 +333,9 @@ fn context_with_a_topic_runs_a_recall() {
     let degraded = s.context(&req, None, t(T0)).unwrap();
     assert_eq!(degraded.degraded, Some(Degraded::ModelUnavailable));
     let long: GetContext = json(serde_json::json!({ "topic": "x".repeat(4_097) }));
-    assert_eq!(
-        s.context(&long, None, t(T0)).unwrap_err().field(),
-        Some("topic")
-    );
+    let err = s.context(&long, None, t(T0)).unwrap_err();
+    assert_eq!(err.field(), Some("topic"));
+    assert!(err.to_string().starts_with("topic is 4097 bytes"), "{err}");
     let other: GetContext = json(serde_json::json!({ "topic": "window", "namespace": "other" }));
     let ctx = s.context(&other, Some(&vector("window")), t(T0)).unwrap();
     assert_eq!(ctx.default_namespace, "other");
