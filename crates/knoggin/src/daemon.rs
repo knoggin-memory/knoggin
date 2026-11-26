@@ -915,6 +915,30 @@ mod tests {
     use super::*;
     use crate::config::{Flags, Role};
 
+    #[test]
+    fn old_open_pages_go_once_a_minute_and_every_one_goes_at_start() {
+        let run = tempfile::tempdir().unwrap();
+        let file = |name: &str, age: u64| {
+            let path = run.path().join(name);
+            let f = std::fs::File::create(&path).unwrap();
+            let then = std::time::SystemTime::now() - Duration::from_secs(age);
+            f.set_modified(then).unwrap();
+            path
+        };
+        let (old, new, other) = (
+            file("open-aaaa.html", 61),
+            file("open-bbbb.html", 5),
+            file("notes.html", 600),
+        );
+        remove_old_open_files(run.path());
+        assert!(!old.exists() && new.exists() && other.exists());
+        std::fs::create_dir(run.path().join("import-1")).unwrap();
+        file("daemon.sock", 0);
+        clean_run_dir(run.path()).unwrap();
+        assert!(!new.exists() && other.exists());
+        assert!(!run.path().join("import-1").exists() && !run.path().join("daemon.sock").exists());
+    }
+
     fn config(vars: &[(&str, &str)]) -> Config {
         let mut all: BTreeMap<String, String> = vars
             .iter()

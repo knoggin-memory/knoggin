@@ -2,8 +2,8 @@
 //! The log-marker test (tab "Security", Logs; tab "Engineering rules", rule 3): marker
 //! strings in every kind of sensitive value that milestone 3 has, every route and every
 //! tool run at log level `trace`, then all log output and the metrics page are searched,
-//! and the data folder too. Sign-in tokens (milestone 5) and `/v1/ui/*` (milestone 4) are
-//! not in it yet.
+//! and the data folder too. The web UI's read models and its event stream are in it; the
+//! sign-in tokens (milestone 5) are not yet.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -277,6 +277,80 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
     let mut answer = String::new();
     raw.read_to_string(&mut answer).unwrap();
     assert!(answer.starts_with("HTTP/1.1 200"), "{answer}");
+
+    // The web UI's read models, with markers in their parameters, and an event stream
+    // that carries events naming the marker namespace.
+    let mut stream = std::os::unix::net::UnixStream::connect(home.socket()).unwrap();
+    stream
+        .write_all(b"GET /v1/ui/events HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let mut seen = Vec::new();
+    let mut buf = [0u8; 4096];
+    let n = stream.read(&mut buf).unwrap();
+    seen.extend_from_slice(&buf[..n]);
+    assert!(
+        seen.starts_with(b"HTTP/1.1 200"),
+        "{}",
+        String::from_utf8_lossy(&seen)
+    );
+    want(
+        &s("POST", "/v1/memories", Some(memory.clone())),
+        201,
+        "save while streaming",
+    );
+    want(
+        &s("POST", "/v1/recall", Some(json!({ "query": QUERY }))),
+        200,
+        "recall while streaming",
+    );
+    while !String::from_utf8_lossy(&seen).contains(&format!("\"namespace\":\"{NAMESPACE}\"")) {
+        let n = stream
+            .read(&mut buf)
+            .expect("the stream carried no marker event");
+        assert!(n > 0, "the stream ended");
+        seen.extend_from_slice(&buf[..n]);
+    }
+    let streamed = String::from_utf8_lossy(&seen).into_owned();
+    assert!(
+        streamed.contains("event: store") && streamed.contains("event: recall"),
+        "{streamed}"
+    );
+    drop(stream);
+    for (p, status) in [
+        (format!("/v1/ui/graph?namespace={NAMESPACE}"), 200),
+        (
+            format!(
+                "/v1/ui/memories?namespace={NAMESPACE}&tag={TAG}&entity={ENTITY}&client={CLIENT}&sort=summary"
+            ),
+            200,
+        ),
+        (format!("/v1/ui/memories?id={id}"), 200),
+        (format!("/v1/ui/facets?namespace={NAMESPACE}"), 200),
+        (format!("/v1/ui/memories/{id}/history"), 200),
+        (format!("/v1/ui/memories/{id}/neighbors?depth=2"), 200),
+        (
+            format!("/v1/ui/search?q={QUERY}&namespace={NAMESPACE}"),
+            200,
+        ),
+        (format!("/v1/ui/search?q={QUERY}"), 200),
+        (format!("/v1/ui/activity?namespace={NAMESPACE}"), 200),
+        (format!("/v1/ui/health?namespace={NAMESPACE}"), 200),
+        ("/v1/ui/system".into(), 200),
+        // Calls that fail, with markers in them.
+        (format!("/v1/ui/health?namespace={NAMESPACE}x"), 404),
+        (format!("/v1/ui/memories?tag={TAG}&{SUMMARY}=1"), 400),
+        (format!("/v1/ui/search?q={QUERY}&limit=99"), 400),
+    ] {
+        want(&s("GET", &p, None), status, &p);
+    }
+    // A page of the web UI (503 when this build has no `ui/dist`).
+    let page = home
+        .sock("GET", &format!("/map?{SUMMARY}"), &[], None)
+        .status;
+    assert!(page == 200 || page == 503, "UI page: {page}");
 
     // Control routes.
     for p in [
