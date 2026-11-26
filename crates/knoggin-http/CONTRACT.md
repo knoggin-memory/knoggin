@@ -14,7 +14,7 @@ says what exists and how to use it. Deviations are in `docs/spec-deviations.md`.
 | `panic` | `log_location(&PanicHookInfo)` (the hook body; `main` installs it), `location_line` |
 | `settings` | `StoreLimits` (`limits.body_bytes`, `request_timeout_ms`, `store_concurrency`), `DEFAULT_BODY_BYTES`, `IMPORT_LINE_BYTES`. Add the edge's settings here |
 | `host` | `StoreHost`, `HostConfig`, `SnapshotTiming`, `StoreBackend` + `OpenedStore`, `SnapshotSource`, `SealedSnapshot`, `BackendError`, `LocalBackend`, `Embedder`, `Providers`, `EmbedWaits`, `Reply<T>`, `request_hash`, `StoreStatus`/`StoreState`, `HostReport`, `HostCounters` |
-| `store_api` | `store_layer(Arc<StoreHost>) -> Router`, `export_file_name(name, date)` |
+| `store_api` | `store_layer(Arc<StoreHost>) -> Router`, `export_file_name(name, date)`; `store_api::ui` (the `/v1/ui/*` read models: `wire` holds the answer types, `shape` the shaping over `&Store`, `tests` the TypeScript export) |
 | `mcp` | `McpConfig` (`source_url`, in `HostConfig::mcp`). `/mcp` and `/mcp/plugin` are mounted by `store_layer` itself |
 | `testing` | `TestHost` (host over a `LocalBackend` in a folder you own, fake model, one user and personal store, `ctx`, `ctx_for`, `new_store`, `make_ready`), `fake_config`, `fake_model_state`. Add the test issuer here |
 
@@ -63,7 +63,7 @@ of the request types: set them before calling (`req.id = ...`).
 
 ## The router (for `edge`)
 
-- `store_layer(host)` holds every store route of the REST tab except `/v1/ui/*` (milestone 4).
+- `store_layer(host)` holds every store route of the REST tab, `/v1/ui/*` included.
   It has no fallback, so merge it into the edge router and set the edge's fallback (404 as
   `not_found`) there. It applies its own body limits (256 KiB, `body_bytes` on the batch, none
   on the import), the request timeout (export and import exempt), `trace::observe`, error
@@ -98,6 +98,22 @@ JSON-RPC error. Set `HostConfig::mcp.source_url` from the setting `source_url` a
 go into the server instructions. Sessions of the older revisions live in the store layer's
 memory, bound to the store, the API key and the endpoint. `StoreHost::clients(store)` gives
 the MCP client names an open store has seen (at most 32, with when), for `/v1/ui/system`.
+
+## The web UI (milestone 4)
+
+- `host::live`: each open store's `EventLog` (the last 1,000 events and a broadcast channel
+  of 1,024). Host writes add their events inside the write (`Op` closures get a
+  `&mut Vec<UiEvent>`), so a replayed idempotent write makes none. `StoreHost::subscribe`
+  gives a stream's receiver without opening the store; the channel closes with the store.
+- `GET /v1/ui/events` is exempt from the request timeout; the edge counts it against the
+  per-user cap of 10 (`Cap::Events`) and re-checks its credential every 60 seconds, as an
+  export.
+- `edge::ui` serves `ui/dist` (rust-embed, `allow_missing`) from the edge's fallback for a
+  `GET`/`HEAD` off the API's paths, and from `local::locked_router`. A UI answer carries an
+  `edge::ui::CacheControl` extension that `edge::finish` keeps.
+- The UI's TypeScript types: `cargo nextest run -p knoggin-http --run-ignored only -E
+  'test(export_ui_types)'` writes `ui/src/lib/api/types/`; a normal test fails when it is
+  stale.
 
 ## Where to add things
 
