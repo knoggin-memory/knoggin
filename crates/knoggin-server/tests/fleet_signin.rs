@@ -14,7 +14,10 @@
 
 mod fleet_support;
 
-use fleet_support::{Deployment, json, save};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use fleet_support::{Deployment, Logs, json, save};
 use knoggin_http::edge::AuthMode;
 use reqwest::Method;
 
@@ -184,6 +187,56 @@ async fn the_routers_start_up_guards() {
         })
         .await;
     assert_eq!(both.err(), Some(1));
+}
+
+#[tokio::test]
+async fn a_router_that_cannot_reach_its_provider_exits_1_after_the_limit_and_never_listens() {
+    // The limit is 60 seconds; this test shortens it to 2.
+    const LIMIT: Duration = Duration::from_secs(2);
+    let d = Deployment::new(true).await;
+    let logs = Logs::capture();
+    let public = Arc::new(Mutex::new(None));
+    let seen = public.clone();
+    let started = Instant::now();
+    let probe = async {
+        // While discovery is tried, nothing listens yet: no connection is accepted (it is
+        // refused, or on macOS left unanswered).
+        let mut tries = 0;
+        while started.elapsed() < LIMIT - Duration::from_millis(500) {
+            let addr = *seen.lock().unwrap();
+            if let Some(addr) = addr {
+                let connect = tokio::net::TcpStream::connect(addr);
+                let accepted = tokio::time::timeout(Duration::from_millis(200), connect).await;
+                assert!(
+                    !matches!(accepted, Ok(Ok(_))),
+                    "the public listener accepted before the start-up steps were done"
+                );
+                tries += 1;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        tries
+    };
+    let (result, tries) = tokio::join!(
+        d.router_with("0.1.0", |t| {
+            t.edge.oauth.as_mut().unwrap().issuer = "http://127.0.0.1:1".into();
+            t.timing.discovery = LIMIT;
+            *public.lock().unwrap() = Some(t.public);
+        }),
+        probe
+    );
+    assert_eq!(result.err(), Some(1));
+    assert!(tries >= 3, "{tries}");
+    let took = started.elapsed();
+    assert!(
+        took >= LIMIT && took < LIMIT + Duration::from_secs(3),
+        "{took:?}"
+    );
+    let log = logs.take();
+    assert!(
+        log.contains("the identity provider could not be reached in 2 seconds"),
+        "{log}"
+    );
 }
 
 #[tokio::test]

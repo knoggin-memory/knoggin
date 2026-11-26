@@ -33,7 +33,7 @@ use knoggin_server::link::{
     router_client,
 };
 use knoggin_server::router::forward::Timing;
-use knoggin_server::router::{Backends, Listeners, RouterStart, run_router};
+use knoggin_server::router::{Backends, Listeners, RouterStart, reserve, run_router};
 use knoggin_server::settings::RouterSettings;
 use knoggin_server::storage::MemoryStorage;
 use knoggin_server::testing::{FakeLauncher, serve_runner};
@@ -42,7 +42,6 @@ use knoggin_state::{
     Clock, Cond, Containers, Leases, LocalFileDb, Meta, StateDb, Stores, Users, system_clock,
 };
 use serde_json::{Value, json};
-use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
@@ -107,6 +106,9 @@ pub struct Tweak<'a> {
     pub settings: &'a mut RouterSettings,
     pub edge: &'a mut EdgeConfig,
     pub one_host: &'a mut bool,
+    pub timing: &'a mut Timing,
+    /// The public listener's address.
+    pub public: SocketAddr,
 }
 
 impl Deployment {
@@ -254,8 +256,9 @@ impl Deployment {
         build: &str,
         tweak: impl FnOnce(Tweak<'_>),
     ) -> Result<RouterHandle, i32> {
-        let public = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let internal = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let loopback: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let public = reserve(loopback).unwrap();
+        let internal = reserve(loopback).unwrap();
         let (public_addr, internal_addr) =
             (public.local_addr().unwrap(), internal.local_addr().unwrap());
         let url = format!("http://{public_addr}");
@@ -263,10 +266,18 @@ impl Deployment {
         let mut settings = self.settings(&router_url);
         let mut edge = self.edge(&url);
         let mut one_host = true;
+        let mut timing = Timing {
+            silence: Duration::from_secs(2),
+            events_silence: Duration::from_secs(3),
+            status_limit: Duration::from_secs(1),
+            ..Timing::default()
+        };
         tweak(Tweak {
             settings: &mut settings,
             edge: &mut edge,
             one_host: &mut one_host,
+            timing: &mut timing,
+            public: public_addr,
         });
         let start = RouterStart {
             edge,
@@ -295,11 +306,7 @@ impl Deployment {
                 key_provider: "key_file",
                 launcher: "docker",
             },
-            timing: Timing {
-                silence: Duration::from_secs(2),
-                events_silence: Duration::from_secs(3),
-                status_limit: Duration::from_secs(1),
-            },
+            timing,
         };
         let (stop, stopped) = oneshot::channel();
         let task = tokio::spawn(run_router(start, async {
@@ -514,4 +521,43 @@ pub async fn local_user(d: &Deployment) -> (UserId, StoreId) {
         .unwrap()
         .value;
     (u.id, u.personal_store_id)
+}
+
+/// The log lines written on this thread while it is held: a `#[tokio::test]` runs its
+/// tasks on its own thread, so a router started there logs here.
+pub struct Logs {
+    sink: Arc<std::sync::Mutex<Vec<u8>>>,
+    _guard: tracing::subscriber::DefaultGuard,
+}
+
+impl Logs {
+    pub fn capture() -> Self {
+        let sink = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let writer = sink.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || LogWriter(writer.clone()))
+            .with_ansi(false)
+            .finish();
+        Self {
+            sink,
+            _guard: tracing::subscriber::set_default(subscriber),
+        }
+    }
+
+    /// What was written since the last call.
+    pub fn take(&self) -> String {
+        String::from_utf8(std::mem::take(&mut *self.sink.lock().unwrap())).unwrap()
+    }
+}
+
+struct LogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for LogWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }

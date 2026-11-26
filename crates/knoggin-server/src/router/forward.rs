@@ -71,7 +71,8 @@ const BUFFER_ONE: u64 = 1024 * 1024;
 const BUFFER_ALL: u64 = 256 * 1024 * 1024;
 /// All buffered request bodies of one user.
 const BUFFER_USER: u64 = 16 * 1024 * 1024;
-/// The waits of "When the link fails or goes quiet"; tests pass shorter ones.
+/// The router's waits: those of "When the link fails or goes quiet", and how long
+/// discovery may fail at start. Tests pass shorter ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timing {
     /// Silence on an open request before `status` is asked (10 seconds).
@@ -80,6 +81,9 @@ pub struct Timing {
     pub events_silence: Duration,
     /// The limit of one `status` call, and the wait before the second (5 seconds).
     pub status_limit: Duration,
+    /// How long an unreachable identity provider is tried at start before the router
+    /// exits with code 1 (60 seconds).
+    pub discovery: Duration,
 }
 
 impl Default for Timing {
@@ -88,6 +92,7 @@ impl Default for Timing {
             silence: Duration::from_secs(10),
             events_silence: Duration::from_secs(30),
             status_limit: Duration::from_secs(5),
+            discovery: Duration::from_secs(60),
         }
     }
 }

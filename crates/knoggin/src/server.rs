@@ -17,14 +17,15 @@ use knoggin_crypto::{KeyProvider, LocalKeyProvider, MasterKeySet};
 use knoggin_http::edge::{self, Rate};
 use knoggin_server::launcher::{BuildInfo, ContainerEnv, DockerLauncher, Launcher};
 use knoggin_server::link::InternalSecret;
-use knoggin_server::router::{Backends, Listeners, RouterStart, forward::Timing, run_router};
+use knoggin_server::router::{
+    Backends, Listeners, RouterStart, forward::Timing, reserve, run_router,
+};
 use knoggin_server::settings::{
     Cidr, ContainerSettings, InternalSettings, LauncherServiceSettings, RateSetting,
     RetentionSettings, RolloutSettings, RouterLimits, RouterSettings, SecretText, StorageSettings,
 };
 use knoggin_server::storage::{ObjectStorage, S3Storage};
 use knoggin_state::{Clock, PostgresDb, StateDb, system_clock};
-use tokio::net::TcpListener;
 use tokio::sync::watch;
 
 use crate::config::{Backend, Config, Env, KeyProviderKind, LauncherKind, LogLevel, Role};
@@ -300,20 +301,17 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
     let keys = key_provider(&keys)?;
     let db: Arc<dyn StateDb> = connect_state(&state, clock.clone(), true).await?;
     let bucket = storage(&settings.storage).await;
-    let public = TcpListener::bind(config.bind())
-        .await
-        .with_context(|| format!("binding server.bind {}", config.bind()))?;
-    let internal = TcpListener::bind(settings.internal.bind)
-        .await
+    // The sockets are bound now and listen only at the last start-up step.
+    let public =
+        reserve(config.bind()).with_context(|| format!("binding server.bind {}", config.bind()))?;
+    let internal = reserve(settings.internal.bind)
         .with_context(|| format!("binding internal.bind {}", settings.internal.bind))?;
     let (metrics_listener, metrics) = match config.metrics_bind() {
         Some(addr) => {
             let handle = metrics_exporter_prometheus::PrometheusBuilder::new()
                 .install_recorder()
                 .context("installing the metrics recorder")?;
-            let l = TcpListener::bind(addr)
-                .await
-                .with_context(|| format!("binding metrics.bind {addr}"))?;
+            let l = reserve(addr).with_context(|| format!("binding metrics.bind {addr}"))?;
             let h = handle.clone();
             tokio::spawn(async move {
                 let mut every = tokio::time::interval(Duration::from_secs(5));

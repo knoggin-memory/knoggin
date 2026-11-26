@@ -66,7 +66,7 @@ let code: i32 = router::run_router(RouterStart {
     spec,                      // launcher.ecs.task_definition, or "" on one host
     db,                        // already connected (60 s of tries) and, on Postgres, migrated
     keys, storage, launcher, clock,
-    listeners: Listeners { public, internal, metrics },  // bound by main
+    listeners: Listeners { public, internal, metrics },  // router::reserve(addr) each: bound by main, listening only at step 10
     metrics: Some(edge::metrics_router(handle)),
     before_rollout: Some(Box::pin(async { self_test().await?; attach().await })), // steps 7, 8
     backends: Backends { state_db, key_provider, launcher },
@@ -74,8 +74,8 @@ let code: i32 = router::run_router(RouterStart {
 }, shutdown_signal).await;
 ```
 
-`run_router` runs start-up steps 1, 3 to 6 and 9 (config guards with the one-host checks, schema,
-field key, the mode-`none` users check and the local user, discovery, the rollout record), then
+`run_router` runs start-up steps 1, 3 to 6, 9 and 10 (config guards with the one-host checks, schema,
+field key, the mode-`none` users check and the local user, discovery (60 s), the rollout record, listen), then
 serves the public API, the broker on the internal listener and the reconcile loop until `stop`,
 and returns 1 when a step refuses, 0 after a stop (on one host it first parks its containers and
 keeps the internal listener open up to 110 s). **The container role** is `container::serve(addr,

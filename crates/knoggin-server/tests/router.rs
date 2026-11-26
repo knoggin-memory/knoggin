@@ -694,6 +694,7 @@ async fn send(f: &Arc<Fleet>, user: UserId, request: Request) -> Response {
         silence: Duration::from_millis(500),
         events_silence: Duration::from_millis(500),
         status_limit: Duration::from_millis(300),
+        ..Timing::default()
     };
     let mut request = request;
     request.extensions_mut().insert(ctx(user));

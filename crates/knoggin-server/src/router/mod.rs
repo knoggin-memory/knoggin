@@ -26,7 +26,7 @@ use knoggin_http::ApiError;
 use knoggin_http::edge::listen::{ListenConfig, Peer, serve_tcp_admitted};
 use knoggin_http::edge::{Arrival, ClientAddr, EdgeConfig, EdgeState, guard};
 use knoggin_state::record::{LeaseState, ParkReason};
-use tokio::net::TcpListener;
+use tokio::net::TcpSocket;
 use tokio::sync::watch;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::request_id::RequestId;
@@ -243,16 +243,33 @@ pub struct RouterRole {
     pub one_host: bool,
 }
 
-/// The listeners, bound by the caller.
+/// The listeners' sockets, bound by the caller but not listening: nothing can connect
+/// until [`run`] makes them listen, the last step of the start.
 #[derive(Debug)]
 pub struct Listeners {
     /// `server.bind`.
-    pub public: TcpListener,
+    pub public: TcpSocket,
     /// `internal.bind`.
-    pub internal: TcpListener,
+    pub internal: TcpSocket,
     /// `metrics.bind`.
-    pub metrics: Option<TcpListener>,
+    pub metrics: Option<TcpSocket>,
 }
+
+/// A socket bound to `addr` that does not listen yet, for [`Listeners`].
+pub fn reserve(addr: SocketAddr) -> std::io::Result<TcpSocket> {
+    let socket = if addr.is_ipv4() {
+        TcpSocket::new_v4()?
+    } else {
+        TcpSocket::new_v6()?
+    };
+    // As `TcpListener::bind` does on Unix.
+    socket.set_reuseaddr(true)?;
+    socket.bind(addr)?;
+    Ok(socket)
+}
+
+/// The backlog `TcpListener::bind` uses.
+const BACKLOG: u32 = 1024;
 
 /// The names the admin status gives this deployment's backends.
 #[derive(Debug, Clone, Copy)]
@@ -267,7 +284,7 @@ pub struct Backends {
 
 /// Everything `knoggin router` starts with: the settings, and the pieces the binary built
 /// (the state database already connected, and on Postgres migrated, within its 60
-/// seconds; the key provider; the bucket; the launcher; the bound listeners).
+/// seconds; the key provider; the bucket; the launcher; the listeners' sockets, bound but not listening).
 pub struct RouterStart {
     /// The edge layer's settings (`server.*`, `auth.*`, `limits.*`); `per_address` and
     /// `per_user` are filled from `settings.limits` here.
@@ -291,7 +308,7 @@ pub struct RouterStart {
     pub launcher: Arc<dyn Launcher>,
     /// Milliseconds since 1970.
     pub clock: Clock,
-    /// The bound listeners.
+    /// The listeners' sockets, bound but not listening; [`run`] makes them listen last.
     pub listeners: Listeners,
     /// The metrics router, for `listeners.metrics`.
     pub metrics: Option<Router>,
@@ -300,7 +317,7 @@ pub struct RouterStart {
     pub before_rollout: Option<BoxFuture<'static, Result<(), String>>>,
     /// For the admin status.
     pub backends: Backends,
-    /// The forwarder's waits; `Timing::default()` outside tests.
+    /// The router's waits; `Timing::default()` outside tests.
     pub timing: forward::Timing,
 }
 
@@ -393,16 +410,25 @@ async fn prepare(start: RouterStart) -> Result<(RouterRole, Listeners), String> 
     )
     .await
     .map_err(|e| format!("the edge layer: {e}"))?;
-    // 6. Discovery: an unreachable provider is tried again; anything else stops the start.
+    // 6. Discovery: an unreachable provider is tried again for `timing.discovery` (60
+    // seconds), then the start fails; anything else stops it at once.
+    let deadline = tokio::time::Instant::now() + timing.discovery;
     loop {
         match state.discover().await {
             Ok(()) => break,
             Err(DiscoveryError::Unreachable) => {
+                let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if left.is_zero() {
+                    return Err(format!(
+                        "the identity provider could not be reached in {} seconds",
+                        timing.discovery.as_secs()
+                    ));
+                }
                 tracing::warn!(
                     kind = "start",
                     "the identity provider cannot be reached yet"
                 );
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(left.min(Duration::from_secs(2))).await;
             }
             Err(e) => return Err(e.to_string()),
         }
@@ -518,6 +544,19 @@ pub async fn run(
             return 1;
         }
     };
+    // 10. Last, the listeners.
+    let listen = |s: TcpSocket| s.listen(BACKLOG);
+    let (public_listener, internal_listener, metrics_listener) = match (
+        listen(listeners.public),
+        listen(listeners.internal),
+        listeners.metrics.map(listen).transpose(),
+    ) {
+        (Ok(p), Ok(i), Ok(m)) => (p, i, m),
+        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
+            tracing::error!(kind = "start", error = %e, "a listener cannot listen");
+            return 1;
+        }
+    };
     let (public_stop, public_stopped) = watch::channel(false);
     let (internal_stop, internal_stopped) = watch::channel(false);
     let wait = |mut rx: watch::Receiver<bool>| async move {
@@ -528,7 +567,7 @@ pub async fn run(
     {
         let trusted = trusted.clone();
         tasks.spawn(serve_tcp_admitted(
-            listeners.public,
+            public_listener,
             public,
             Arrival::Public,
             ListenConfig::PUBLIC,
@@ -536,7 +575,7 @@ pub async fn run(
             wait(public_stopped.clone()),
         ));
     }
-    if let (Some(listener), Some(router)) = (listeners.metrics, metrics) {
+    if let (Some(listener), Some(router)) = (metrics_listener, metrics) {
         let trusted = trusted.clone();
         tasks.spawn(serve_tcp_admitted(
             listener,
@@ -549,7 +588,7 @@ pub async fn run(
     }
     let user_net = one_host.then_some(settings.containers.user_net_cidr);
     let internal = tokio::spawn(serve_tls(
-        listeners.internal,
+        internal_listener,
         identity,
         broker,
         internal_admit(fleet.limits().clone(), user_net),
