@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseError, query } from './client';
 import { SseParser } from '../events';
 import { normalize } from '../live.svelte';
@@ -30,5 +30,17 @@ describe('the event stream', () => {
     const e = normalize({ kind: 'store', seq: 1, at: 0, client: null, id: 'a', namespace: 'default', phase: 'summary', edges: [{ to: 'b', edgeType: 'supersedes', weight: 1 }] });
     expect(e).toMatchObject({ phase: 2, edges: [{ edgeType: 7 }] });
     expect(normalize({ kind: 'phase_change', seq: 2, at: 0, id: 'a', from: 'full', to: 'summary' })).toMatchObject({ from: 1, to: 2 });
+  });
+});
+
+describe('a lagged event', () => {
+  it('reads again what the screen shows from the store', async () => {
+    const { live } = await import('../live.svelte');
+    const { queryClient } = await import('../query');
+    const spy = vi.spyOn(queryClient, 'invalidateQueries').mockResolvedValue();
+    live.receive({ event: { kind: 'store', seq: 1, at: 0, client: null, id: 'a', namespace: 'default', phase: 1, edges: [] }, at: 0 });
+    expect(spy).not.toHaveBeenCalled();
+    live.receive({ event: { kind: 'lagged', missed: 4 }, at: 0 });
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['store'] });
   });
 });

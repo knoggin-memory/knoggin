@@ -5,6 +5,7 @@
 import type { WireEvent } from './api/shapes';
 import { connectEvents } from './events';
 import { EDGE_CODE, PHASE_CODE } from './map/encoding';
+import { queryClient } from './query';
 import { store } from './store.svelte';
 
 type Spread = { from: string; to: string; edgeType: number; amount: number; order: number };
@@ -83,6 +84,8 @@ class Live {
 
   /** Takes one event from the stream. */
   receive(r: Received) {
+    // Events were missed: read again everything the screen shows from the store.
+    if (r.event.kind === 'lagged') void queryClient.invalidateQueries({ queryKey: ['store'] });
     const client = 'client' in r.event ? (r.event.client ?? null) : null;
     if (client && !this.clients.includes(client)) this.clients = [...this.clients, client];
     this.recent.push(r);
