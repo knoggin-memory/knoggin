@@ -80,6 +80,8 @@ class Status {
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
   private reachTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A retry round is scheduled and has not run yet. */
+  private retryPending = false;
   private polledFor: string | null = null;
   private started = false;
 
@@ -139,8 +141,11 @@ class Status {
         this.retry((e.retryAfter ?? 5) * 1000);
         break;
       case 'unavailable': {
-        const attempts = (this.unavailable?.attempts ?? 0) + 1;
+        // Parallel requests fail together: the errors of one retry round count once.
+        const prev = this.unavailable?.attempts ?? 0;
+        const attempts = this.retryPending ? prev : Math.min(prev + 1, MAX_UNAVAILABLE);
         this.unavailable = { reason: e.reason, attempts };
+        if (this.retryPending) break;
         const keeps = e.reason === 'out_of_memory' || e.reason === 'crashed';
         if (keeps) this.retry(MINUTE);
         else if (attempts < MAX_UNAVAILABLE) this.retry((e.retryAfter ?? 2) * 1000);
@@ -183,7 +188,11 @@ class Status {
 
   private retry(ms: number) {
     clearTimeout(this.retryTimer);
-    this.retryTimer = setTimeout(() => void queryClient.refetchQueries({ type: 'active' }), ms);
+    this.retryPending = true;
+    this.retryTimer = setTimeout(() => {
+      this.retryPending = false;
+      void queryClient.refetchQueries({ type: 'active' });
+    }, ms);
   }
 
   /** Reads the current store's status now, and schedules the next read if one is due. */

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { describe, expect, it } from 'vitest';
-import { pick, pollDelay } from './status.svelte';
+import { describe, expect, it, vi } from 'vitest';
+import { pick, pollDelay, status } from './status.svelte';
+import { ApiError } from './api/client';
 import type { StoreStatus } from './api/shapes';
 
 const ready: StoreStatus = { state: 'ready', lockedReason: null, full: false, model: { state: 'ready', identity: 'fake-64', name: 'Fake model' }, embedding: { pending: 0, total: 3 } };
@@ -43,5 +44,27 @@ describe('store status polling', () => {
     expect(pollDelay({ ...ready, embedding: { pending: 1, total: 2 } }, false)).toBe(5_000);
     expect(pollDelay({ ...ready, state: 'locked', lockedReason: 'format_too_new' }, false)).toBe(60_000);
     expect(pollDelay(null, false)).toBeNull();
+  });
+});
+
+describe('temporarily unavailable', () => {
+  it('counts one attempt per retry round, however many parallel requests fail in it', () => {
+    vi.useFakeTimers();
+    try {
+      const failed = status as unknown as { onError(e: ApiError, store: boolean, scoped: boolean, write: boolean): void };
+      const round = () => {
+        for (let i = 0; i < 4; i++) failed.onError(new ApiError(503, 'unavailable', 'x', null, null, 2), true, false, false);
+      };
+      for (let n = 1; n <= 5; n++) {
+        round();
+        expect(status.unavailable?.attempts).toBe(n);
+        expect(status.indicator).toMatchObject({ kind: 'unavailable', exhausted: n === 5 });
+        vi.advanceTimersByTime(2_000);
+      }
+      // The fifth round schedules no retry: the Retry button takes over.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
