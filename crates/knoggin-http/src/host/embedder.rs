@@ -257,3 +257,90 @@ fn run(provider: &dyn EmbeddingProvider, job: Job) {
     }
     let _ = job.reply.send(provider.embed(&job.text));
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+    use std::sync::mpsc as std_mpsc;
+
+    use knoggin_core::testing::FakeProvider;
+
+    use super::*;
+    use crate::testing::fake_model_state;
+
+    /// Records the order of the texts it embeds and holds the first until released.
+    struct Gated {
+        identity: ModelIdentity,
+        order: Mutex<Vec<String>>,
+        release: Mutex<Option<std_mpsc::Receiver<()>>>,
+        entered: Mutex<std_mpsc::Sender<()>>,
+    }
+
+    impl EmbeddingProvider for Gated {
+        fn identity(&self) -> &ModelIdentity {
+            &self.identity
+        }
+
+        fn embed(&self, text: &str) -> Result<Vec<f32>, EmbedError> {
+            self.order.lock().unwrap().push(text.to_owned());
+            let gate = self.release.lock().unwrap().take();
+            if let Some(gate) = gate {
+                let _ = self.entered.lock().unwrap().send(());
+                let _ = gate.recv();
+            }
+            Ok(vec![0.0; 4])
+        }
+    }
+
+    // Real time: the work crosses the document thread.
+    #[tokio::test]
+    async fn a_duplicate_check_goes_before_queue_work() {
+        let (release, gate) = std_mpsc::channel();
+        let (entered_tx, entered) = std_mpsc::channel();
+        let gated = Arc::new(Gated {
+            identity: FakeProvider::new().identity().clone(),
+            order: Mutex::new(Vec::new()),
+            release: Mutex::new(Some(gate)),
+            entered: Mutex::new(entered_tx),
+        });
+        let providers = Arc::new(OnceCell::new());
+        let _ = providers.set(Providers {
+            query: Arc::new(FakeProvider::new()),
+            document: gated.clone(),
+        });
+        let (_state, rx) = watch::channel(fake_model_state(ModelStatus::Ready));
+        let waits = EmbedWaits {
+            query: Duration::from_secs(10),
+            duplicate_check: Duration::from_secs(10),
+        };
+        let embedder = Arc::new(Embedder::new(rx, providers, waits));
+        let queued = |text: &'static str| {
+            let e = embedder.clone();
+            tokio::spawn(async move { e.queue(text.into()).await })
+        };
+        let first = queued("queue 1");
+        tokio::task::spawn_blocking(move || entered.recv().unwrap())
+            .await
+            .unwrap();
+        // While the thread is busy: two queue jobs, then a duplicate check.
+        let later = [queued("queue 2"), queued("queue 3")];
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        let e = embedder.clone();
+        let urgent = tokio::spawn(async move { e.urgent("urgent".into()).await });
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        release.send(()).unwrap();
+        assert!(matches!(first.await.unwrap(), QueueOutcome::Vector(_)));
+        assert!(urgent.await.unwrap().is_some());
+        for job in later {
+            assert!(matches!(job.await.unwrap(), QueueOutcome::Vector(_)));
+        }
+        assert_eq!(
+            *gated.order.lock().unwrap(),
+            ["queue 1", "urgent", "queue 2", "queue 3"]
+        );
+    }
+}
