@@ -15,6 +15,7 @@ says what exists and how to use it. Deviations are in `docs/spec-deviations.md`.
 | `settings` | `StoreLimits` (`limits.body_bytes`, `request_timeout_ms`, `store_concurrency`), `DEFAULT_BODY_BYTES`, `IMPORT_LINE_BYTES`. Add the edge's settings here |
 | `host` | `StoreHost`, `HostConfig`, `SnapshotTiming`, `StoreBackend` + `OpenedStore`, `SnapshotSource`, `SealedSnapshot`, `BackendError`, `LocalBackend`, `Embedder`, `Providers`, `EmbedWaits`, `Reply<T>`, `request_hash`, `StoreStatus`/`StoreState`, `HostReport`, `HostCounters` |
 | `store_api` | `store_layer(Arc<StoreHost>) -> Router`, `export_file_name(name, date)` |
+| `mcp` | `McpConfig` (`source_url`, in `HostConfig::mcp`). `/mcp` and `/mcp/plugin` are mounted by `store_layer` itself |
 | `testing` | `TestHost` (host over a `LocalBackend` in a folder you own, fake model, one user and personal store, `ctx`, `ctx_for`, `new_store`, `make_ready`), `fake_config`, `fake_model_state`. Add the test issuer here |
 
 ## Building a host
@@ -86,6 +87,17 @@ of the request types: set them before calling (`req.id = ...`).
 `LocalBackend::new(data_dir, key_provider, Stores, retention_days)`. Snapshot files live in
 `<data_dir>/stores/<store id>/`. Call `flush_records()` once a minute and at shutdown: it
 writes each store's last save (newest name, counts, last write) into its record.
+
+## The MCP endpoint (for `edge` and the binary)
+
+`store_layer(host)` serves `POST`/`DELETE`/`GET` on `/mcp` and `/mcp/plugin` under the body
+limit `limits.body_bytes` and the request timeout, behind the same `RequestContext`. The edge
+checks the credential and the origin first; a missing or bad credential is its HTTP 401, not a
+JSON-RPC error. Set `HostConfig::mcp.source_url` from the setting `source_url` and
+`HostConfig::web_url` from `server.public_url` (`None` on a local install without one): both
+go into the server instructions. Sessions of the older revisions live in the store layer's
+memory, bound to the store, the API key and the endpoint. `StoreHost::clients(store)` gives
+the MCP client names an open store has seen (at most 32, with when), for `/v1/ui/system`.
 
 ## Where to add things
 
