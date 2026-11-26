@@ -1208,6 +1208,14 @@ async fn a_local_install_with_sign_in_on() {
         .await;
     assert_eq!(r.json["webSignIn"], false);
     assert_eq!(r.json["auth"], "oauth");
+    // Nor does sign-in itself: no login cookie is set for the loopback address.
+    for path in ["/auth/login", "/auth/callback?code=c&state=s"] {
+        for host in ["127.0.0.1:7690", "localhost:7690", "[::1]:7690"] {
+            let r = s.call(Method::GET, path, None, &[("host", host)]).await;
+            assert_eq!(r.error(), Code::NotFound, "{path} at {host}");
+            assert!(set_cookies(&r).is_empty(), "{path} at {host}");
+        }
+    }
     // A `knoggin open` session reports no email, and sign-in is not served on its listener.
     let code = s.e.local.new_code(s.e.clock.now()).unwrap();
     let local = s.e.local.redeem(&code, s.e.clock.now()).unwrap().unwrap();
@@ -1303,6 +1311,16 @@ async fn test_mode_cookies_on_a_loopback_address() {
         .await;
     assert_eq!(r.json["signedIn"], true, "{}", r.json);
     assert_eq!(r.json["webSignIn"], true);
+    // Another loopback name for the same listener is not the public address.
+    let r = s
+        .call(
+            Method::GET,
+            "/auth/login",
+            None,
+            &[("host", "localhost:7690")],
+        )
+        .await;
+    assert_eq!(r.error(), Code::NotFound);
 }
 
 #[tokio::test]
