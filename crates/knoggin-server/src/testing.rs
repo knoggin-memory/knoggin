@@ -36,6 +36,7 @@ use tokio::net::TcpListener;
 use tokio::sync::{oneshot, watch};
 use uuid::Uuid;
 
+use crate::container::{ServeConfig, ServeModel, ServeTimings, serve_on};
 use crate::launcher::{
     ContainerEnv, ContainerInfo, ContainerSpec, EndReason, Ended, LaunchError, LaunchHandle,
     Launcher, RunState,
@@ -83,6 +84,8 @@ pub struct FakeLauncher {
     pub fail_stop: AtomicBool,
     /// The address each container gets; set to reuse one.
     pub fixed_address: Mutex<Option<SocketAddrV4>>,
+    /// How long `stop` waits for a role to end before it kills it (10 seconds).
+    pub stop_grace: Mutex<Duration>,
 }
 
 impl std::fmt::Debug for FakeLauncher {
@@ -103,6 +106,7 @@ impl FakeLauncher {
             refuse: AtomicBool::new(false),
             fail_stop: AtomicBool::new(false),
             fixed_address: Mutex::new(None),
+            stop_grace: Mutex::new(Duration::from_secs(10)),
         })
     }
 
@@ -328,6 +332,36 @@ impl Launcher for FakeLauncher {
         }
         Ok(())
     }
+}
+
+/// A [`Runner`] of the real container role (`container::serve_on`) of `build`, with the
+/// fake model. On Linux its client to the router is bound to its own `127.0.0.x`.
+pub fn serve_runner(build: &str, test_mode: bool, timings: ServeTimings) -> Runner {
+    let build = build.to_owned();
+    Arc::new(
+        move |env: ContainerEnv, listener: TcpListener, stop: oneshot::Receiver<()>| {
+            let local_address = listener
+                .local_addr()
+                .ok()
+                .map(|a| a.ip())
+                .filter(|_| cfg!(target_os = "linux"));
+            let config = ServeConfig {
+                env,
+                build: crate::launcher::BuildInfo::new(build.clone()),
+                test_mode,
+                local_address,
+                model: ServeModel::fake(),
+                timings,
+            };
+            Box::pin(async move {
+                let end = serve_on(listener, config, async {
+                    let _ = stop.await;
+                })
+                .await;
+                i64::from(end.exit_code)
+            })
+        },
+    )
 }
 
 /// What a stub container does with forwarded requests.

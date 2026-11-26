@@ -11,7 +11,6 @@
 //! steps that build its pieces and calls these in that order.
 
 pub mod forward;
-pub mod internal;
 pub mod status;
 
 use std::net::{IpAddr, SocketAddr};
@@ -33,9 +32,20 @@ use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::request_id::RequestId;
 use uuid::Uuid;
 
-use crate::lease::{Fleet, peer_of};
+use futures_util::future::BoxFuture;
+use knoggin_crypto::KeyProvider;
+use knoggin_http::edge::{AuthMode, DiscoveryError, EdgeParts};
+use knoggin_state::record::BuildSpec;
+use knoggin_state::{Clock, Meta, StateDb, Stores, Users};
+
+use crate::broker::{BrokerConfig, BrokerError, OnParked, PeerGuard, PeerLimits, broker_router};
+use crate::launcher::{BuildInfo, Launcher};
+use crate::lease::{Fleet, FleetConfig, peer_of};
+use crate::link::api::{ClaimLimits, ClaimSettings};
+use crate::link::{ContainerCaller, LinkError};
 use crate::link::{ServerIdentity, serve_tls, server_config};
 use crate::settings::{Cidr, RouterSettings};
+use crate::storage::ObjectStorage;
 
 /// How long a stopping router on one host keeps its internal listener open while its
 /// containers save.
@@ -162,6 +172,60 @@ pub fn guarded(app: Router) -> Router {
     ))
 }
 
+/// The broker on the router's internal listener, over the fleet's leases, stores and
+/// per-address counts. `one_host` is the router's address as containers reach it, which
+/// turns the blob route on. A container's `parked` runs "Mark gone" steps 2 to 4 and a
+/// stop ([`Fleet::finish_parked`]).
+pub fn broker(
+    fleet: &Arc<Fleet>,
+    keys: Arc<dyn KeyProvider>,
+    settings: &RouterSettings,
+    one_host: Option<String>,
+) -> Result<Router, LinkError> {
+    let parked_fleet = fleet.clone();
+    let on_parked: OnParked = Arc::new(move |caller: ContainerCaller| {
+        let fleet = parked_fleet.clone();
+        Box::pin(async move {
+            fleet
+                .finish_parked(caller.container_id)
+                .await
+                .map_err(|_| BrokerError::unavailable())
+        })
+    });
+    broker_router(BrokerConfig {
+        secret: Arc::new(fleet.config().secret.clone()),
+        leases: fleet.leases.clone(),
+        stores: fleet.stores.clone(),
+        keys,
+        storage: fleet.storage.clone(),
+        clock: fleet.clock.clone(),
+        link_ttl: Duration::from_secs(settings.storage.link_ttl_seconds),
+        memory_limit_bytes: settings.containers.memory_limit_bytes(),
+        upload_bytes_per_hour: settings.upload_bytes_per_hour(),
+        one_host,
+        peers: fleet.limits().clone(),
+        on_parked,
+    })
+}
+
+/// The internal listener's `admit`: on one host only peers inside
+/// `containers.user_net_cidr`, then the bounds per address that the broker's token checks
+/// share.
+pub fn internal_admit(
+    limits: Arc<PeerLimits>,
+    user_net: Option<Cidr>,
+) -> impl Fn(SocketAddr) -> Option<PeerGuard> {
+    move |peer| {
+        if user_net
+            .as_ref()
+            .is_some_and(|c| !c.contains(peer.ip().to_canonical()))
+        {
+            return None;
+        }
+        limits.admit(peer)
+    }
+}
+
 /// The pieces of a running router.
 #[derive(Debug)]
 pub struct RouterRole {
@@ -169,7 +233,7 @@ pub struct RouterRole {
     pub fleet: Arc<Fleet>,
     /// The public API ([`public_router`]).
     pub public: Router,
-    /// The broker's routes, served on the internal listener.
+    /// The broker ([`broker`]), served on the internal listener.
     pub broker: Router,
     /// The metrics router, if `metrics.bind` is set.
     pub metrics: Option<Router>,
@@ -188,6 +252,241 @@ pub struct Listeners {
     pub internal: TcpListener,
     /// `metrics.bind`.
     pub metrics: Option<TcpListener>,
+}
+
+/// The names the admin status gives this deployment's backends.
+#[derive(Debug, Clone, Copy)]
+pub struct Backends {
+    /// `local_file`, `postgres` or `dynamodb`.
+    pub state_db: &'static str,
+    /// `key_file` or `kms`.
+    pub key_provider: &'static str,
+    /// `docker` or `ecs`.
+    pub launcher: &'static str,
+}
+
+/// Everything `knoggin router` starts with: the settings, and the pieces the binary built
+/// (the state database already connected, and on Postgres migrated, within its 60
+/// seconds; the key provider; the bucket; the launcher; the bound listeners).
+pub struct RouterStart {
+    /// The edge layer's settings (`server.*`, `auth.*`, `limits.*`); `per_address` and
+    /// `per_user` are filled from `settings.limits` here.
+    pub edge: EdgeConfig,
+    /// The router's settings.
+    pub settings: RouterSettings,
+    /// One host (`launcher.kind = "docker"`): the router's address as containers reach it,
+    /// `https://router:8443`. `None` on AWS, where containers use `internal.router_url`.
+    pub one_host: Option<String>,
+    /// This build.
+    pub build: BuildInfo,
+    /// This router's spec (`launcher.ecs.task_definition`; empty on one host).
+    pub spec: String,
+    /// The state database.
+    pub db: Arc<dyn StateDb>,
+    /// The master key.
+    pub keys: Arc<dyn KeyProvider>,
+    /// The bucket.
+    pub storage: Arc<dyn ObjectStorage>,
+    /// The launcher.
+    pub launcher: Arc<dyn Launcher>,
+    /// Milliseconds since 1970.
+    pub clock: Clock,
+    /// The bound listeners.
+    pub listeners: Listeners,
+    /// The metrics router, for `listeners.metrics`.
+    pub metrics: Option<Router>,
+    /// Start-up steps 7 and 8, which the binary owns: the bucket self-test and, on one
+    /// host, `DockerLauncher::attach`. An error stops the start.
+    pub before_rollout: Option<BoxFuture<'static, Result<(), String>>>,
+    /// For the admin status.
+    pub backends: Backends,
+    /// The forwarder's waits; `Timing::default()` outside tests.
+    pub timing: forward::Timing,
+}
+
+impl std::fmt::Debug for RouterStart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RouterStart")
+            .field("build", &self.build)
+            .field("one_host", &self.one_host)
+            .finish_non_exhaustive()
+    }
+}
+
+/// `knoggin router`: the start-up steps from the config guards to the rollout record (tab
+/// "Server", Rollout), then [`run`] until `stop`. Returns the exit code: 1 when a start-up
+/// step refuses, 0 after a stop.
+pub async fn run_router(start: RouterStart, stop: impl Future<Output = ()> + Send) -> i32 {
+    match prepare(start).await {
+        Ok((role, listeners)) => run(role, listeners, stop).await,
+        Err(why) => {
+            tracing::error!(kind = "start", why = %why, "the router refuses to start");
+            1
+        }
+    }
+}
+
+async fn prepare(start: RouterStart) -> Result<(RouterRole, Listeners), String> {
+    let RouterStart {
+        mut edge,
+        settings,
+        one_host,
+        build,
+        spec,
+        db,
+        keys,
+        storage,
+        launcher,
+        clock,
+        listeners,
+        metrics,
+        before_rollout,
+        backends,
+        timing,
+    } = start;
+    let rate = |r: crate::settings::RateSetting| knoggin_http::edge::Rate {
+        per_second: r.rps,
+        burst: r.burst,
+    };
+    edge.per_address = Some(rate(settings.limits.per_address));
+    edge.per_user = Some(rate(settings.limits.per_user));
+    edge.idle_seconds = Some(settings.containers.idle_seconds);
+    // 1. The config guards.
+    for warning in guards(&edge, &settings, one_host.is_some())? {
+        tracing::warn!(kind = "start", "{warning}");
+    }
+    let identity =
+        ServerIdentity::from_pem(&settings.internal.cert, settings.internal.key.expose())
+            .map_err(|e| format!("internal.cert and internal.key: {e}"))?;
+    let router_url = match (&one_host, &settings.internal.router_url) {
+        (Some(url), _) | (None, Some(url)) => url.clone(),
+        (None, None) => return Err("internal.router_url must be set outside one host".into()),
+    };
+    // 3. The schema record; 4. the field key.
+    let meta = Meta::new(db.clone());
+    meta.check_schema()
+        .await
+        .map_err(|e| format!("the state database: {e}"))?;
+    let fields = Arc::new(
+        meta.field_keys(&*keys)
+            .await
+            .map_err(|e| format!("the field key: {e}"))?,
+    );
+    // 5. In mode none, no user but the local one; then that user exists.
+    let users = Users::new(db.clone(), fields.clone());
+    guard::router_users(&edge, &users).await?;
+    if edge.auth_mode == AuthMode::None {
+        knoggin_http::local::ensure_local_user(&users, &*keys, clock())
+            .await
+            .map_err(|e| format!("the local user: {e}"))?;
+    }
+    let state = EdgeState::new(
+        edge.clone(),
+        EdgeParts {
+            db: db.clone(),
+            field_keys: fields.clone(),
+            keys: keys.clone(),
+            clock: clock.clone(),
+            host: None,
+            local: None,
+        },
+    )
+    .await
+    .map_err(|e| format!("the edge layer: {e}"))?;
+    // 6. Discovery: an unreachable provider is tried again; anything else stops the start.
+    loop {
+        match state.discover().await {
+            Ok(()) => break,
+            Err(DiscoveryError::Unreachable) => {
+                tracing::warn!(
+                    kind = "start",
+                    "the identity provider cannot be reached yet"
+                );
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    // 7 and 8. The bucket self-test and `attach`.
+    if let Some(step) = before_rollout {
+        step.await?;
+    }
+    // 9. The rollout record.
+    let own = BuildSpec {
+        build: build.version.clone(),
+        spec: spec.clone(),
+    };
+    crate::rollout::at_start(&meta, &own, settings.rollout.allow_downgrade)
+        .await
+        .map_err(|e| format!("the rollout record: {e}"))?;
+    let limits = &edge.limits;
+    let fleet = Fleet::new(
+        FleetConfig {
+            router_id: Uuid::now_v7(),
+            build: build.clone(),
+            spec,
+            one_host: one_host.is_some(),
+            test_mode: edge.test_mode,
+            containers: settings.containers.clone(),
+            claim: ClaimSettings {
+                idle_seconds: settings.containers.idle_seconds,
+                memory_limit_bytes: settings.containers.memory_limit_bytes(),
+                public_url: edge.public_url.clone().unwrap_or_default(),
+                source_url: edge.source_url.clone(),
+                limits: ClaimLimits {
+                    body_bytes: limits.body_bytes as u64,
+                    request_timeout_ms: limits.request_timeout_ms,
+                    store_concurrency: limits.store_concurrency as u64,
+                },
+            },
+            secret: settings.internal.secret.clone(),
+            router_url,
+            router_pin: identity.pin(),
+            log_level: settings.log_level,
+            allow_downgrade: settings.rollout.allow_downgrade,
+        },
+        db.clone(),
+        fields.clone(),
+        launcher,
+        storage,
+        clock,
+    )
+    .map_err(|e| format!("the link clients: {e}"))?;
+    let broker = broker(&fleet, keys, &settings, one_host.clone())
+        .map_err(|e| format!("the broker: {e}"))?;
+    let modes = status::mode_routes(
+        fleet.clone(),
+        Stores::new(db.clone(), fields),
+        users,
+        status::StatusInfo {
+            image_digest: settings.image_digest.clone(),
+            state_db: backends.state_db,
+            key_provider: backends.key_provider,
+            launcher: backends.launcher,
+            bucket: settings.storage.bucket.clone(),
+            region: settings.storage.region.clone(),
+            retention_days: settings.retention.days,
+        },
+    );
+    let public = public_router(
+        state,
+        fleet.clone(),
+        modes,
+        Duration::from_millis(edge.limits.request_timeout_ms),
+        settings.trusted_proxies.clone(),
+        timing,
+    );
+    Ok((
+        RouterRole {
+            fleet,
+            public,
+            broker,
+            metrics,
+            settings,
+            one_host: one_host.is_some(),
+        },
+        listeners,
+    ))
 }
 
 /// Serves until `stop` resolves, runs the reconcile loop, then stops in the order of
@@ -252,8 +551,8 @@ pub async fn run(
     let internal = tokio::spawn(serve_tls(
         listeners.internal,
         identity,
-        internal::internal_router(broker),
-        internal::admit(fleet.bounds().clone(), user_net),
+        broker,
+        internal_admit(fleet.limits().clone(), user_net),
         wait(internal_stopped),
     ));
     let (reconcile_stop, reconcile_stopped) = watch::channel(false);

@@ -32,7 +32,6 @@ use knoggin_server::lease::{Fleet, FleetConfig};
 use knoggin_server::link::api::{ClaimLimits, ClaimSettings};
 use knoggin_server::link::{InternalSecret, ServerIdentity};
 use knoggin_server::router::forward::Timing;
-use knoggin_server::router::internal::internal_router;
 use knoggin_server::router::status::{StatusInfo, mode_routes};
 use knoggin_server::router::{guards, public_router};
 use knoggin_server::settings::{ContainerSettings, RouterSettings};
@@ -472,20 +471,23 @@ async fn the_snapshot_list_labels_with_thin() {
 
 #[tokio::test]
 async fn a_public_route_sent_to_the_internal_listener_gets_404() {
-    let r = internal_router(Router::new())
-        .oneshot(Request::get("/v1/tags").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(r.status(), StatusCode::NOT_FOUND);
-    let r = internal_router(Router::new())
-        .oneshot(
-            Request::get("/v1/%2e%2e/internal/v1/park")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    let a = app(wide(), wide()).await;
+    let settings = settings(&["192.0.2.10/32"], "10.201.0.0/16");
+    let broker = knoggin_server::router::broker(
+        &a.fleet,
+        Arc::new(test_provider()),
+        &settings,
+        Some("https://127.0.0.1:1".into()),
+    )
+    .unwrap();
+    for path in ["/v1/tags", "/v1/%2e%2e/internal/v1/park", "/healthz"] {
+        let r = broker
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::NOT_FOUND, "{path}");
+    }
 }
 
 #[tokio::test]

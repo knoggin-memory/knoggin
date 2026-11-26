@@ -237,7 +237,7 @@ impl Fleet {
             c.host.clone_from(&info.host);
         })
         .await?;
-        self.bounds.clear((*address.ip()).into());
+        self.limits.clear((*address.ip()).into());
         for other in self.containers.list().await? {
             if other.value.id != id
                 && other.value.state != ContainerState::Gone

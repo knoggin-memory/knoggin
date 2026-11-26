@@ -32,6 +32,7 @@ use tokio::task::JoinSet;
 use tokio::time::Instant;
 use uuid::Uuid;
 
+use crate::broker::PeerLimits;
 use crate::launcher::{BuildInfo, ContainerInfo, LaunchError, LaunchHandle, Launcher, LogLevel};
 use crate::link::api::{self, ClaimRequest, ClaimSettings, ParkRequest, StatusAnswer};
 use crate::link::{
@@ -39,7 +40,6 @@ use crate::link::{
     fresh_client, write_router_call,
 };
 use crate::pool::LaunchGate;
-use crate::router::internal::PeerBounds;
 use crate::settings::ContainerSettings;
 use crate::storage::ObjectStorage;
 
@@ -98,7 +98,7 @@ pub struct Fleet {
     pub(crate) clock: Clock,
     tasks: Mutex<JoinSet<()>>,
     pub(crate) gate: Mutex<LaunchGate>,
-    pub(crate) bounds: Arc<PeerBounds>,
+    pub(crate) limits: Arc<PeerLimits>,
     /// Request bodies buffered for a resend: all of them and per user.
     pub(crate) buffered: Mutex<(u64, HashMap<UserId, u64>)>,
 }
@@ -253,6 +253,7 @@ impl Fleet {
         clock: Clock,
     ) -> Result<Arc<Self>, crate::link::LinkError> {
         let peers = Arc::new(Peers::default());
+        let limits = PeerLimits::new(clock.clone());
         Ok(Arc::new(Self {
             client: forwarding_client(peers.clone())?,
             fresh: fresh_client(peers.clone())?,
@@ -267,7 +268,7 @@ impl Fleet {
             clock,
             tasks: Mutex::new(JoinSet::new()),
             gate: Mutex::new(LaunchGate::default()),
-            bounds: Arc::new(PeerBounds::default()),
+            limits,
             buffered: Mutex::new((0, HashMap::new())),
             config,
         }))
@@ -278,10 +279,10 @@ impl Fleet {
         &self.config
     }
 
-    /// The internal listener's counts per peer address; the broker reports failed token
-    /// checks here.
-    pub fn bounds(&self) -> &Arc<PeerBounds> {
-        &self.bounds
+    /// The internal listener's counts per peer address, shared by the listener's `admit`
+    /// and the broker's token checks.
+    pub fn limits(&self) -> &Arc<PeerLimits> {
+        &self.limits
     }
 
     /// Milliseconds since 1970.

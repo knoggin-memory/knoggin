@@ -46,7 +46,6 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
-knoggin-crypto = { path = "../knoggin-crypto" }
 tracing-subscriber = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
