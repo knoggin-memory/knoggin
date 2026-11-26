@@ -62,7 +62,8 @@ struct Fake {
     address: SocketAddrV4,
     ended: Option<Ended>,
     stop: Option<oneshot::Sender<()>>,
-    task: Option<tokio::task::JoinHandle<()>>,
+    /// Ends the container's own runtime at once, with every task it runs.
+    kill: Option<oneshot::Sender<()>>,
     forgotten: bool,
     draining: bool,
     started: Timestamp,
@@ -171,23 +172,29 @@ impl FakeLauncher {
 
     /// Ends a container at once: killed for memory, or crashed with exit code 1.
     pub fn kill(&self, handle: &LaunchHandle, memory: bool) {
+        let ended = if memory {
+            Ended {
+                reason: EndReason::Memory,
+                exit_code: Some(137),
+            }
+        } else {
+            Ended {
+                reason: EndReason::Exited,
+                exit_code: Some(1),
+            }
+        };
+        self.end_now(handle, ended);
+    }
+
+    /// Ends a container's runtime at once and records `ended`.
+    fn end_now(&self, handle: &LaunchHandle, ended: Ended) {
         let mut map = self.containers.lock().unwrap();
         if let Some(c) = map.get_mut(&handle.0) {
-            if let Some(t) = c.task.take() {
-                t.abort();
-            }
             if c.ended.is_none() {
-                c.ended = Some(if memory {
-                    Ended {
-                        reason: EndReason::Memory,
-                        exit_code: Some(137),
-                    }
-                } else {
-                    Ended {
-                        reason: EndReason::Exited,
-                        exit_code: Some(1),
-                    }
-                });
+                c.ended = Some(ended);
+            }
+            if let Some(k) = c.kill.take() {
+                let _ = k.send(());
             }
         }
     }
@@ -227,25 +234,47 @@ impl Launcher for FakeLauncher {
         }
         let fixed = *self.fixed_address.lock().unwrap();
         let listener = match fixed {
-            Some(a) => TcpListener::bind(SocketAddr::V4(a)).await,
-            None => TcpListener::bind((self.next_address(), 0)).await,
+            Some(a) => std::net::TcpListener::bind(SocketAddr::V4(a)),
+            None => std::net::TcpListener::bind((self.next_address(), 0)),
         }
+        .and_then(|l| l.set_nonblocking(true).map(|()| l))
         .map_err(|_| LaunchError::Refused("no address"))?;
         let Ok(SocketAddr::V4(address)) = listener.local_addr() else {
             return Err(LaunchError::Refused("no address"));
         };
         let handle = format!("fake-{}", Uuid::now_v7());
         let (stop_tx, stop_rx) = oneshot::channel();
+        let (kill_tx, kill_rx) = oneshot::channel::<()>();
         let runner = self.runner.lock().unwrap().clone();
-        let role = runner(spec.env.clone(), listener, stop_rx);
+        let env = spec.env.clone();
         let containers = self.containers.clone();
         let key = handle.clone();
-        // Hold the map while the task is spawned and recorded, so that a role that ends
-        // at once still finds its entry.
+        // Hold the map while the container starts and is recorded, so that a role that
+        // ends at once still finds its entry.
         let mut map = self.containers.lock().unwrap();
-        let task = tokio::spawn(async move {
-            let code = role.await;
-            if let Some(c) = containers.lock().unwrap().get_mut(&key)
+        // Each container runs on a runtime of its own, like a process: a kill shuts it
+        // down with every task it spawned, its listener included.
+        std::thread::spawn(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+            else {
+                return;
+            };
+            let code = rt.block_on(async move {
+                let Ok(listener) = TcpListener::from_std(listener) else {
+                    return Some(1);
+                };
+                let role = runner(env, listener, stop_rx);
+                tokio::select! {
+                    code = role => Some(code),
+                    _ = kill_rx => None,
+                }
+            });
+            rt.shutdown_background();
+            if let Some(code) = code
+                && let Some(c) = containers.lock().unwrap().get_mut(&key)
                 && c.ended.is_none()
             {
                 c.ended = Some(Ended {
@@ -261,7 +290,7 @@ impl Launcher for FakeLauncher {
                 address,
                 ended: None,
                 stop: Some(stop_tx),
-                task: Some(task),
+                kill: Some(kill_tx),
                 forgotten: false,
                 draining: false,
                 started: Timestamp::from_millis((self.clock)()),
@@ -299,7 +328,7 @@ impl Launcher for FakeLauncher {
         if self.fail_stop.load(Ordering::Relaxed) {
             return Err(LaunchError::Unavailable);
         }
-        let task = {
+        {
             let mut map = self.containers.lock().unwrap();
             let Some(c) = map.get_mut(&handle.0) else {
                 return Err(LaunchError::NotFound);
@@ -311,25 +340,29 @@ impl Launcher for FakeLauncher {
             if let Some(s) = c.stop.take() {
                 let _ = s.send(());
             }
-            c.task.take()
-        };
-        // A role gets a moment to end by itself, as a stop timeout would give it.
-        if let Some(mut t) = task
-            && tokio::time::timeout(Duration::from_secs(2), &mut t)
-                .await
-                .is_err()
-        {
-            t.abort();
-            let mut map = self.containers.lock().unwrap();
-            if let Some(c) = map.get_mut(&handle.0)
-                && c.ended.is_none()
-            {
-                c.ended = Some(Ended {
-                    reason: EndReason::Stopped,
-                    exit_code: Some(137),
-                });
-            }
         }
+        // A role gets the stop timeout to end by itself (a claimed one saves first).
+        let grace = *self.stop_grace.lock().unwrap();
+        let deadline = tokio::time::Instant::now() + grace;
+        while tokio::time::Instant::now() < deadline {
+            let ended = self
+                .containers
+                .lock()
+                .unwrap()
+                .get(&handle.0)
+                .is_some_and(|c| c.ended.is_some());
+            if ended {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        self.end_now(
+            handle,
+            Ended {
+                reason: EndReason::Stopped,
+                exit_code: Some(137),
+            },
+        );
         Ok(())
     }
 }
@@ -493,7 +526,12 @@ async fn park(State(s): State<Stub>, headers: HeaderMap) -> Response {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     if s.control.exit_on_park.load(Ordering::Relaxed) {
-        let _ = s.exit.send(Some(0));
+        // Exit once this answer is on its way.
+        let exit = s.exit.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = exit.send(Some(0));
+        });
     }
     StatusCode::ACCEPTED.into_response()
 }
