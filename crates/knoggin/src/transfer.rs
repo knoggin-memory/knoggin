@@ -75,23 +75,28 @@ pub(crate) async fn export(
         )
         .into());
     }
-    let mut file = create_private(out)?;
+    let path = out.to_owned();
+    let file = tokio::task::spawn_blocking(move || create_private(&path))
+        .await
+        .map_err(|_| anyhow!("internal error"))??;
+    let mut file = tokio::fs::File::from_std(file);
     let mut body = response.into_body();
     let mut written = 0u64;
     let result: anyhow::Result<()> = async {
+        use tokio::io::AsyncWriteExt as _;
         while let Some(frame) = body.frame().await {
             if let Ok(data) = frame?.into_data() {
-                file.write_all(&data)?;
+                file.write_all(&data).await?;
                 written += data.len() as u64;
             }
         }
-        file.sync_all()?;
+        file.sync_all().await?;
         Ok(())
     }
     .await;
     if let Err(e) = result {
         // A cut-off file must not look like an export.
-        let _ = std::fs::remove_file(out);
+        let _ = tokio::fs::remove_file(out).await;
         return Err(e.context("the export broke off"));
     }
     Ok(written)

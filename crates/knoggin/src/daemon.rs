@@ -201,13 +201,17 @@ pub(crate) async fn open_install(
     home: &Home,
 ) -> anyhow::Result<Result<Unlocked, LockReason>> {
     let data = config.local.data_dir.clone();
-    let (has_state, has_snapshots) = (state_files_exist(&data)?, snapshots_exist(&data)?);
-    let record = keys::read_record(&data).unwrap_or_else(|e| {
-        tracing::warn!(kind = "key_source_unreadable", error = %format!("{e:#}"), "key-source.json cannot be read");
-        None
-    });
     let (c, h) = (config.clone(), home.clone());
-    let loaded = tokio::task::spawn_blocking(move || match record {
+    // The folder scans, `key-source.json` and the key source are file and keychain work:
+    // all on the blocking pool (the locked daemon repeats this once a minute).
+    let opened = tokio::task::spawn_blocking(move || {
+        let data = &c.local.data_dir;
+        let (has_state, has_snapshots) = (state_files_exist(data)?, snapshots_exist(data)?);
+        let record = keys::read_record(data).unwrap_or_else(|e| {
+            tracing::warn!(kind = "key_source_unreadable", error = %format!("{e:#}"), "key-source.json cannot be read");
+            None
+        });
+        let loaded = match record {
         None if !has_state && !has_snapshots => {
             let chosen = keys::first_run(&c, &h)?;
             if let Some(why) = &chosen.fell_back {
@@ -229,10 +233,13 @@ pub(crate) async fn open_install(
                 Ok(None)
             }
         },
+        };
+        loaded.map(|l| (has_state, has_snapshots, l))
     })
     .await
     .map_err(|_| anyhow!("internal error"))?;
-    let loaded: Option<_> = loaded.map_err(|e: anyhow::Error| e)?;
+    let (has_state, has_snapshots, loaded): (bool, bool, Option<_>) =
+        opened.map_err(|e: anyhow::Error| e)?;
     // The key is looked at first.
     let Some((source, master)) = loaded else {
         return Ok(Err(LockReason::MasterKeyMissing));

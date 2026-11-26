@@ -557,7 +557,13 @@ async fn open(ctx: &Ctx<'_>, print_url: bool) -> anyhow::Result<u8> {
     let page = format!(
         "<!doctype html><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url={url}\"><title>Knoggin</title>"
     );
-    transfer::create_private(&file)?.write_all(page.as_bytes())?;
+    let path = file.clone();
+    tokio::task::spawn_blocking(move || {
+        transfer::create_private(&path)?.write_all(page.as_bytes())?;
+        Ok::<_, anyhow::Error>(())
+    })
+    .await
+    .map_err(|_| anyhow!("internal error"))??;
     let opener = if std::env::consts::OS == "macos" {
         "open"
     } else {
