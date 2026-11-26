@@ -176,9 +176,19 @@ async fn produce(
             .read_on(&open, move |s| {
                 Ok(s.export_page(cursor, EXPORT_PAGE, now()))
             })
-            .await
-            .and_then(|page| Ok((frames(&page.records)?, page.next)));
+            .await;
         drop(host);
+        // Serializing a page of 1,000 memories is real work: off the runtime, and outside
+        // the read lock.
+        let page = match page {
+            Ok(page) => tokio::task::spawn_blocking(move || {
+                Ok::<_, ApiError>((frames(&page.records)?, page.next))
+            })
+            .await
+            .map_err(|e| ApiError::from_join(&e))
+            .and_then(|framed| framed),
+            Err(e) => Err(e),
+        };
         let (frames, next) = match page {
             Ok(p) => p,
             Err(e) => {

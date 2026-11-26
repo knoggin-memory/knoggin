@@ -100,35 +100,45 @@ impl StoreHost {
         .await
     }
 
-    /// The key with the request hash, when a key was sent.
-    fn keyed<R: Serialize>(
+    /// The request back, with the key and its request hash when a key was sent. The hash
+    /// reads the whole request, which can be 10 MiB, so it is made on a blocking thread.
+    async fn keyed<R: Serialize + Send + 'static>(
         key: Option<String>,
-        op: &str,
-        request: &R,
-    ) -> Result<Option<(String, [u8; 32])>, ApiError> {
-        key.map(|k| request_hash(op, request).map(|h| (k, h)))
-            .transpose()
-    }
-
-    /// The document vector for a save's duplicate check, or `None` when the content is
-    /// not valid (the save then fails anyway), the model is not ready or the wait ran out.
-    async fn duplicate_vector(&self, content: ContentRef<'_>, at: Timestamp) -> Option<Vec<f32>> {
-        let tags = validate_content(content, at).ok()?;
-        let labels = Labels {
-            entities: content.entities.to_vec(),
-            topics: content.topics.to_vec(),
-            emotions: content.emotions.to_vec(),
+        op: &'static str,
+        request: R,
+    ) -> Result<(R, Option<(String, [u8; 32])>), ApiError> {
+        let Some(key) = key else {
+            return Ok((request, None));
         };
-        let text = document_text_from_parts(
-            content.entities,
-            content.created_at.unwrap_or(at),
-            content.summary,
-            content.full_text,
-            &tag_terms(&tags, &labels),
-        );
-        self.embedder.urgent(text).await
+        tokio::task::spawn_blocking(move || {
+            let hash = request_hash(op, &request)?;
+            Ok((request, Some((key, hash))))
+        })
+        .await
+        .map_err(|e| ApiError::from_join(&e))?
     }
 
+    /// The request back, with the document vector for its duplicate check: `None` when
+    /// the content is not valid (the save then fails anyway), the model is not ready or the
+    /// wait ran out. The checks and the document text are made on a blocking thread.
+    async fn duplicate_vector<R: Send + 'static>(
+        &self,
+        req: R,
+        content: for<'a> fn(&'a R) -> ContentRef<'a>,
+        at: Timestamp,
+    ) -> Result<(R, Option<Vec<f32>>), ApiError> {
+        let (req, text) = tokio::task::spawn_blocking(move || {
+            let text = duplicate_text(content(&req), at);
+            (req, text)
+        })
+        .await
+        .map_err(|e| ApiError::from_join(&e))?;
+        let vector = match text {
+            Some(text) => self.embedder.urgent(text).await,
+            None => None,
+        };
+        Ok((req, vector))
+    }
     /// `POST /v1/memories`, the `store_memory` tool.
     pub async fn store_memory(
         &self,
@@ -138,12 +148,12 @@ impl StoreHost {
     ) -> Result<Reply<StoredMemory>, ApiError> {
         ctx.require_write()?;
         req.namespace = fill(req.namespace.take(), ctx);
-        let keyed = Self::keyed(key, "store_memory", &req)?;
+        let (req, keyed) = Self::keyed(key, "store_memory", req).await?;
         let at = now();
-        let vector = if req.check_duplicates {
-            self.duplicate_vector(req.content(), at).await
+        let (req, vector) = if req.check_duplicates {
+            self.duplicate_vector(req, StoreMemory::content, at).await?
         } else {
-            None
+            (req, None)
         };
         let skipped = req.check_duplicates && vector.is_none();
         let id = new_memory_id(req.created_at.unwrap_or(at));
@@ -178,7 +188,7 @@ impl StoreHost {
         for item in &mut req.memories {
             item.namespace = fill(item.namespace.take(), ctx);
         }
-        let keyed = Self::keyed(key, "store_memories", &req)?;
+        let (req, keyed) = Self::keyed(key, "store_memories", req).await?;
         let at = now();
         let ids = req
             .memories
@@ -206,12 +216,13 @@ impl StoreHost {
         key: Option<String>,
     ) -> Result<Reply<StoredMemory>, ApiError> {
         ctx.require_write()?;
-        let keyed = Self::keyed(key, "supersede_memory", &req)?;
+        let (req, keyed) = Self::keyed(key, "supersede_memory", req).await?;
         let at = now();
-        let vector = if req.check_duplicates {
-            self.duplicate_vector(req.content(), at).await
+        let (req, vector) = if req.check_duplicates {
+            self.duplicate_vector(req, SupersedeMemory::content, at)
+                .await?
         } else {
-            None
+            (req, None)
         };
         let skipped = req.check_duplicates && vector.is_none();
         let id = new_memory_id(req.created_at.unwrap_or(at));
@@ -243,7 +254,7 @@ impl StoreHost {
         key: Option<String>,
     ) -> Result<Reply<Reinforced>, ApiError> {
         ctx.require_write()?;
-        let keyed = Self::keyed(key, "reinforce_memory", &req)?;
+        let (req, keyed) = Self::keyed(key, "reinforce_memory", req).await?;
         self.idempotent(
             ctx,
             WriteKind::Client,
@@ -262,7 +273,7 @@ impl StoreHost {
         key: Option<String>,
     ) -> Result<Reply<Forgotten>, ApiError> {
         ctx.require_write()?;
-        let keyed = Self::keyed(key, "forget_memory", &req)?;
+        let (req, keyed) = Self::keyed(key, "forget_memory", req).await?;
         self.idempotent(
             ctx,
             WriteKind::MakesRoom,
@@ -281,14 +292,13 @@ impl StoreHost {
         key: Option<String>,
     ) -> Result<Reply<ForgetManyResult>, ApiError> {
         ctx.require_write()?;
-        let (kind, keyed) = if req.dry_run {
-            (WriteKind::Bookkeeping, None)
+        let kind = if req.dry_run {
+            WriteKind::Bookkeeping
         } else {
-            (
-                WriteKind::MakesRoom,
-                Self::keyed(key, "forget_memories", &req)?,
-            )
+            WriteKind::MakesRoom
         };
+        let key = key.filter(|_| !req.dry_run);
+        let (req, keyed) = Self::keyed(key, "forget_memories", req).await?;
         self.idempotent(
             ctx,
             kind,
@@ -307,7 +317,7 @@ impl StoreHost {
         key: Option<String>,
     ) -> Result<Reply<Moved>, ApiError> {
         ctx.require_write()?;
-        let keyed = Self::keyed(key, "move_memories", &req)?;
+        let (req, keyed) = Self::keyed(key, "move_memories", req).await?;
         self.idempotent(
             ctx,
             WriteKind::Client,
@@ -326,7 +336,7 @@ impl StoreHost {
         key: Option<String>,
     ) -> Result<Reply<NamespaceView>, ApiError> {
         ctx.require_write()?;
-        let keyed = Self::keyed(key, "create_namespace", &req)?;
+        let (req, keyed) = Self::keyed(key, "create_namespace", req).await?;
         self.idempotent(
             ctx,
             WriteKind::Client,
@@ -345,14 +355,13 @@ impl StoreHost {
         key: Option<String>,
     ) -> Result<Reply<NamespaceView>, ApiError> {
         ctx.require_write()?;
-        let (kind, keyed) = if req.dry_run {
-            (WriteKind::Bookkeeping, None)
+        let kind = if req.dry_run {
+            WriteKind::Bookkeeping
         } else {
-            (
-                WriteKind::Client,
-                Self::keyed(key, "update_namespace_policy", &req)?,
-            )
+            WriteKind::Client
         };
+        let key = key.filter(|_| !req.dry_run);
+        let (req, keyed) = Self::keyed(key, "update_namespace_policy", req).await?;
         self.idempotent(
             ctx,
             kind,
@@ -372,17 +381,13 @@ impl StoreHost {
         key: Option<String>,
     ) -> Result<Reply<NamespaceDeleted>, ApiError> {
         ctx.require_write()?;
-        let (kind, keyed) = match (req.dry_run, req.force) {
-            (true, _) => (WriteKind::Bookkeeping, None),
-            (false, force) => (
-                if force {
-                    WriteKind::MakesRoom
-                } else {
-                    WriteKind::Client
-                },
-                Self::keyed(key, "delete_namespace", &req)?,
-            ),
+        let kind = match (req.dry_run, req.force) {
+            (true, _) => WriteKind::Bookkeeping,
+            (false, true) => WriteKind::MakesRoom,
+            (false, false) => WriteKind::Client,
         };
+        let key = key.filter(|_| !req.dry_run);
+        let (req, keyed) = Self::keyed(key, "delete_namespace", req).await?;
         self.idempotent(
             ctx,
             kind,
@@ -564,4 +569,21 @@ impl StoreHost {
         }
         self.embedder.query(query_text(query)).await
     }
+}
+
+/// The document text of a save's duplicate check, when its content is valid.
+fn duplicate_text(content: ContentRef<'_>, at: Timestamp) -> Option<String> {
+    let tags = validate_content(content, at).ok()?;
+    let labels = Labels {
+        entities: content.entities.to_vec(),
+        topics: content.topics.to_vec(),
+        emotions: content.emotions.to_vec(),
+    };
+    Some(document_text_from_parts(
+        content.entities,
+        content.created_at.unwrap_or(at),
+        content.summary,
+        content.full_text,
+        &tag_terms(&tags, &labels),
+    ))
 }
