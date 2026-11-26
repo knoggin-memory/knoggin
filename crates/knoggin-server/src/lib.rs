@@ -8,5 +8,10 @@
 //! says where each goes.
 
 mod hex;
+pub mod launcher;
 pub mod link;
+pub mod settings;
 
+pub use launcher::{
+    BuildInfo, ContainerEnv, ContainerInfo, ContainerSpec, LaunchError, LaunchHandle, Launcher,
+};
