@@ -1,16 +1,21 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Detail for the selected memory (DESIGN §2, §8): a side panel on the map,
      an expanded row in Explore (`layout="inline"`, which shows more: full
      text, every label, links and a longer activity list). Reads are
-     read-only; Reinforce and Forget are the only writes, Forget confirms. -->
+     read-only; Reinforce and Forget are the only writes, Forget confirms.
+     The same routes wherever it appears (tab "Web UI", the memory panel). -->
 <script lang="ts">
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
-  import { AlertDialog, DropdownMenu } from 'bits-ui';
+  import { DropdownMenu } from 'bits-ui';
   import Icon from './Icon.svelte';
   import DecayCurve from './DecayCurve.svelte';
+  import Dialog from './Dialog.svelte';
   import { forget, memoryHistory, memoryNeighbors, memoryRecord, memoryRows, reinforce } from '$lib/api/memories';
-  import { EDGE_LABELS } from '$lib/map/encoding';
-  import { ago, duration, phaseName } from '$lib/format';
-  import { DAY_MS, strengthAt } from '$lib/fsrs';
+  import { EDGE_NAME_LABELS } from '$lib/map/encoding';
+  import { ago, duration, longDate, ms, phaseLabel, truncateWords } from '$lib/format';
+  import { DAY_MS } from '$lib/fsrs';
+  import { namespacesQuery, storeKey, thresholdsOf } from '$lib/queries';
+  import { status } from '$lib/status.svelte';
 
   let {
     id,
@@ -34,14 +39,15 @@
 
   const client = useQueryClient();
   const row = createQuery(() => ({
-    queryKey: ['memory-row', id],
+    queryKey: storeKey('memory-row', id),
     queryFn: async () => (await memoryRows([id]))[0] ?? null,
   }));
-  const record = createQuery(() => ({ queryKey: ['memory', id], queryFn: () => memoryRecord(id) }));
-  const history = createQuery(() => ({ queryKey: ['history', id, inline], queryFn: () => memoryHistory(id, inline ? 12 : 3) }));
+  const record = createQuery(() => ({ queryKey: storeKey('memory', id), queryFn: () => memoryRecord(id) }));
+  const history = createQuery(() => ({ queryKey: storeKey('history', id, inline), queryFn: () => memoryHistory(id, inline ? 12 : 3) }));
+  const namespaces = namespacesQuery();
   // Direct links, strongest first (inline only).
   const neighbors = createQuery(() => ({
-    queryKey: ['neighbors', id, 1],
+    queryKey: storeKey('neighbors', id, 1),
     queryFn: () => memoryNeighbors(id, 1),
     enabled: inline,
   }));
@@ -55,7 +61,7 @@
       .filter((e) => e.other)
       .sort((a, b) => b.weight - a.weight);
   });
-  const fmtDate = (t: number) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const fmtDate = longDate;
 
   let showFull = $state(false);
   // Summaries longer than this show smaller and clamp to four lines.
@@ -69,37 +75,49 @@
   let busy = $state(false);
   let error = $state<string | null>(null);
   let confirming = $state(false);
+  let note = $state<string | null>(null);
+  $effect(() => {
+    id;
+    note = null;
+    error = null;
+  });
 
-  const r = $derived(row.data ? strengthAt(row.data.lastAccessedAt, row.data.stability, row.data.decayMultiplier) : 0);
-  const elapsed = $derived(row.data ? Math.max(0, Date.now() - row.data.lastAccessedAt) / DAY_MS : 0);
+  // R is the row's strength; the curve starts from the last access, or the save.
+  const r = $derived(row.data?.strength ?? 0);
+  const elapsed = $derived(row.data ? Math.max(0, Date.now() - ms(row.data.retrievedAt ?? row.data.createdAt)) / DAY_MS : 0);
+  const bands = $derived(row.data ? thresholdsOf(namespaces.data, row.data.namespace) : undefined);
   const labels = $derived(
     [...(row.data?.entities ?? []), ...(row.data?.tags ?? [])].slice(0, 3).join(' · '),
   );
+  // Each line is a kind and a time: Knoggin does not store who recalled a memory or with what query.
   const KINDS: Record<string, string> = {
-    direct: 'found it searching',
-    associative: 'reached it through a link',
-    reinforce: 'reinforced it',
-    sweep: 'Decay sweep checked it',
+    direct: 'Recalled',
+    associative: 'Reached through a link',
+    reinforcement: 'Reinforced',
   };
-  type Act = { at: number; kind: string; agent: string | null; query: string | null; n: number };
-  // Consecutive identical entries (same agent, kind and query) collapse into one row.
+  type Act = { at: number; kind: string; n: number };
+  // Consecutive entries of one kind collapse into one row.
   const acts = $derived(
     (history.data?.events ?? []).reduce<Act[]>((out, e) => {
       const last = out.at(-1);
-      if (last && last.kind === e.kind && last.agent === e.agent && last.query === e.query) last.n++;
-      else out.push({ at: e.at, kind: e.kind, agent: e.agent, query: e.query, n: 1 });
+      if (last && last.kind === e.kind) last.n++;
+      else out.push({ at: ms(e.at), kind: e.kind, n: 1 });
       return out;
     }, []),
   );
 
-  async function doReinforce(rating: number) {
+  async function doReinforce(quality: number) {
     if (!row.data) return;
     busy = true;
     error = null;
+    note = null;
     previous = row.data.stability;
     try {
-      await reinforce(id, row.data.namespace, rating);
-      await client.invalidateQueries();
+      await reinforce(id, quality);
+      // Again lowers stability, so the note never says that it grew.
+      note = 'Reinforced. The next change is worked out again from the new stability.';
+      await client.invalidateQueries({ queryKey: ['store'] });
+      void status.poll();
     } catch (e) {
       error = (e as Error).message;
       previous = null;
@@ -112,10 +130,11 @@
     if (!row.data) return;
     busy = true;
     try {
-      await forget(id, row.data.namespace);
+      await forget(id);
       confirming = false;
-      await client.invalidateQueries();
       onclose();
+      await client.invalidateQueries({ queryKey: ['store'] });
+      void status.poll();
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -130,9 +149,9 @@
       <span class="card-title">Retrievability</span>
       <span class="mono values">R {r.toFixed(2)} · S {duration(m.stability)}{m.permastore ? ' · permastore' : ''}</span>
     </div>
-    <DecayCurve stability={m.stability} elapsedDays={elapsed} previousStability={previous} multiplier={m.decayMultiplier} />
+    <DecayCurve stability={m.stability} elapsedDays={elapsed} previousStability={previous} multiplier={m.decayMultiplier} thresholds={bands} />
     <figcaption>
-      {m.nextChange ? `${phaseName(m.nextChange.to)} ${m.nextChange.at <= Date.now() ? 'at the next sweep' : `in ${duration((m.nextChange.at - Date.now()) / DAY_MS)}`}` : m.permastore ? 'In permastore' : 'No change expected'}
+      {m.nextChange ? `${phaseLabel(m.nextChange.to)} ${ms(m.nextChange.at) <= Date.now() ? 'at the next sweep' : `in ${duration((ms(m.nextChange.at) - Date.now()) / DAY_MS)}`}` : m.permastore ? 'In permastore' : 'No change expected'}
       · created {fmtDate(m.createdAt)}
     </figcaption>
   </figure>
@@ -144,23 +163,20 @@
     {#each acts as e, i (i)}
       <div class="act">
         <span class="mono t">{ago(e.at)}</span>
-        <span>
-          {#if e.kind !== 'sweep'}{e.agent ?? 'An agent'}{/if}
-          <span class="muted">{KINDS[e.kind] ?? e.kind}{e.n > 1 ? ` · ${e.n}×` : ''}</span>
-          {#if e.query}<span class="q">“{e.query}”</span>{/if}
-        </span>
+        <span>{KINDS[e.kind] ?? e.kind}<span class="muted">{e.n > 1 ? ` · ${e.n}×` : ''}</span></span>
       </div>
     {:else}
-      <span class="muted small">No access recorded yet.</span>
+      <span class="muted small">Not recalled yet.</span>
     {/each}
   </section>
 {/snippet}
 
 {#snippet actions(m: NonNullable<typeof row.data>)}
+  {#if note}<span class="small" role="status">{note}</span>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <div class="actions">
     <DropdownMenu.Root>
-      <DropdownMenu.Trigger class="btn-primary grow" disabled={busy}>Reinforce</DropdownMenu.Trigger>
+      <DropdownMenu.Trigger class="btn-primary grow" disabled={busy || m.phase === 'ghost'} title={m.phase === 'ghost' ? 'A ghost has no content left.' : undefined}>Reinforce</DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content class="menu" sideOffset={6} align="start">
           {#each [[4, 'Easy'], [3, 'Good'], [2, 'Hard'], [1, 'Again']] as [q, label] (q)}
@@ -180,21 +196,17 @@
     </DropdownMenu.Root>
   </div>
 
-  <AlertDialog.Root bind:open={confirming}>
-    <AlertDialog.Portal>
-      <AlertDialog.Overlay class="dialog-scrim" />
-      <AlertDialog.Content class="dialog">
-        <AlertDialog.Title class="card-title">Forget this memory?</AlertDialog.Title>
-        <AlertDialog.Description class="dialog-text">
-          “{m.summary ?? 'Summary dropped'}” becomes a tombstone: its content is removed and it no longer appears in recall.
-        </AlertDialog.Description>
-        <div class="dialog-actions">
-          <AlertDialog.Cancel class="btn-secondary">Keep it</AlertDialog.Cancel>
-          <AlertDialog.Action class="btn-primary" disabled={busy} onclick={doForget}>Forget</AlertDialog.Action>
-        </div>
-      </AlertDialog.Content>
-    </AlertDialog.Portal>
-  </AlertDialog.Root>
+  {#if m.phase === 'ghost'}<span class="hint">A ghost has no content left.</span>{/if}
+
+  <Dialog bind:open={confirming} title="Forget this memory?" alert>
+    <p class="fade-text">{truncateWords(m.summary ?? 'Summary dropped', 60)}</p>
+    <p class="dialog-text">This memory is removed from the store now. You cannot undo this. Backups can hold it until they expire.</p>
+    {#if error}<p class="field-error" role="alert">{error}</p>{/if}
+    {#snippet actions()}
+      <button type="button" class="btn-secondary" onclick={() => (confirming = false)}>Keep it</button>
+      <button type="button" class="btn-danger" disabled={busy} onclick={doForget}>Forget</button>
+    {/snippet}
+  </Dialog>
 {/snippet}
 
 {#if inline}
@@ -216,7 +228,7 @@
         {#if record.data?.fullText}
           <p class="full">{record.data.fullText}</p>
         {:else}
-          <p class="muted small">{m.phase === 1 ? 'No full text stored.' : 'Full text dropped when it decayed to a Summary.'}</p>
+          <p class="muted small">{m.phase === 'full' ? 'No full text stored.' : m.phase === 'summary' ? 'Full text dropped when it decayed to a Summary.' : 'Summary and full text dropped. Its links remain.'}</p>
         {/if}
         {#if m.entities.length}
           <div class="labels"><span class="micro-label">Entities</span>{#each m.entities as e (e)}<span class="tag">{e}</span>{/each}</div>
@@ -227,7 +239,7 @@
         <dl class="facts">
           <div><dt>Namespace</dt><dd class="mono">{m.namespace}</dd></div>
           <div><dt>Created</dt><dd class="mono">{fmtDate(m.createdAt)}</dd></div>
-          <div><dt>Last accessed</dt><dd class="mono">{ago(m.lastAccessedAt)}</dd></div>
+          <div><dt>Last accessed</dt><dd class="mono">{m.retrievedAt ? ago(ms(m.retrievedAt)) : 'Never'}</dd></div>
           <div><dt>Stability</dt><dd class="mono">{duration(m.stability)}</dd></div>
           <div><dt>ID</dt><dd class="mono id">{m.id}</dd></div>
         </dl>
@@ -245,7 +257,7 @@
             {#each links.slice(0, 10) as l, i (i)}
               <li>
                 <button type="button" class="link-row" onclick={() => onopen?.(l.other!.id)} title="Open this memory">
-                  <span class="mono kind">{EDGE_LABELS[l.type] ?? l.type}</span><span class="other" class:ghost={l.other!.summary === null}>{l.other!.summary ?? 'Summary dropped'}</span><span class="mono w">{l.weight.toFixed(2)}</span>
+                  <span class="mono kind">{EDGE_NAME_LABELS[l.type] ?? l.type}</span><span class="other" class:ghost={l.other!.summary === null}>{l.other!.summary ?? 'Summary dropped'}</span><span class="mono w">{l.weight.toFixed(2)}</span>
                 </button>
               </li>
             {:else}
@@ -271,7 +283,7 @@
     {@const long = (m.summary?.length ?? 0) > LONG_TITLE}
     <div class="head">
       <div class="top">
-        <span class="status mono"><span class="dot"></span>{phaseName(m.phase)} · accessed {ago(m.lastAccessedAt)}</span>
+        <span class="status mono"><span class="dot"></span>{phaseLabel(m.phase)} · {m.retrievedAt ? `accessed ${ago(ms(m.retrievedAt))}` : 'never accessed'}</span>
         <button type="button" class="icon-btn close" aria-label="Close details" onclick={onclose}><Icon name="close" stroke={1.8} /></button>
       </div>
       <h2 class:ghost={m.summary === null} class:long class:clamped={long && !showTitle}>{m.summary ?? 'Summary dropped'}</h2>
@@ -281,7 +293,7 @@
         </button>
       {/if}
       <span class="meta">{m.namespace}{labels ? ` · ${labels}` : ''} · {m.degree} links</span>
-      {#if m.phase === 1 && record.data?.fullText}
+      {#if m.phase === 'full' && record.data?.fullText}
         <button type="button" class="link" aria-expanded={showFull} onclick={() => (showFull = !showFull)}>
           {showFull ? 'Hide full text' : 'Show full text'}
         </button>
@@ -403,13 +415,6 @@
     display: flex;
     gap: var(--space-3);
     font-size: var(--text-control);
-  }
-  .q {
-    display: block;
-    color: var(--color-text-2);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .act > span:last-child {
     min-width: 0;
@@ -596,37 +601,6 @@
   .skeleton.block {
     height: var(--space-8);
     flex: 0 0 calc(var(--space-8) * 3);
-  }
-  :global(.dialog-scrim) {
-    position: fixed;
-    inset: 0;
-    background: var(--color-scrim);
-    z-index: 50;
-  }
-  :global(.dialog) {
-    position: fixed;
-    top: var(--palette-top);
-    left: 50%;
-    transform: translateX(-50%);
-    width: min(calc(var(--panel-width) + var(--space-8) * 2), calc(100vw - var(--space-8)));
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--card-pad);
-    background: var(--color-surface);
-    border: var(--hairline) solid var(--color-border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-popover);
-    z-index: 51;
-  }
-  :global(.dialog-text) {
-    margin: 0;
-    color: var(--color-text-2);
-  }
-  :global(.dialog-actions) {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-2);
   }
   @media (max-width: 900px) {
     .panel {

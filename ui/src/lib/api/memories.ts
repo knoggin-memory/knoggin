@@ -1,66 +1,50 @@
-// Memory reads (all read-only on the daemon) and the UI's only two writes.
-import { get, post } from './client';
-import type {
-  AccessHistory,
-  ListTagsResponse,
-  MemoryPage,
-  MemoryRecord,
-  MemoryRow,
-  Neighborhood,
-  UiSearch,
-} from './types';
+// SPDX-License-Identifier: AGPL-3.0-only
+// Memory reads (none records access) and the UI's two memory writes. Every one
+// is a store route and carries the current store.
+import { del, post, sget } from './client';
+import type { AccessHistory, Activity, Facets, Memory, MemoryPage, MemoryRow, Neighborhood, Phase, UiSearch } from './shapes';
 
 export type SortKey = 'lastAccess' | 'strength' | 'created' | 'nextChange' | 'summary';
 
 export interface PageQuery {
   namespace: string | null;
-  phases: number[];
+  phases: Phase[];
   tags: string[];
   entities: string[];
+  clients: string[];
   sort: SortKey;
   desc: boolean;
-  /** Restrict to these memories (the Agent filter). */
-  ids?: string[];
 }
 
 export const PAGE = 200;
 
 export const memoryPage = (q: PageQuery, offset: number, limit = PAGE) =>
-  get<MemoryPage>('/memories', {
-    namespace: q.namespace,
-    phase: q.phases.map(String),
-    tag: q.tags,
-    entity: q.entities,
-    id: q.ids ?? [],
-    sort: q.sort,
-    desc: q.desc,
-    offset,
-    limit,
-  });
+  sget<MemoryPage>(
+    '/v1/ui/memories',
+    { namespace: q.namespace, phase: q.phases, tag: q.tags, entity: q.entities, client: q.clients, sort: q.sort, desc: q.desc, offset, limit },
+    true,
+  );
 
+/** Rows by ID, whatever the filters (the map's labels, a search hit opened in Explore). */
 export async function memoryRows(ids: string[]): Promise<MemoryRow[]> {
   if (!ids.length) return [];
-  const page = await get<MemoryPage>('/memories', { id: ids, limit: ids.length });
+  const page = await sget<MemoryPage>('/v1/ui/memories', { id: ids, limit: Math.min(PAGE, ids.length) });
   return page.rows;
 }
 
-export const memoryRecord = (id: string) => get<MemoryRecord>(`/memories/${id}`);
-export const memoryHistory = (id: string, limit = 3) =>
-  get<AccessHistory>(`/memories/${id}/history`, { limit });
-export const memoryNeighbors = (id: string, depth = 2) =>
-  get<Neighborhood>(`/memories/${id}/neighbors`, { depth });
-export const tags = (namespace: string | null) => get<ListTagsResponse>('/tags', { namespace });
-export const search = (q: string, namespace: string | null, limit = 10, signal?: AbortSignal) =>
-  get<UiSearch>('/search', { q, namespace, limit }).then((r) => {
-    if (signal?.aborted) throw new DOMException('aborted', 'AbortError');
-    return r;
-  });
+export const memoryRecord = (id: string) => sget<Memory>(`/v1/memories/${id}`, { recordAccess: false });
+export const memoryHistory = (id: string, limit = 3) => sget<AccessHistory>(`/v1/ui/memories/${id}/history`, { limit });
+export const memoryNeighbors = (id: string, depth = 2) => sget<Neighborhood>(`/v1/ui/memories/${id}/neighbors`, { depth });
+export const facets = (namespace: string | null) => sget<Facets>('/v1/ui/facets', { namespace }, true);
+export const search = (q: string, namespace: string | null, limit = 10) => sget<UiSearch>('/v1/ui/search', { q, namespace, limit }, true);
+export const activity = (namespace: string | null, since: string | null, limit = 120) =>
+  sget<Activity>('/v1/ui/activity', { namespace, since, limit }, true);
 
-/** Reinforce with an FSRS rating: 1 again, 2 hard, 3 good, 4 easy. */
-export const reinforce = (id: string, namespace: string, rating: number) =>
-  post<unknown>(`/memories/${id}/reinforce`, { namespace, rating });
-export const forget = (id: string, namespace: string) =>
-  post<unknown>(`/memories/${id}/forget`, { namespace });
-
-export const activity = (namespace: string | null, since: number | null, limit = 120) =>
-  get<import('./types').Activity>('/activity', { namespace, since, limit });
+/** Reinforce: quality 1 Again, 2 Hard, 3 Good, 4 Easy. */
+export const reinforce = (id: string, quality: number) =>
+  post<{ id: string; strength: number; stability: number; phase: Phase; isPermastore: boolean }>(
+    `/v1/memories/${id}/reinforce`,
+    { quality },
+    { store: true },
+  );
+export const forget = (id: string) => del<{ id: string; deleted: boolean }>(`/v1/memories/${id}`, { store: true });

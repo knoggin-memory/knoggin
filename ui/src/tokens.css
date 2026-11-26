@@ -1,0 +1,280 @@
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/*
+ * Knoggin UI: design tokens ("Field Notes", Knoggin brand).
+ * Drop-in replacement for docs/ui/tokens.css. Token names are unchanged where
+ * the role is unchanged; lines marked NEW add a token, RETIRED removes one.
+ * Brand palette, from brand-colors.json in the logo pack: Terracotta #CE6B36,
+ * Sage #8E9F5D, Sand #EFCC9F, Chocolate #372416, Cream #FCF7EF, Forest #2A442A,
+ * Soft Sage #A9B58D.
+ * Contrast (WCAG 2.1) is recorded beside every text and control colour and was
+ * computed against bg, surface, canvas, sunken, accent-soft and notice.
+ * Light is the first block. The dark theme is the second block, further down.
+ */
+
+:root {
+  /* ── Surfaces ─────────────────────────────────────────────── */
+  --color-bg: #F5EFE5;            /* page ground: Cream, one step warmer and deeper */
+  --color-surface: #FCF7EF;       /* cards, panels, tables, popovers: brand Cream */
+  --color-canvas: #F8F3EA;        /* Memory map canvas */
+  --color-canvas-dot: #E6DDCF;    /* 1px dot grid on the map canvas, 24px pitch */
+  --color-sunken: #F5EFE5;        /* stat tiles, palette footer, code blocks */
+  --color-scrim: rgba(55, 36, 22, 0.24); /* behind the palette and dialogs: Chocolate */
+
+  /* ── Lines ────────────────────────────────────────────────── */
+  --color-border: #E6DDCF;        /* card, panel and table outlines */
+  --color-border-strong: #D8CDBB; /* secondary buttons, kbd, inputs */
+  --color-divider: #EFE8DC;       /* row separators inside cards/tables */
+  --color-grid: #DCD2C2;          /* chart gridlines (dashed 2 3) */
+  --color-border-input: #988470;  /* outline of text inputs and selects, where the line is what marks the control. 3.4:1 on surface, 3.1:1 on bg. NEW */
+
+  /* ── Text: brand Chocolate and two lighter steps ──────────── */
+  --color-text: #372416;          /* Chocolate. 13.8:1 on surface, 12.9:1 on bg */
+  --color-text-2: #5C4433;        /* secondary text, unselected nav. 8.5:1 surface, 7.9:1 bg */
+  --color-text-muted: #735B49;    /* captions, meta, labels. 5.9:1 surface, 5.5:1 bg, 4.9:1 accent-soft, 4.9:1 notice */
+  --color-text-axis: #7A6351;     /* chart axis labels only. 5.3:1 surface, 4.9:1 bg */
+
+  /* ── Accent: brand Forest. The one primary accent ─────────── */
+  --color-accent: #2A442A;        /* primary button, curves, focus ring, selected text. 10.1:1 on surface */
+  --color-accent-text: #2A442A;   /* small green text: status lines, links. 10.1:1 surface, 9.4:1 bg */
+  --color-accent-strong: #1D301D; /* text on accent-soft, link hover. 10.8:1 on accent-soft */
+  --color-accent-soft: #E3E3D2;   /* selected chip / nav / row background: Cream + 30% Soft Sage */
+  --color-accent-soft-border: #CED3B9; /* Cream + 55% Soft Sage */
+  --color-on-accent: #FCF7EF;     /* text on --color-accent: Cream. 10.1:1 */
+
+  /* ── Live: brand Terracotta. Activity only, never controls ── NEW */
+  --color-live: #CE6B36;          /* recall light, live dots, "now" markers. 3.3:1 on canvas (graphic) */
+  --color-live-text: #9A4A1A;     /* small terracotta text: live status lines. 5.8:1 surface, 5.5:1 bg, 4.8:1 notice and accent-soft, its lowest */
+
+  /* ── Notice: brand Sand. Banners and warnings ────────────── NEW */
+  --color-notice: #F5DFC3;        /* notice and warning background: Cream + 55% Sand */
+  --color-notice-border: #EFCC9F; /* brand Sand */
+  --color-notice-text: #7A3F12;   /* warning label text. 6.4:1 on notice, 7.7:1 on surface */
+
+  /* ── Danger: destructive confirms and errors only ────────── NEW */
+  --color-danger: #9B3A1E;        /* danger text: Terracotta taken darker and redder. 6.5:1 on surface, 6.1:1 on bg */
+  --color-danger-fill: #9B3A1E;   /* fill of the destructive confirm button. The same brick in light; its own value in dark. NEW */
+  --color-on-danger: #FCF7EF;     /* text on --color-danger-fill. 6.5:1 */
+
+  /* ── Graph: a hue per phase, all solid. Greens are Full, oranges are Summary, blue is Ghost.
+        Inside a phase, lighter means more faded. (Changed after review, 2026-11-23.) ── */
+  --color-node: #2A442A;          /* Full memory at full strength: Forest (L* 26) */
+  --color-node-fading: #5C7244;   /* Full memory nearing Summary: moss, halfway from Forest to Sage (L* 45) */
+  --color-node-summary: #CE6B36;  /* Summary memory: Terracotta (L* 56) */
+  --color-node-summary-fading: #DF9C6B; /* Summary memory nearing Ghost: halfway from Terracotta to Sand (L* 70). NEW */
+  --color-node-ghost: #AAB5BF;    /* Ghost memory: slate blue, solid fill, no outline (L* 73) */
+  --color-node-lit: #FCF7EF;      /* core of a node reached by a recall: Cream, inside a --color-live ring and glow */
+  --color-edge: #A69C8C;          /* base edge, opacity 0.32 × (0.3 + 0.7 × weight), solid */
+  --color-suppressed: #CFC5B7;    /* RIF-suppressed competitor: pale warm grey, so it recedes. Was the slate blue Ghost now uses */
+  --color-suppressed-text: #4C5A68; /* 6.6:1 on surface */
+  --color-supersedes: #5A6B7D;    /* dashed 3 3: a Supersedes link, the only cool line. 5.0:1 on canvas */
+  --color-permastore: #B5893A;    /* 1px halo ring, r + 3.2: Sand taken to a brass */
+  --color-label-halo: #F8F3EA;    /* 4px text stroke behind map labels (= canvas) */
+  --color-moss: #8E9F5D;          /* "through links" score bars, recalls series: Sage. NEW (was read from agent-2) */
+  /* --color-mark-glass: RETIRED with the bulb mark. The logo is now an SVG file. */
+
+  /* ── Agents (pulse + activity dot colours, assigned in order) ─ */
+  /* Each differs from its neighbours in hue and in lightness (L* 56, 45, 63, 36). */
+  --color-agent-1: #CE6B36;       /* Terracotta, e.g. claude-code */
+  --color-agent-2: #4F6D8F;       /* slate blue: the safe pair for orange */
+  --color-agent-3: #8E9F5D;       /* Sage */
+  --color-agent-4: #6E4E3A;       /* cocoa: Chocolate, lifted */
+
+  /* ── Decay curve bands ────────────────────────────────────── */
+  --band-full: rgba(42, 68, 42, 0.07);      /* R > 0.70 */
+  --band-summary: rgba(142, 159, 93, 0.10); /* 0.30 < R ≤ 0.70 */
+
+  /* ── Type (unchanged: the wordmark is outlined artwork, so it brings no font of its own) ── */
+  --font-serif: "Newsreader", Georgia, serif;                  /* Voice */
+  --font-sans: "Instrument Sans", system-ui, sans-serif;       /* Interface */
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;       /* Values */
+
+  --text-display: 44px;    /* serif · one large number per card (line-height 1, -0.02em) */
+  --text-page: 30px;       /* serif · page title (1.15, -0.01em) */
+  --text-memory: 26px;     /* serif · selected memory title, auth page titles (1.2, -0.01em) */
+  --text-tile: 24px;       /* serif · stat tile value (1.1) */
+  --text-section: 18px;    /* serif · section, card, dialog and panel sub-titles */
+  --text-input-lg: 17px;   /* sans · ⌘K palette input */
+  --text-input: 14px;      /* sans · header search field, form inputs */
+  --text-body: 13.5px;     /* sans · body, table rows, list items (1.5) */
+  --text-control: 12.5px;  /* sans · chips, captions, meta lines */
+  --text-small: 12px;      /* sans · legends, tooltip meta in sans */
+  --text-value: 12px;      /* mono · numbers, timestamps, IDs, key prefixes */
+  --text-status: 11px;     /* mono · status lines, kbd, tooltip meta */
+  --text-explain: 11.5px;  /* mono · palette explain line */
+  --text-label: 10.5px;    /* mono · uppercase labels, letter-spacing 0.06em */
+  --text-chart: 9px;       /* mono · chart axis and threshold labels */
+
+  --weight-regular: 400;
+  --weight-medium: 500;    /* controls */
+  --weight-semibold: 600;  /* the one primary action, active nav, emphasis */
+
+  /* ── Space (4px base) ─────────────────────────────────────── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 28px;
+  --space-8: 32px;
+
+  /* ── Radius ───────────────────────────────────────────────── */
+  --radius-sm: 4px;        /* kbd, tags */
+  --radius-md: 6px;        /* cards, panels, buttons, inputs, rows */
+  --radius-lg: 10px;       /* ⌘K palette, dialogs */
+  --radius-pill: 999px;    /* chips, status pills */
+
+  /* ── Elevation: Chocolate shadows ─────────────────────────── */
+  --shadow-popover: 0 24px 64px rgba(55, 36, 22, 0.18), 0 2px 6px rgba(55, 36, 22, 0.06);
+  --shadow-tooltip: 0 3px 0 rgba(55, 36, 22, 0.07);
+
+  /* ── Sizes ────────────────────────────────────────────────── */
+  --sidebar-width: 208px;
+  --sidebar-rail: 60px;
+  --panel-width: 360px;
+  --panel-min: 300px;
+  --panel-rail: 56px;
+  --control-h: 34px;       /* chips, toolbar buttons, small buttons */
+  --icon-btn: 36px;
+  --button-h: 44px;        /* primary actions, inputs */
+  --row-h: 44px;           /* table rows */
+
+  /* ── Layout details ───────────────────────────────────────── */
+  --hairline: 1px;          /* borders, dividers */
+  --text-button: 13px;      /* sans · primary / secondary buttons */
+  --card-pad: 22px;
+  --tile-pad: 14px 16px;
+  --rule: 1.5px;            /* focus ring width (was the search rule) */
+  --sidebar-min: 180px;
+  --main-min: 560px;        /* flex basis of the main column */
+  --nav-item-h: 40px;       /* sidebar view links; rail buttons are this square */
+  --ns-row-h: 32px;         /* sidebar namespace rows */
+  --search-w: 320px;        /* header search field */
+  --logo-h: 30px;           /* visible height of the horizontal logo in the sidebar. NEW (replaces --mark, --text-wordmark) */
+  --logo-rail: 28px;        /* brain mark on the collapsed rail. NEW (replaces --mark-rail) */
+  --logo-auth: 96px;        /* stacked logo on sign-in and connection pages. NEW */
+  --icon-sm: 14px;          /* chevrons in chips */
+  --icon-md: 18px;          /* nav and toolbar icons */
+  --icon-lg: 24px;
+  --dot: 6px;               /* status / live dots */
+  --swatch: 8px;            /* legend swatches */
+  --palette-w: 680px;
+  --palette-top: 104px;
+  --palette-row: 60px;
+  --strength-bar-w: 56px;   /* Explore strength cell bar (4px tall) */
+  --score-bar-w: 44px;      /* palette result score bar */
+  --bar-h: 4px;
+  --dialog-w: 440px;        /* confirm and form dialogs. NEW */
+  --auth-w: 360px;          /* sign-in and connection page column. NEW */
+  --form-w: 560px;          /* widest line of text or form on settings pages. NEW */
+  --avatar: 28px;           /* initials avatar. NEW */
+
+  /* ── Motion ───────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --dur-fast: 120ms;       /* hover, press, tooltip show delay */
+  --dur-panel: 180ms;      /* detail panel open and close */
+  --ease-drawer: cubic-bezier(0.3, 0.7, 0.1, 1); /* sidebar: moves off quickly, then settles slowly, like a soft-close drawer. NEW */
+  --dur-drawer: 540ms;     /* sidebar width, logo and store button, open or close. NEW */
+  --ease-swap: cubic-bezier(0.4, 0, 0.6, 1); /* labels and icons dissolving into each other inside the sidebar: gentle at both ends. Their durations are shares of --dur-drawer. NEW */
+  --dur-palette: 140ms;    /* ⌘K and dialog open (fade + 4px rise) */
+  --dur-wait: 1600ms;      /* one cycle of a waiting indicator. NEW */
+}
+
+/*
+ * ── Dark theme ───────────────────────────────────────────────
+ * The same roles on low-glare grounds. Nothing is black and nothing is
+ * pure white: the grounds are Forest taken deep, and text is Cream taken
+ * down a step. Only colour, shadow and band tokens change; type, space, radius,
+ * sizes and motion are shared with the light theme.
+ *
+ * How it turns on: set data-theme="dark" on <html>. A few lines in app.html
+ * should set it before first paint from the saved choice (System, Light, Dark),
+ * using prefers-color-scheme when the choice is System. The .theme-dark class
+ * is the same block for the prototype, which cannot reach <html>.
+ *
+ * Contrast is measured on the dark surface unless another ground is named, and
+ * was also checked on bg, canvas, accent-soft and notice.
+ */
+:root[data-theme="dark"], .theme-dark {
+  color-scheme: dark;
+
+  /* Surfaces: deep Forest. Caleb asked for a green ground in review. Cards sit one step above the ground, as in light. */
+  --color-bg: #162013;            /* page ground (L* 11) */
+  --color-surface: #1D281A;       /* cards, panels, tables, popovers, dialogs (L* 15) */
+  --color-canvas: #192417;        /* Memory map canvas */
+  --color-canvas-dot: #2B3826;    /* dot grid */
+  --color-sunken: #162013;        /* stat tiles, palette footer, copy fields (= bg, as in light) */
+  --color-scrim: rgba(6, 10, 5, 0.62);
+
+  /* Lines */
+  --color-border: #2D3A28;
+  --color-border-strong: #3C4B35;
+  --color-divider: #243020;
+  --color-grid: #37452F;
+  --color-border-input: #7C8A6E;  /* 4.2:1 on surface, 4.6:1 on bg */
+
+  /* Text: Cream, one step down, so a long read does not glare. The quieter steps lean toward dry grass, between Cream and the ground. */
+  --color-text: #EEE6D8;          /* 12.4:1 on surface, 13.6:1 on bg */
+  --color-text-2: #CDC6B2;        /* 9.0:1 */
+  --color-text-muted: #A8A68E;    /* 6.2:1 surface; 4.9:1 on accent-soft, its lowest */
+  --color-text-axis: #989880;     /* chart axis labels only. 5.2:1 */
+
+  /* Accent: Forest is the ground here, so the accent lifts to Sage and Soft Sage */
+  --color-accent: #8E9F5D;        /* primary button, curves, focus ring, strength bars: brand Sage. 5.3:1 as a graphic */
+  --color-accent-text: #A9B58D;   /* small green text, links: brand Soft Sage. 7.1:1 */
+  --color-accent-strong: #D5DEC2; /* text on accent-soft, hover. 8.7:1 on accent-soft */
+  --color-accent-soft: #283B22;   /* selected chip / nav / row: one step toward brand Forest. Told from the ground by lightness, so selected text is also semibold */
+  --color-accent-soft-border: #3A5230;
+  --color-on-accent: #162013;     /* text on the Sage button. 5.8:1 */
+
+  /* Live: Terracotta holds at its brand value on dark */
+  --color-live: #CE6B36;          /* 4.4:1 on the canvas */
+  --color-live-text: #E39A68;     /* 6.6:1 */
+
+  /* Notice: Sand, mixed into the surface. Stays warm, so it reads apart from the green ground. */
+  --color-notice: #3B3521;
+  --color-notice-border: #665A38;
+  --color-notice-text: #EFCC9F;   /* brand Sand. 8.0:1 on notice */
+
+  /* Danger */
+  --color-danger: #E88A6E;        /* danger text, as in the Forget and Revoke menu items. 6.1:1 surface, 4.8:1 on accent-soft */
+  --color-danger-fill: #A8452A;   /* destructive button: a deep brick, so it stays quiet on dark */
+  --color-on-danger: #FCF7EF;     /* text on the brick. 5.5:1 */
+
+  /* Graph: the same hue per phase. On dark, fading moves toward the ground, so brighter means stronger.
+     The ground is green, so Full is the lightest green there is (Soft Sage) and every node is 3:1 or more on the canvas. */
+  --color-node: #A9B58D;          /* Full at full strength: brand Soft Sage (L* 72). 7.4:1 */
+  --color-node-fading: #74875A;   /* Full nearing Summary: moss (L* 54). 4.1:1 */
+  --color-node-summary: #CE6B36;  /* Summary: Terracotta (L* 56). 4.4:1 */
+  --color-node-summary-fading: #A05F38; /* Summary nearing Ghost (L* 47). 3.2:1 */
+  --color-node-ghost: #7A8FA6;    /* Ghost: slate blue (L* 59). 4.8:1 */
+  --color-node-lit: #FCF7EF;      /* lit core: Cream, inside the --color-live ring and glow */
+  --color-edge: #66745B;
+  --color-suppressed: #35422F;    /* recedes into the canvas */
+  --color-suppressed-text: #9FB0C2; /* 6.9:1 */
+  --color-supersedes: #8497AB;
+  --color-permastore: #C89B4A;
+  --color-label-halo: #192417;
+  --color-moss: #6F7A4A;          /* "through links" bars, recalls series: one step under Sage so it stays second */
+
+  /* Agents (L* 56, 66, 72, 51) */
+  --color-agent-1: #CE6B36;
+  --color-agent-2: #86A3C4;
+  --color-agent-3: #A9B58D;
+  --color-agent-4: #8E7462;
+
+  --band-full: rgba(169, 181, 141, 0.09);
+  --band-summary: rgba(169, 181, 141, 0.04);
+
+  --shadow-popover: 0 24px 64px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.3);
+  --shadow-tooltip: 0 3px 0 rgba(0, 0, 0, 0.28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-panel: 0ms;
+    --dur-palette: 0ms;
+    --dur-drawer: 0ms;
+  }
+}

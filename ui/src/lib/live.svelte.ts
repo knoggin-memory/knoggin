@@ -1,6 +1,40 @@
-// Live activity shared by the map (light, pill) and the activity lists.
-import type { UiEvent } from './api/types';
+// SPDX-License-Identifier: AGPL-3.0-only
+// Live activity shared by the map (light, pill) and the Timeline. Events arrive
+// with names (phase, edge type); the map works in recalld's numbers, so they are
+// turned into numbers here, once.
+import type { WireEvent } from './api/shapes';
 import { connectEvents } from './events';
+import { EDGE_CODE, PHASE_CODE } from './map/encoding';
+import { store } from './store.svelte';
+
+type Spread = { from: string; to: string; edgeType: number; amount: number; order: number };
+type Link = { to: string; edgeType: number; weight: number };
+
+/** A live event with edge types and phases as numbers. */
+export type UiEvent =
+  | (Omit<Extract<WireEvent, { kind: 'recall' }>, 'spreads'> & { spreads: Spread[] })
+  | (Omit<Extract<WireEvent, { kind: 'store' }>, 'phase' | 'edges'> & { phase: number; edges: Link[] })
+  | (Omit<Extract<WireEvent, { kind: 'link' }>, 'edgeType'> & { edgeType: number })
+  | Extract<WireEvent, { kind: 'reinforce' }>
+  | Extract<WireEvent, { kind: 'forget' }>
+  | (Omit<Extract<WireEvent, { kind: 'phase_change' }>, 'from' | 'to'> & { from: number; to: number })
+  | Extract<WireEvent, { kind: 'sweep' }>
+  | Extract<WireEvent, { kind: 'lagged' }>;
+
+export function normalize(e: WireEvent): UiEvent {
+  switch (e.kind) {
+    case 'recall':
+      return { ...e, spreads: e.spreads.map((s) => ({ ...s, edgeType: EDGE_CODE[s.edgeType] ?? 0 })) };
+    case 'store':
+      return { ...e, phase: PHASE_CODE[e.phase] ?? 1, edges: e.edges.map((x) => ({ ...x, edgeType: EDGE_CODE[x.edgeType] ?? 0 })) };
+    case 'link':
+      return { ...e, edgeType: EDGE_CODE[e.edgeType] ?? 0 };
+    case 'phase_change':
+      return { ...e, from: PHASE_CODE[e.from] ?? 1, to: e.to === 'deleted' ? 4 : (PHASE_CODE[e.to] ?? 1) };
+    default:
+      return e;
+  }
+}
 
 export interface Received {
   event: UiEvent;
@@ -10,21 +44,35 @@ export interface Received {
 type Sink = (r: Received, replay?: { speed: number }) => void;
 
 class Live {
-  /** The last ~300 events, newest last (DESIGN §7: kept for Replay). */
+  /** The last 300 events, newest last. */
   recent = $state<Received[]>([]);
   connected = $state(false);
-  /** Agent → color slot, in order of first appearance. */
-  agents = $state<string[]>([]);
+  /** Client → color slot, in order of first appearance. */
+  clients = $state<string[]>([]);
   private sinks = new Set<Sink>();
   private stop: (() => void) | null = null;
   private users = 0;
+  private storeId: string | null = null;
 
   start() {
     if (this.users++ > 0) return;
+    this.connect();
+  }
+
+  /** Reconnects with the current store (after a store switch). */
+  connect() {
+    this.stop?.();
+    this.storeId = store.id;
+    this.recent = [];
     this.stop = connectEvents(
-      (event, at) => this.receive({ event, at }),
+      () => this.storeId,
+      (event, at) => this.receive({ event: normalize(event), at }),
       (c) => (this.connected = c),
     );
+  }
+
+  ensureStore(id: string | null) {
+    if (this.users > 0 && id !== this.storeId) this.connect();
   }
 
   release() {
@@ -33,10 +81,10 @@ class Live {
     this.stop = null;
   }
 
-  /** Inject an event (dev simulator and perf harness use this path too). */
+  /** Inject an event (the dev simulator uses this path too). */
   receive(r: Received) {
-    const agent = 'agent' in r.event ? (r.event.agent ?? null) : null;
-    if (agent && !this.agents.includes(agent)) this.agents = [...this.agents, agent];
+    const client = 'client' in r.event ? (r.event.client ?? null) : null;
+    if (client && !this.clients.includes(client)) this.clients = [...this.clients, client];
     this.recent.push(r);
     if (this.recent.length > 300) this.recent.splice(0, this.recent.length - 300);
     for (const s of this.sinks) s(r);
@@ -51,8 +99,8 @@ class Live {
     return () => this.sinks.delete(s);
   }
 
-  agentSlot(agent: string | null | undefined): number {
-    const i = agent ? this.agents.indexOf(agent) : -1;
+  clientSlot(client: string | null | undefined): number {
+    const i = client ? this.clients.indexOf(client) : -1;
     return i < 0 ? 0 : i % 4;
   }
 

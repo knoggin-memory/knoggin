@@ -1,7 +1,9 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Turns one activity event into light (DESIGN §7). Pure, so its timing rules
 // are unit-tested: pulses fire in PQSA order, ≈350 ms per hop scaled by edge
 // length, brightness follows the spread amount and fades with each hop.
-import type { UiEvent } from '$lib/api/types';
+import type { UiEvent } from '$lib/live.svelte';
+import { EDGE } from './encoding';
 import type { Glow, Pulse } from './light';
 
 /** Draw the strongest spreads that together carry this share of the activation. */
@@ -59,7 +61,7 @@ export function choreograph(
     let last = now;
     // Only the strongest spreads carry light; replay them in firing order,
     // compacted so a long trace still plays in about a second.
-    const ranked = event.trace.filter((s) => s.edgeType !== 4).sort((a, b) => b.amount - a.amount);
+    const ranked = event.spreads.filter((s) => s.edgeType !== EDGE.supersedes).sort((a, b) => b.amount - a.amount);
     const total = ranked.reduce((t, s) => t + s.amount, 0);
     let carried = 0;
     const steps = ranked
@@ -71,7 +73,6 @@ export function choreograph(
       .sort((a, b) => a.order - b.order);
     const rank = new Map([...new Set(steps.map((s) => s.order))].map((o, i) => [o, i]));
     for (const step of steps) {
-      if (step.edgeType === 4) continue; // contradicts edges never carry light
       const a = pos(step.from), b = pos(step.to);
       if (!a || !b) continue;
       const len = Math.hypot(b.x - a.x, b.y - a.y) * (opts.scale ?? 1);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
 import { ago, bytes, duration, truncateWords } from './format';
 import { isPaletteShortcut } from './palette.svelte';

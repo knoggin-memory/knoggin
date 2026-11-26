@@ -1,48 +1,56 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import Screen from '$lib/components/Screen.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import ScopeChip from '$lib/components/ScopeChip.svelte';
+  import LoadFailed from '$lib/components/LoadFailed.svelte';
   import { scope } from '$lib/scope.svelte';
-  import { get } from '$lib/api/client';
+  import { get, sget } from '$lib/api/client';
   import { memoryPage, reinforce } from '$lib/api/memories';
-  import type { HealthReport, NamespaceInfo, NamespaceStats, SystemStatus } from '$lib/api/types';
-  import { bytes, count, duration, inFuture, phaseName, ago } from '$lib/format';
-  import { namespacesQuery } from '$lib/queries';
+  import type { AdminStatus, HealthReport, SystemStatus } from '$lib/api/shapes';
+  import { ago, bytes, count, duration, inFuture, longDate, ms, phaseLabel } from '$lib/format';
+  import { storeKey } from '$lib/queries';
+  import { session } from '$lib/session.svelte';
+  import { status } from '$lib/status.svelte';
+  import { store } from '$lib/store.svelte';
   import { DAY_MS } from '$lib/fsrs';
 
+  // No timers: store routes are refreshed after the user acts and when the tab regains focus.
   const client = useQueryClient();
   const report = createQuery(() => ({
-    queryKey: ['health', scope.current],
-    queryFn: () => get<HealthReport>('/health', { namespace: scope.current }),
-    refetchInterval: 60_000,
+    queryKey: storeKey('health', scope.current),
+    queryFn: () => sget<HealthReport>('/v1/ui/health', { namespace: scope.current }, true),
   }));
-  const system = createQuery(() => ({ queryKey: ['system'], queryFn: () => get<SystemStatus>('/system'), refetchInterval: 15_000 }));
-  const namespaces = namespacesQuery();
-  // Tombstones are reported per namespace by namespace_stats.
-  const stats = createQuery(() => ({
-    queryKey: ['ns-stats', scope.current, (namespaces.data ?? []).map((n: NamespaceInfo) => n.name).join(',')],
-    queryFn: async () => {
-      const names = scope.current ? [scope.current] : (namespaces.data ?? []).map((n: NamespaceInfo) => n.name);
-      return Promise.all(names.map((n: string) => get<NamespaceStats>(`/namespaces/${encodeURIComponent(n)}/stats`)));
-    },
-    enabled: !!namespaces.data,
+  const system = createQuery(() => ({ queryKey: storeKey('system'), queryFn: () => sget<SystemStatus>('/v1/ui/system') }));
+  // On a local install the card's caption is the data folder.
+  const admin = createQuery(() => ({
+    queryKey: ['admin-status'],
+    queryFn: () => get<AdminStatus>('/v1/admin/status'),
+    enabled: !!session.local,
   }));
+  // Fading soon: the memories whose next change comes first, as the ported screen asks for them.
   const fading = createQuery(() => ({
-    queryKey: ['fading', scope.current],
-    queryFn: () => memoryPage({ namespace: scope.current, phases: [1, 2, 3], tags: [], entities: [], sort: 'nextChange', desc: false }, 0, 5),
+    queryKey: storeKey('fading', scope.current),
+    queryFn: () => memoryPage({ namespace: scope.current, phases: ['full', 'summary'], tags: [], entities: [], clients: [], sort: 'nextChange', desc: false }, 0, 5),
   }));
 
   const o = $derived(report.data?.overview);
-  const tombstones = $derived((stats.data ?? []).reduce((a, s) => a + s.tombstoneCount, 0));
   const f = $derived(report.data?.decayForecast);
   const st = $derived(report.data?.storage);
-  const vectors = $derived((st?.vectorFiles ?? []).reduce((a, v) => a + v.bytes, 0));
   const s = $derived(system.data);
-  const since = (t: number) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  const caption = $derived(session.local ? (admin.data?.dataDir ?? '') : `${(store.id ?? '').slice(0, 8)}…`);
+  const modelName = $derived(status.status?.model?.name ?? s?.model.name ?? '');
+  // "since 13:39" for today, else the date.
+  const since = (t: string) => {
+    const d = new Date(t);
+    return d.toDateString() === new Date().toDateString()
+      ? d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
   const uptime = (secs: number) => {
     const h = Math.floor(secs / 3600), m = Math.floor((secs % 3600) / 60);
-    return h >= 48 ? `${Math.floor(h / 24)} d ${h % 24} h` : h > 0 ? `${h} h ${m} m` : `${m} m`;
+    return h >= 48 ? `${Math.floor(h / 24)} d` : h > 0 ? `${h} h ${m} m` : `${m} m`;
   };
   const rows = $derived(
     f
@@ -54,21 +62,31 @@
       : [],
   );
   let reinforcing = $state<string | null>(null);
-  async function doReinforce(id: string, namespace: string) {
+  let done = $state<Set<string>>(new Set());
+  let error = $state<string | null>(null);
+  async function doReinforce(id: string) {
     reinforcing = id;
+    error = null;
     try {
-      await reinforce(id, namespace, 3);
-      await client.invalidateQueries();
+      await reinforce(id, 3);
+      done = new Set([...done, id]);
+      await client.invalidateQueries({ queryKey: ['store'] });
+      void status.poll();
+    } catch (e) {
+      error = (e as Error).message;
     } finally {
       reinforcing = null;
     }
   }
 </script>
 
-<Screen gap="var(--space-5)">
+<Screen title="Health" loose>
   <PageHeader title="Health" />
   <div role="toolbar" aria-label="Filters" class="toolbar"><ScopeChip /></div>
 
+  {#if report.isError && !report.data}
+    <LoadFailed onretry={() => report.refetch()} />
+  {:else}
   <div class="row">
     <section aria-label="Phases" class="card narrow">
       <div class="head"><h2 class="card-title">Memories</h2><span class="mono meta">{scope.label}</span></div>
@@ -78,13 +96,11 @@
           <span class="full" style:flex-grow={o.phaseCounts.full}></span>
           <span class="summary" style:flex-grow={o.phaseCounts.summary}></span>
           <span class="ghost" style:flex-grow={o.phaseCounts.ghost}></span>
-          <span class="tomb" style:flex-grow={tombstones}></span>
         </div>
         <dl class="counts">
           <div><dt>Full</dt><dd class="mono">{count(o.phaseCounts.full)}</dd></div>
           <div><dt>Summary</dt><dd class="mono">{count(o.phaseCounts.summary)}</dd></div>
           <div><dt>Ghost</dt><dd class="mono">{count(o.phaseCounts.ghost)}</dd></div>
-          <div><dt>Tombstone</dt><dd class="mono">{stats.data ? count(tombstones) : '…'}</dd></div>
           <div><dt>Permastore</dt><dd class="mono">{count(o.permastoreCount)}</dd></div>
         </dl>
       {:else}
@@ -93,7 +109,7 @@
     </section>
 
     <section aria-label="Decay forecast" class="card wide">
-      <div class="head wrap"><h2 class="card-title">Coming up</h2><span class="caption">Phase changes expected unless these memories are recalled</span></div>
+      <div class="head wrap"><h2 class="card-title">Coming up</h2><span class="caption">Phase changes expected unless these memories are reinforced</span></div>
       <table>
         <thead><tr><th scope="col"><span class="visually-hidden">Change</span></th><th scope="col">7 days</th><th scope="col">30 days</th><th scope="col">90 days</th></tr></thead>
         <tbody>
@@ -113,31 +129,31 @@
   <div class="row">
     <section aria-label="Fading soon" class="card wide fading">
       <div class="head"><h2 class="card-title">Fading soon</h2><a href="/explore?sort=nextChange">See all in Explore</a></div>
+      {#if error}<p class="field-error" role="alert">{error}</p>{/if}
       {#each fading.data?.rows ?? [] as m (m.id)}
+        {@const isDone = done.has(m.id)}
         <div class="fade-row">
           <span class="fade-text" class:ghost={m.summary === null}>{m.summary ?? 'Summary dropped'}</span>
-          <span class="caption nowrap">{m.nextChange ? `${phaseName(m.nextChange.to) === 'Tombstone' ? 'Removed' : phaseName(m.nextChange.to)} ${m.nextChange.at <= Date.now() ? 'at the next sweep' : `in ${duration((m.nextChange.at - Date.now()) / DAY_MS)}`}` : '—'}</span>
-          <button type="button" class="small-btn" disabled={reinforcing === m.id} onclick={() => doReinforce(m.id, m.namespace)}>{reinforcing === m.id ? 'Reinforcing…' : 'Reinforce'}</button>
+          <span class="caption nowrap">{isDone ? 'Reinforced' : m.nextChange ? `${phaseLabel(m.nextChange.to)} ${ms(m.nextChange.at) <= Date.now() ? 'at the next sweep' : `in ${duration((ms(m.nextChange.at) - Date.now()) / DAY_MS)}`}` : '—'}</span>
+          <button type="button" class="btn-secondary btn-small" disabled={reinforcing === m.id || isDone} onclick={() => doReinforce(m.id)}>{isDone ? 'Reinforced' : 'Reinforce'}</button>
         </div>
       {:else}
-        {#if fading.isPending}{#each [0, 1, 2] as i (i)}<span class="skeleton bar"></span>{/each}{:else}<p class="muted">Nothing is about to change phase.</p>{/if}
+        {#if fading.isPending}{#each [0, 1, 2] as i (i)}<span class="skeleton bar"></span>{/each}{:else}<p class="muted">Nothing is fading.</p>{/if}
       {/each}
     </section>
 
     <section aria-label="Storage" class="card narrow">
-      <div class="head"><h2 class="card-title">Storage</h2><span class="mono strong">{st ? bytes(st.totalBytes) : ''}</span></div>
+      <!-- The total is text plus vectors; the last snapshot holds the same data again, so it is shown beside it and not added. -->
+      <div class="head"><h2 class="card-title">Storage</h2><span class="mono strong">{st ? `${bytes(st.textBytes + st.vectorBytes)}${st.lastSnapshotBytes !== null ? ` · snapshot ${bytes(st.lastSnapshotBytes)}` : ''}` : ''}</span></div>
       {#if st}
         <div class="phasebar" aria-hidden="true">
-          <span class="s-meta" style:flex-grow={st.metaDbBytes}></span>
-          <span class="s-vec" style:flex-grow={vectors}></span>
-          <span class="s-edges" style:flex-grow={st.edgesDbBytes}></span>
-          <span class="s-text" style:flex-grow={st.textLogBytes}></span>
+          <span class="s-text" style:flex-grow={st.textBytes}></span>
+          <span class="s-vec" style:flex-grow={st.vectorBytes}></span>
         </div>
         <dl class="list">
-          <div><dt><span class="key s-meta"></span>meta.db</dt><dd class="mono">{bytes(st.metaDbBytes)}</dd></div>
-          <div><dt><span class="key s-vec"></span>Vectors</dt><dd class="mono">{bytes(vectors)}</dd></div>
-          <div><dt><span class="key s-edges"></span>edges.db</dt><dd class="mono">{bytes(st.edgesDbBytes)}</dd></div>
-          <div><dt><span class="key s-text"></span>Text log</dt><dd class="mono">{bytes(st.textLogBytes)}</dd></div>
+          <div><dt><span class="key s-text"></span>Text</dt><dd class="mono">{bytes(st.textBytes)}</dd></div>
+          <div><dt><span class="key s-vec"></span>Vectors</dt><dd class="mono">{bytes(st.vectorBytes)}</dd></div>
+          <div><dt>Last snapshot</dt><dd class="mono">{st.lastSnapshotBytes !== null ? bytes(st.lastSnapshotBytes) : '—'}</dd></div>
         </dl>
       {:else}
         <span class="skeleton bar"></span>
@@ -146,35 +162,39 @@
   </div>
 
   <section aria-label="System" class="card">
-    <div class="head wrap"><h2 class="card-title">System</h2></div>
+    <div class="head wrap"><h2 class="card-title">System</h2><span class="mono meta">{caption}</span></div>
     {#if s}
       <div class="tiles">
-        <div class="tile"><span class="tl">Version</span><span class="tv">{s.version}</span><span class="tc">daemon · protocol v{s.protocolVersion}</span></div>
+        <div class="tile"><span class="tl">Version</span><span class="tv">{s.version}</span><span class="tc">{session.local ? 'daemon' : 'container build'}</span></div>
         <div class="tile"><span class="tl">Uptime</span><span class="tv">{uptime(s.uptimeSecs)}</span><span class="tc">since {since(s.startedAt)}</span></div>
         <div class="tile"><span class="tl">Memory</span><span class="tv">{s.process.rssBytes !== null ? bytes(s.process.rssBytes) : '—'}</span><span class="tc">resident</span></div>
-        <div class="tile"><span class="tl">Embedding</span><span class="tv">{s.embedding.latencyMs ? `${Math.round(s.embedding.latencyMs.smoothed)} ms` : '—'}</span><span class="tc mono">{s.embedding.model}</span></div>
+        <div class="tile"><span class="tl">Embedding</span><span class="tv">{s.embedLatencyMs !== null ? `${Math.round(s.embedLatencyMs)} ms` : '—'}</span><span class="tc">{modelName}</span></div>
+        <div class="tile"><span class="tl">Recall</span><span class="tv">{s.recallLatencyMs !== null ? `${Math.round(s.recallLatencyMs)} ms` : '—'}</span><span class="tc">latency</span></div>
       </div>
       <div class="sys-row">
         <div class="subsystems" aria-label="Subsystems">
           <span class="micro-label">Subsystems</span>
           {#each s.health.subsystems as sub (sub.name)}
-            <span class="sub" title={sub.message ?? ''}><span class="sdot" class:down={sub.status !== 'ok' && sub.status !== 'up'}></span>{sub.name}</span>
+            <span class="sub"><span class="sdot" class:warn={sub.status === 'degraded'}></span>{sub.name}{#if sub.status === 'degraded' && sub.message}<span class="muted"> · {sub.message}</span>{/if}</span>
           {/each}
         </div>
         <div class="agents" aria-label="Connected agents">
           <span class="micro-label">Connected</span>
-          {#each s.clients.filter((c) => c.kind !== 'ui') as c (c.id)}
-            <span class="agent">{c.agent ?? 'unknown agent'} <span class="muted mono">{ago(c.since)}</span></span>
+          {#each s.clients as c (c.name)}
+            <span class="agent">{c.name} <span class="muted mono">{ago(ms(c.lastSeenAt))}</span></span>
           {:else}
-            <span class="muted">No agents connected</span>
+            <span class="muted">None over MCP yet</span>
           {/each}
         </div>
-        <span class="caption">{s.sweep.enabled ? (s.sweep.nextAt ? `Next decay sweep ${inFuture(s.sweep.nextAt)}` : `Decay sweeps every ${duration(s.sweep.intervalSecs / 86400)}`) : 'Decay sweeps are disabled'}</span>
+        {#if s.sweep.nextAt}<span class="caption">Next decay sweep {inFuture(ms(s.sweep.nextAt))}</span>{:else if s.sweep.lastAt}<span class="caption">Last decay sweep {longDate(s.sweep.lastAt)}</span>{/if}
       </div>
+    {:else if system.isError}
+      <LoadFailed onretry={() => system.refetch()} />
     {:else}
       <span class="skeleton bar"></span>
     {/if}
   </section>
+  {/if}
 </Screen>
 
 <style>
@@ -247,23 +267,16 @@
   }
   .phasebar .summary {
     background: var(--color-node-summary);
-    opacity: 0.6;
   }
   .phasebar .ghost {
-    border: var(--hairline) solid var(--color-node-ghost);
+    background: var(--color-node-ghost);
   }
-  .phasebar .tomb,
+  /* Storage is not a phase, so it stays off the phase colours. */
   .s-text {
-    background: var(--color-grid);
-  }
-  .s-meta {
     background: var(--color-node);
   }
   .s-vec {
-    background: var(--color-accent);
-  }
-  .s-edges {
-    background: var(--color-agent-2);
+    background: var(--color-moss);
   }
   dl {
     margin: 0;
@@ -367,16 +380,6 @@
     font-style: italic;
     color: var(--color-text-muted);
   }
-  .small-btn {
-    height: calc(var(--control-h) - var(--hairline) * 2);
-    padding: 0 var(--space-3);
-    border: var(--hairline) solid var(--color-accent-soft-border);
-    border-radius: var(--radius-md);
-    background: transparent;
-    color: var(--color-accent-strong);
-    font: var(--weight-medium) var(--text-small) var(--font-sans);
-    cursor: pointer;
-  }
   .tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(calc(var(--sidebar-min) - var(--space-2)), 100%), 1fr));
@@ -424,8 +427,8 @@
     border-radius: var(--radius-pill);
     background: var(--color-accent);
   }
-  .sdot.down {
-    background: var(--color-text-muted);
+  .sdot.warn {
+    background: var(--color-live);
   }
   .skeleton.big {
     height: var(--text-display);

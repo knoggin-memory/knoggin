@@ -1,7 +1,0 @@
-node_modules/
-.svelte-kit/
-dist/
-test-results/
-playwright-report/
-perf/results/
-tests/*-snapshots/*-darwin.png

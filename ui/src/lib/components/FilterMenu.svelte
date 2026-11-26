@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Menu chip with a multi-select listbox (Tags, Entities, Agent, Links). -->
 <script lang="ts">
   import { DropdownMenu } from 'bits-ui';

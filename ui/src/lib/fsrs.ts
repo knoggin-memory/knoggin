@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // recalld's forgetting curve, mirrored from src/decay/fsrs.rs. Unit-tested
 // against values computed by the Rust implementation (fsrs.test.ts).
 export const FACTOR = 19 / 81;

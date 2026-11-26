@@ -1,9 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Map positions cached per memory in IndexedDB (the only thing the UI
 // stores: no memory content). One entry per scope: ids → x, y.
+import { store } from '$lib/store.svelte';
 import { get, set } from 'idb-keyval';
 
 // Bump the version when the layout forces change, so old layouts are redone.
-const key = (scope: string | null) => `positions:v8:${scope ?? '*'}`;
+// Positions are kept per store and namespace scope.
+const key = (scope: string | null) => `positions:v9:${store.id ?? ''}:${scope ?? '*'}`;
 
 export async function loadPositions(scope: string | null): Promise<Map<string, [number, number]>> {
   try {

@@ -1,5 +1,7 @@
-<!-- ⌘K palette (DESIGN §5, §8 Search): recalld's own hybrid search, read-only,
-     with explain. No UI-side index: every keystroke asks the daemon. -->
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- ⌘K palette (DESIGN §5, §8 Search): Knoggin's own hybrid search
+     (GET /v1/ui/search), which records no access, with explain. No UI-side
+     index: every keystroke asks the server. -->
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
@@ -7,12 +9,16 @@
   import { scope } from '$lib/scope.svelte';
   import { selection } from '$lib/selection.svelte';
   import { search } from '$lib/api/memories';
-  import type { UiSearch, UiSearchHit } from '$lib/api/types';
+  import type { UiSearch, UiSearchHit } from '$lib/api/shapes';
+  import { storesQuery } from '$lib/queries';
+  import { store } from '$lib/store.svelte';
   import { truncateWords } from '$lib/format';
   import Icon from './Icon.svelte';
   import ScopeChip from './ScopeChip.svelte';
 
-  const EDGE: Record<number, string> = { 1: 'parent', 2: 'associative', 3: 'causal', 4: 'contradicts', 5: 'entity', 6: 'temporal', 7: 'supersedes' };
+  const EDGE: Record<string, string> = { parent_child: 'parent and child', associative: 'associative', entity: 'entity', temporal: 'temporal', supersedes: 'supersedes' };
+  const stores = storesQuery();
+  const storeName = $derived(stores.data?.find((x) => x.id === store.id)?.name ?? 'Personal');
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
   let input: HTMLInputElement | undefined = $state();
@@ -53,7 +59,7 @@
           result = r;
           error = null;
           active = 0;
-          requestAnimationFrame(() => performance.mark('recalld:search-results'));
+          requestAnimationFrame(() => performance.mark('knoggin:search-results'));
         }
       } catch (e) {
         if (mine === seq) error = (e as Error).message;
@@ -83,21 +89,17 @@
     const boost = h.vector !== null ? h.score - h.vector : 0;
     if (boost > 0.005) parts.push(`text and entities +${boost.toFixed(2)}`);
     else if (h.vector === null && h.text !== null) parts.push('keyword match');
-    if (h.contradicts) parts.push(`contradicts “${truncateWords(h.contradicts, 20)}”`);
+    if (h.supersedes) parts.push('replaces an older memory');
     if (!result?.merged || searchScope === null) parts.push(`${h.namespace} namespace`);
     return parts.join(' · ');
   }
 
-  /** Open a result where you are: on the map it is selected and centered
-   *  there, on Explore it opens in Explore; elsewhere (or with ⌘↵ / Ctrl+click)
-   *  it goes to the map. */
+  /** A hit opens /explore?id=<id>; ⌘↵ or Ctrl+click shows it on the map. */
   function open(h: UiSearchHit, toMap: boolean) {
     selection.select(h.id);
     palette.hide();
-    const here = page.url.pathname;
-    if (here.startsWith('/explore') && !toMap) return;
-    if (here.startsWith('/map')) goto(`/map?id=${h.id}`, { replace: true });
-    else goto(toMap ? `/map?id=${h.id}` : `/explore?id=${h.id}`);
+    const to = toMap ? `/map?id=${h.id}` : `/explore?id=${h.id}`;
+    goto(to, { replace: page.url.pathname === to.split('?')[0] });
   }
 
   function onkeydown(e: KeyboardEvent) {
@@ -123,7 +125,7 @@
         <span class="via">via {truncateWords(h.viaSummary ?? '…', 18)}</span>
       {:else}
         <span class="mono tag">{h.namespace}</span>
-        {#if h.contradicts}<span class="contra">contradicted</span>{/if}
+        {#if h.supersedes}<span class="contra">supersedes</span>{/if}
       {/if}
       <span class="mono score"><span class="track"><span class="fill" class:moss={isLinked} style:width="{Math.round(Math.min(1, h.score) * 100)}%"></span></span>{h.score.toFixed(2)}</span>
     </span>
@@ -143,17 +145,18 @@
       <button type="button" class="esc" aria-label="Close search" onclick={() => palette.hide()}><kbd>Esc</kbd></button>
     </div>
     <div class="scope-row">
+      <span class="mono store-scope">{storeName} ·</span>
       <ScopeChip value={searchScope} onchange={(ns) => (searchScope = ns)} />
-      <span class="note" title="Search here uses recordAccess:false, so results are not reinforced">Browsing won’t reinforce memories</span>
+      <span class="note">Searching changes nothing. Only reinforcing slows decay.</span>
     </div>
 
     <div id="palette-results" role="listbox" aria-label="Results" class="results" aria-busy={pending}>
       {#if error}
         <p class="state">{error}</p>
       {:else if !q.trim()}
-        <p class="state">Search recalld’s memories with its hybrid search: vector, text, entities and links.</p>
+        <p class="state">Search this store’s memories with Knoggin’s hybrid search: vector, text, entities and links.</p>
       {:else if result && !ordered.length && !pending}
-        <p class="state">No memories match “{q.trim()}”.</p>
+        <p class="state">No memories match in this store.</p>
       {:else if !result}
         {#each [0, 1, 2] as i (i)}<span class="skeleton skel"></span>{/each}
       {/if}
@@ -173,12 +176,16 @@
       <span class="hint"><kbd>↑↓</kbd>move</span>
       <span class="hint"><kbd>↵</kbd>open</span>
       <span class="hint"><kbd>{mac ? '⌘↵' : 'Ctrl ↵'}</kbd>show on map</span>
-      <span class="mono count">{result ? `${ordered.length} results · ` : ''}recalld hybrid search</span>
+      <span class="mono count">{result ? `${ordered.length} results · ` : ''}Knoggin hybrid search</span>
     </div>
   </div>
 {/if}
 
 <style>
+  .store-scope {
+    font-size: var(--text-value);
+    color: var(--color-text-muted);
+  }
   .scrim {
     position: fixed;
     inset: 0;

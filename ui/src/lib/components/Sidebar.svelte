@@ -1,10 +1,16 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- One <aside> in both states: closing it is a drawer, not a swap (handoff,
+     "Sidebar motion"). Labels and icons dissolve into each other in place. -->
 <script lang="ts">
   import { page } from '$app/state';
+  import { goto } from '$app/navigation';
   import Icon, { type IconName } from './Icon.svelte';
-  import Mark from './Mark.svelte';
+  import Logo from './Logo.svelte';
+  import StoreSwitcher from './StoreSwitcher.svelte';
   import { scope } from '$lib/scope.svelte';
   import { prefs } from '$lib/prefs.svelte';
-  import { session } from '$lib/session.svelte';
+  import { session, who } from '$lib/session.svelte';
+  import { status } from '$lib/status.svelte';
   import { namespacesQuery } from '$lib/queries';
   import { count } from '$lib/format';
 
@@ -13,220 +19,103 @@
     { href: '/explore', label: 'Explore', icon: 'explore' },
     { href: '/timeline', label: 'Timeline', icon: 'timeline' },
     { href: '/health', label: 'Health', icon: 'health' },
+    { href: '/keys', label: 'API keys', icon: 'key' },
   ];
+  const manage = $derived(
+    [
+      { href: '/apps', label: 'Apps', icon: 'apps' as IconName, show: true },
+      { href: '/setup', label: 'Set up an agent', icon: 'plug' as IconName, show: true },
+      { href: '/users', label: 'Users', icon: 'users' as IconName, show: session.server && session.signInOn && session.isAdmin },
+      { href: '/status', label: 'Server status', icon: 'server' as IconName, show: session.server && session.isAdmin },
+    ].filter((v) => v.show),
+  );
 
   const namespaces = namespacesQuery();
   const total = $derived((namespaces.data ?? []).reduce((a, n) => a + n.memoryCount, 0));
-  const current = (href: string) => page.url.pathname.startsWith(href);
-  const status = $derived(
-    session.status === 'connected'
-      ? 'daemon connected'
-      : session.status === 'loading'
-        ? 'connecting…'
-        : session.status === 'unsupported'
-          ? 'daemon lacks UI support'
-          : session.status === 'signedOut'
-            ? 'signed out'
-            : 'daemon unavailable',
-  );
+  const current = (href: string) => page.url.pathname === href || page.url.pathname.startsWith(href + '/');
+  const collapsed = $derived(prefs.sidebarCollapsed);
+  // The profile row and Sign out exist only for a cookie session.
+  const profile = $derived(session.cookieSession && session.value?.user ? who(session.value.user) : null);
+  const statusLine = $derived(session.server ? 'connected' : status.notRunning ? 'daemon unavailable' : 'daemon connected');
 </script>
 
-{#if prefs.sidebarCollapsed}
-  <aside class="rail" aria-label="Sidebar">
-    <button type="button" class="rail-btn mark-btn" aria-label="Expand sidebar" aria-expanded="false" onclick={() => prefs.toggleSidebar()}>
-      <Mark size="var(--mark-rail)" />
+<aside class="sidebar" class:is-collapsed={collapsed} aria-label="Sidebar">
+  <div class="brand">
+    <!-- One element in both states, so the lockup can close down to its mark. Closed, it opens the sidebar. -->
+    <button
+      type="button"
+      class="logo-btn"
+      aria-label={collapsed ? 'Expand sidebar' : 'Knoggin: Memory map'}
+      title={collapsed ? 'Expand sidebar' : undefined}
+      onclick={() => (collapsed ? prefs.toggleSidebar() : goto('/map'))}
+    >
+      <Logo />
     </button>
-    <nav aria-label="Views" class="rail-nav">
-      {#each views as v}
-        <a href={v.href} class="rail-btn" class:active={current(v.href)} aria-current={current(v.href) ? 'page' : undefined} aria-label={v.label} title={v.label}>
-          <Icon name={v.icon} />
+    <button type="button" class="icon-btn collapse when-open" aria-label="Collapse sidebar" aria-expanded="true" onclick={() => prefs.toggleSidebar()}>
+      <Icon name="collapse" stroke={1.8} />
+    </button>
+  </div>
+
+  <StoreSwitcher />
+
+  <nav aria-label="Views" class="views">
+    {#each views as v (v.href)}
+      <a href={v.href} class="nav-link" aria-current={current(v.href) ? 'page' : undefined} title={collapsed ? v.label : undefined}>
+        <span class="nav-ico when-rail" aria-hidden="true"><Icon name={v.icon} /></span><span class="nav-label when-open soft-edge">{v.label}</span>
+      </a>
+    {/each}
+  </nav>
+
+  <div role="group" aria-label="Namespace scope" class="namespaces when-open keep-width">
+    <span class="micro-label heading">Namespaces</span>
+    <button type="button" class="ns-btn" aria-pressed={scope.current === null} onclick={() => scope.set(null)}>
+      <span class="ns-name">All namespaces</span><span class="n">{namespaces.data ? count(total) : ''}</span>
+    </button>
+    {#if namespaces.isPending}
+      {#each [0, 1, 2] as i (i)}<span class="skeleton ns-skel"></span>{/each}
+    {/if}
+    {#each namespaces.data ?? [] as ns (ns.name)}
+      <button type="button" class="ns-btn" aria-pressed={scope.current === ns.name} onclick={() => scope.set(ns.name)}>
+        <span class="ns-name">{ns.name}</span><span class="n">{count(ns.memoryCount)}</span>
+      </button>
+    {/each}
+  </div>
+
+  <div class="sidebar-foot">
+    <nav aria-label="Manage" class="views">
+      {#each manage as v (v.href)}
+        <a href={v.href} class="nav-link" aria-current={current(v.href) ? 'page' : undefined} title={collapsed ? v.label : undefined}>
+          <span class="nav-ico when-rail" aria-hidden="true"><Icon name={v.icon} /></span><span class="nav-label when-open soft-edge">{v.label}</span>
         </a>
       {/each}
-    </nav>
-  </aside>
-{:else}
-  <aside class="sidebar" aria-label="Sidebar">
-    <div class="brand">
-      <a class="wordmark" href="/map" aria-label="recalld: Memory map"><Mark /><span>recalld</span></a>
-      <button type="button" class="icon-btn collapse" aria-label="Collapse sidebar" aria-expanded="true" onclick={() => prefs.toggleSidebar()}>
-        <Icon name="collapse" stroke={1.8} />
-      </button>
-    </div>
-
-    <nav aria-label="Views" class="views">
-      {#each views as v}
-        <a href={v.href} class:active={current(v.href)} aria-current={current(v.href) ? 'page' : undefined}>{v.label}</a>
-      {/each}
-    </nav>
-
-    <div role="group" aria-label="Namespace scope" class="namespaces">
-      <span class="micro-label heading">Namespaces</span>
-      <button type="button" aria-pressed={scope.current === null} onclick={() => scope.set(null)}>
-        <span>All namespaces</span><span class="mono n">{namespaces.data ? count(total) : ''}</span>
-      </button>
-      {#if namespaces.isPending}
-        {#each [0, 1, 2] as i (i)}<span class="skeleton ns-skel"></span>{/each}
+      {#if profile}
+        <a href="/account" class="nav-link account-link" aria-current={current('/account') ? 'page' : undefined} title={collapsed ? 'Account' : undefined}>
+          <span class="avatar" aria-hidden="true">{profile.initials}</span><span class="who when-open soft-edge">{profile.text}</span>
+        </a>
+      {:else}
+        <a href="/account" class="nav-link" aria-current={current('/account') ? 'page' : undefined} title={collapsed ? 'Settings' : undefined}>
+          <span class="nav-ico when-rail" aria-hidden="true"><Icon name="user" /></span><span class="nav-label when-open soft-edge">Settings</span>
+        </a>
       {/if}
-      {#each namespaces.data ?? [] as ns (ns.id)}
-        <button type="button" aria-pressed={scope.current === ns.name} onclick={() => scope.set(ns.name)}>
-          <span class="ns-name">{ns.name}</span><span class="mono n">{count(ns.memoryCount)}</span>
-        </button>
-      {/each}
-    </div>
-
-    <span class="status mono" title="The UI never records access, so browsing does not change decay">read-only · {status}</span>
-  </aside>
-{/if}
+    </nav>
+    {#if session.server && !session.signInOn}
+      <span class="caption when-open keep-width">Sign-in is off. Anyone who can reach this address has access.</span>
+    {/if}
+    <span class="status when-open keep-width" title="Only reinforcing a memory slows its decay. Browsing here changes nothing.">{statusLine}</span>
+  </div>
+</aside>
 
 <style>
-  .sidebar {
-    flex: 0 1 var(--sidebar-width);
-    min-width: var(--sidebar-min);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-8);
-    padding: var(--space-6) var(--space-5);
-    border-right: var(--hairline) solid var(--color-border);
-    overflow-y: auto;
-  }
-  .brand {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .wordmark {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    font: var(--weight-medium) var(--text-wordmark) var(--font-serif);
-    letter-spacing: -0.01em;
-    color: inherit;
-    text-decoration: none;
-  }
-  .collapse {
-    margin-right: calc(var(--space-2) * -1);
-  }
-  .views {
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--space-1) / 2);
-  }
-  .views a {
-    display: flex;
-    align-items: center;
-    height: var(--nav-item-h);
-    padding: 0 calc(var(--space-2) + var(--space-1) / 2);
-    margin: 0 calc((var(--space-2) + var(--space-1) / 2) * -1);
-    border-radius: var(--radius-md);
-    color: var(--color-text-2);
-    text-decoration: none;
-  }
-  .views a:hover {
-    background: var(--color-accent-soft);
-  }
-  .views a.active {
-    background: var(--color-accent-soft);
-    color: var(--color-accent-strong);
-    font-weight: var(--weight-semibold);
-  }
-  .namespaces {
-    display: flex;
-    flex-direction: column;
-    gap: calc(var(--space-1) / 2);
-  }
-  .heading {
-    padding-bottom: calc(var(--space-1) * 1.5);
-  }
-  .namespaces button {
-    display: flex;
-    justify-content: space-between;
-    gap: var(--space-2);
-    width: 100%;
-    min-height: var(--ns-row-h);
-    align-items: center;
+  .logo-btn {
+    display: block;
     padding: 0;
     border: 0;
-    background: transparent;
-    text-align: left;
+    background: none;
     cursor: pointer;
-    color: var(--color-text-2);
-  }
-  .namespaces button[aria-pressed='true'] {
-    color: var(--color-accent-strong);
-    font-weight: var(--weight-semibold);
-  }
-  .ns-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .n {
-    font-size: var(--text-value);
-    font-weight: var(--weight-regular);
-    color: var(--color-text-muted);
+    border-radius: var(--radius-sm);
   }
   .ns-skel {
     height: var(--space-4);
     margin: var(--space-2) 0;
-  }
-  .status {
-    margin-top: auto;
-    font-size: var(--text-label);
-    color: var(--color-text-muted);
-  }
-  .rail {
-    flex: 0 0 var(--sidebar-rail);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-5);
-    padding: var(--space-6) 0;
-    border-right: var(--hairline) solid var(--color-border);
-  }
-  .rail-nav {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-  }
-  .rail-btn {
-    width: var(--nav-item-h);
-    height: var(--nav-item-h);
-    border-radius: var(--radius-md);
-    color: var(--color-text-2);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    border: 0;
-    cursor: pointer;
-  }
-  .mark-btn {
-    border: var(--hairline) solid var(--color-border);
-  }
-  .rail-btn.active {
-    background: var(--color-accent-soft);
-    color: var(--color-accent-strong);
-  }
-  @media (max-width: 600px) {
-    .sidebar,
-    .rail {
-      flex: 0 0 auto;
-      flex-direction: row;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: var(--space-4);
-      padding: var(--space-3) var(--space-4);
-      border-right: 0;
-      border-bottom: var(--hairline) solid var(--color-border);
-      min-width: 0;
-      width: 100%;
-    }
-    .views,
-    .rail-nav {
-      flex-direction: row;
-    }
-    .status {
-      margin-top: 0;
-    }
   }
 </style>

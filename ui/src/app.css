@@ -1,5 +1,9 @@
-/* Base styles. Every value comes from tokens.css (the single source in docs/ui). */
-@import '../../docs/ui/tokens.css';
+/* SPDX-License-Identifier: AGPL-3.0-only */
+/* Global component styles, from the prototype's project/app.css (Knoggin UI
+   handoff). Colours, type and radius come from tokens.css. The prototype's own
+   chrome and the styles of the screens that keep their component styles
+   (map, memory panel, Explore, Timeline, Health, search palette) are left out. */
+@import './tokens.css';
 @import '@fontsource/newsreader/latin-400.css';
 @import '@fontsource/newsreader/latin-500.css';
 @import '@fontsource/newsreader/latin-400-italic.css';
@@ -9,20 +13,15 @@
 @import '@fontsource/ibm-plex-mono/latin-400.css';
 @import '@fontsource/ibm-plex-mono/latin-500.css';
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
-html,
-body,
-#app {
-  height: 100%;
-  margin: 0;
-}
-
+html, body, #app { height: 100%; margin: 0; }
+/* Theme-specific logo files: light shows .on-light, dark shows .on-dark. */
+.on-dark { display: none; }
+:root[data-theme='dark'] .on-dark { display: block; }
+:root[data-theme='dark'] .on-light { display: none; }
+/* ── Base (exists: app.css) ─────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
 body {
+  margin: 0;
   background: var(--color-bg);
   color: var(--color-text);
   font-family: var(--font-sans);
@@ -30,39 +29,18 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
-
-a {
-  color: var(--color-accent-text);
-}
-a:hover {
-  color: var(--color-accent-strong);
-}
-
-button,
-input,
-select {
-  font: inherit;
-  color: inherit;
-}
-
-:focus-visible {
-  outline: calc(var(--hairline) * 2) solid var(--color-accent);
-  outline-offset: calc(var(--hairline) * 2);
-}
-
-.visually-hidden {
-  position: absolute;
-  width: var(--hairline);
-  height: var(--hairline);
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-/* Shared primitives (DESIGN §5). */
-.mono {
-  font-family: var(--font-mono);
-}
+a { color: var(--color-accent-text); }
+a:hover { color: var(--color-accent-strong); }
+button, input, select { font: inherit; color: inherit; }
+p { margin: 0; }
+:focus-visible { outline: calc(var(--hairline) * 2) solid var(--color-accent); outline-offset: calc(var(--hairline) * 2); }
+[hidden] { display: none !important; }
+.visually-hidden { position: absolute; width: var(--hairline); height: var(--hairline); overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.mono { font-family: var(--font-mono); }
+.muted { color: var(--color-text-muted); }
+.small { font-size: var(--text-control); }
+.nowrap { white-space: nowrap; }
+.grow { flex: 1; }
 .micro-label {
   font: var(--weight-medium) var(--text-label) var(--font-mono);
   letter-spacing: 0.06em;
@@ -77,84 +55,484 @@ kbd {
   border-radius: var(--radius-sm);
 }
 .chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: var(--control-h);
-  padding: 0 var(--space-3);
-  border: var(--hairline) solid var(--color-border);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-text-2);
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: var(--control-h); padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--color-border); border-radius: var(--radius-pill);
+  background: transparent; color: var(--color-text-2);
   font: var(--weight-medium) var(--text-control) var(--font-sans);
-  cursor: pointer;
-  white-space: nowrap;
+  cursor: pointer; white-space: nowrap;
   transition: background var(--dur-fast) var(--ease-out);
 }
-.chip[aria-pressed='true'] {
-  background: var(--color-accent-soft);
-  border-color: var(--color-accent-soft-border);
-  color: var(--color-accent-strong);
-}
-.chip:hover {
-  border-color: var(--color-border-strong);
-}
-.btn-primary,
-.btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  height: var(--button-h);
-  padding: 0 var(--space-4);
+/* Selected = soft fill plus semibold, the same rule the nav uses, so the state does not rest on a faint fill alone. */
+.chip[aria-pressed='true'] { background: var(--color-accent-soft); border-color: var(--color-accent-soft-border); color: var(--color-accent-strong); font-weight: var(--weight-semibold); }
+.chip:hover { border-color: var(--color-border-strong); }
+.chip svg, .scope-chip svg { width: var(--icon-sm); height: var(--icon-sm); }
+.scope-chip { background: var(--color-surface); border-color: var(--color-accent-soft-border); color: var(--color-text); gap: calc(var(--space-1) * 1.5); }
+.btn-primary, .btn-secondary, .btn-danger {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+  height: var(--button-h); padding: 0 var(--space-4);
   border-radius: var(--radius-md);
   font: var(--weight-medium) var(--text-button) var(--font-sans);
-  cursor: pointer;
+  cursor: pointer; text-decoration: none; white-space: nowrap;
 }
-.btn-primary {
-  background: var(--color-accent);
-  color: var(--color-on-accent);
-  border: 0;
-  font-weight: var(--weight-semibold);
-}
-.btn-secondary {
-  background: transparent;
-  color: var(--color-text);
-  border: var(--hairline) solid var(--color-border-strong);
-}
+.btn-primary { background: var(--color-accent); color: var(--color-on-accent); border: 0; font-weight: var(--weight-semibold); }
+.btn-primary:hover { background: var(--color-accent-strong); color: var(--color-on-accent); }
+.btn-secondary { background: transparent; color: var(--color-text); border: var(--hairline) solid var(--color-border-strong); }
+.btn-secondary:hover { background: var(--color-accent-soft); color: var(--color-text); }
+/* new: the destructive confirm. Only ever inside a dialog. */
+.btn-danger { background: var(--color-danger-fill); color: var(--color-on-danger); border: 0; font-weight: var(--weight-semibold); }
+/* Disabled: a quiet fill with readable text (5.1:1), not a faded copy of the live button. */
+.btn-primary[disabled], .btn-secondary[disabled], .btn-danger[disabled] { background: var(--color-divider); color: var(--color-text-muted); border-color: transparent; font-weight: var(--weight-medium); cursor: default; }
+.btn-small { height: var(--control-h); padding: 0 var(--space-3); font-size: var(--text-control); }
+.btn-wide { width: 100%; }
+.square { width: var(--button-h); padding: 0; }
 .icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: var(--icon-btn);
-  height: var(--icon-btn);
-  border: 0;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-muted);
-  cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: var(--icon-btn); height: var(--icon-btn);
+  border: 0; border-radius: var(--radius-md); background: transparent;
+  color: var(--color-text-muted); cursor: pointer; flex: none;
 }
-.icon-btn:hover {
-  background: var(--color-accent-soft);
-  color: var(--color-text);
+.icon-btn:hover { background: var(--color-accent-soft); color: var(--color-text); }
+.icon-btn svg, .nav-ico svg { width: var(--icon-md); height: var(--icon-md); }
+.link { padding: 0; border: 0; background: none; color: var(--color-accent-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.link:hover { color: var(--color-accent-strong); }
+.card { background: var(--color-surface); border: var(--hairline) solid var(--color-border); border-radius: var(--radius-md); padding: var(--card-pad); min-width: 0; }
+.card-title { margin: 0; font: var(--weight-regular) var(--text-section) var(--font-serif); }
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; margin-bottom: var(--space-4); }
+.card-head .meta { font-size: var(--text-value); color: var(--color-text-muted); }
+.caption { font-size: var(--text-control); color: var(--color-text-muted); }
+.skeleton { background: var(--color-divider); border-radius: var(--radius-sm); display: block; }
+.toolbar-divider { width: var(--hairline); height: var(--space-5); background: var(--color-border); margin: 0 var(--space-1); }
+.menu {
+  position: absolute; z-index: 50; min-width: calc(var(--sidebar-width) + var(--space-8));
+  padding: var(--space-1); background: var(--color-surface);
+  border: var(--hairline) solid var(--color-border); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover); display: flex; flex-direction: column;
 }
-.card {
-  background: var(--color-surface);
-  border: var(--hairline) solid var(--color-border);
-  border-radius: var(--radius-md);
-  padding: var(--card-pad);
+.menu-item {
+  display: flex; justify-content: space-between; align-items: center; gap: var(--space-4);
+  width: 100%; padding: var(--space-2) var(--space-3);
+  border: 0; border-radius: var(--radius-sm); background: transparent;
+  font-size: var(--text-control); color: var(--color-text-2); text-align: left; cursor: pointer;
 }
-.card-title {
-  margin: 0;
-  font: var(--weight-regular) var(--text-section) var(--font-serif);
+.menu-item:hover, .menu-item:focus-visible { background: var(--color-accent-soft); }
+.menu-item[aria-checked='true'] { color: var(--color-accent-strong); font-weight: var(--weight-semibold); }
+.menu-item.danger { color: var(--color-danger); }
+.menu-n { color: var(--color-text-muted); font: var(--weight-regular) var(--text-value) var(--font-mono); }
+.menu-sep { height: var(--hairline); background: var(--color-divider); margin: var(--space-1) 0; }
+.menu-label { padding: var(--space-2) var(--space-3) var(--space-1); }
+.menu-backdrop { position: fixed; inset: 0; z-index: 45; border: 0; padding: 0; background: transparent; cursor: default; }
+.ico { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.pop { position: relative; display: inline-flex; }
+.pop .menu { top: calc(100% + var(--space-1) + 2px); left: 0; }
+.pop.end .menu { left: auto; right: 0; }
+
+/* ── Shell (exists: +layout.svelte) ─────────────────────────── */
+.shell { flex: 1; min-height: 0; display: flex; background: var(--color-bg); color: var(--color-text); }
+
+/* ── Sidebar (exists: Sidebar.svelte; store switcher, manage links and account row are new) ── */
+/* The sidebar is one element in both states. Closing it is a drawer, not a swap:
+   the width eases from --sidebar-width to --sidebar-rail, labels fade out early,
+   icons fade in late, and every row keeps its height and place, so nothing jumps.
+   Inner padding stays 20px: nav rows and the store button reach 10px past it, which
+   makes each of them exactly the 40px rail button when the sidebar is 60px wide. */
+.sidebar {
+  flex: none; width: var(--sidebar-width); min-width: 0;
+  display: flex; flex-direction: column; gap: var(--space-6);
+  padding: var(--space-6) var(--space-5) var(--space-5);
+  border-right: var(--hairline) solid var(--color-border); overflow-x: hidden; overflow-y: auto;
+  scrollbar-width: none; /* a scrollbar would take a quarter of the 60px rail and cut its icons */
+  transition: width var(--dur-drawer) var(--ease-drawer);
 }
-.skeleton {
-  background: var(--color-divider);
-  border-radius: var(--radius-sm);
+.sidebar::-webkit-scrollbar { display: none; }
+.sidebar.is-collapsed { width: var(--sidebar-rail); }
+/* Short windows: tighter spacing, so the open sidebar still fits about 700px tall and the rail about 600px. */
+@media (max-height: 820px) {
+  .sidebar { gap: var(--space-4); padding-top: var(--space-4); padding-bottom: var(--space-4); }
+  .sidebar-foot { gap: var(--space-2); }
 }
-.toolbar-divider {
-  width: var(--hairline);
-  height: var(--space-5);
-  background: var(--color-border);
-  margin: 0 var(--space-1);
+/* Labels and icons trade places as one slow dissolve, not two quick pops.
+   Every time below is a share of --dur-drawer, so the dissolve stays in step with the slide.
+   The two fades overlap, so a row is never empty, and both use --ease-swap, which starts and ends gently.
+   Nothing moves sideways: a label fades where it stands and its icon grows in over its first letters. */
+/* The drawer covers most of its distance in the first third of the slide and then settles, so the
+   exchange happens in that first third too. A label that lingers gets crushed by the closing edge,
+   and one that arrives late leaves an open sidebar standing empty: both read as a jump. */
+/* Things only the open sidebar shows. Closing: gone by the time the drawer is three-quarters shut. */
+.sidebar .when-open {
+  opacity: 1; visibility: visible;
+  /* opening: start almost at once and finish as the drawer settles */
+  transition: opacity calc(var(--dur-drawer) * 0.5) var(--ease-swap) calc(var(--dur-drawer) * 0.06), visibility 0s linear 0s;
 }
+.sidebar.is-collapsed .when-open {
+  opacity: 0; visibility: hidden;
+  transition: opacity calc(var(--dur-drawer) * 0.3) var(--ease-swap) 0s, visibility 0s linear calc(var(--dur-drawer) * 0.3);
+}
+/* Things only the rail shows. Closing: they start while the labels are still leaving and finish as the drawer settles. */
+.sidebar .when-rail {
+  opacity: 0; visibility: hidden; transform: scale(0.9);
+  /* opening: leave from the first frame, quickly */
+  transition: opacity calc(var(--dur-drawer) * 0.28) var(--ease-swap) 0s, transform calc(var(--dur-drawer) * 0.28) var(--ease-swap) 0s, visibility 0s linear calc(var(--dur-drawer) * 0.28);
+}
+.sidebar.is-collapsed .when-rail {
+  opacity: 1; visibility: visible; transform: none;
+  transition: opacity calc(var(--dur-drawer) * 0.45) var(--ease-swap) calc(var(--dur-drawer) * 0.1), transform calc(var(--dur-drawer) * 0.45) var(--ease-drawer) calc(var(--dur-drawer) * 0.1), visibility 0s linear 0s;
+}
+/* A label, the store name and the account name dissolve at their right edge as the drawer closes over them,
+   instead of being cut by a hard line or picking up an ellipsis on the way. */
+.sidebar .soft-edge {
+  flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: clip;
+  -webkit-mask-image: linear-gradient(90deg, black calc(100% - var(--space-5)), transparent);
+  mask-image: linear-gradient(90deg, black calc(100% - var(--space-5)), transparent);
+}
+/* Text that would re-wrap as the drawer narrows keeps its open width and is clipped instead. */
+.sidebar .keep-width { width: calc(var(--sidebar-width) - var(--space-5) * 2); flex: none; }
+.brand { display: flex; align-items: center; justify-content: space-between; }
+.collapse { margin-right: calc(var(--space-2) * -1); }
+/* The lockup closes down to its own mark: the box narrows to the brain and slides to the rail's centre. */
+.sidebar .logo { transition: width var(--dur-drawer) var(--ease-drawer), transform var(--dur-drawer) var(--ease-drawer); }
+.sidebar.is-collapsed .logo {
+  width: calc(var(--h) * var(--mark-w) / var(--art-h));
+  transform: translateX(calc((var(--sidebar-rail) - var(--h) * var(--mark-w) / var(--art-h)) / 2 - var(--space-5)));
+}
+/* Logo (replaces Mark.svelte): the supplied SVG files, untouched, as <img>.
+   Each file has clear space built in, so the box crops to the artwork.
+   The five numbers per file are the artwork bounds measured in that file
+   (the knoggin/01_SVG pack of 2026-11-23). If the files are replaced,
+   re-measure these and nothing else changes. --h is the visible height of the artwork. */
+.logo, .logo-mark, .logo-stacked {
+  display: block; overflow: hidden; flex: none; border: 0; padding: 0; background: none; border-radius: var(--radius-sm);
+  height: var(--h); width: calc(var(--h) * var(--art-w) / var(--art-h));
+}
+.logo img, .logo-mark img, .logo-stacked img {
+  display: block; max-width: none; height: calc(var(--h) * var(--file-h) / var(--art-h));
+  margin: calc(var(--h) * var(--art-y) / var(--art-h) * -1) 0 0 calc(var(--h) * var(--art-x) / var(--art-h) * -1);
+}
+.logo { --h: var(--logo-h); --file-h: 670; --art-x: 150.2; --art-y: 184.3; --art-w: 1328; --art-h: 310.1; --mark-w: 335.5; } /* knoggin-horizontal-color-transparent.svg and -monochrome-white.svg; --mark-w is the width of the brain alone */
+.logo-mark { --h: var(--logo-rail); --file-h: 1024; --art-x: 140.5; --art-y: 188.6; --art-w: 741.2; --art-h: 648.5; } /* knoggin-brain-color-transparent.svg and -mono-white-transparent.svg */
+.logo-stacked { --h: var(--logo-auth); --file-h: 1060; --art-x: 189.5; --art-y: 105.4; --art-w: 768.5; --art-h: 832.5; } /* knoggin-stacked-color-transparent.svg and -monochrome-white.svg */
+button.logo { cursor: pointer; }
+.views { display: flex; flex-direction: column; gap: calc(var(--space-1) / 2); }
+.nav-link {
+  position: relative; flex: none; overflow: hidden; white-space: nowrap;
+  display: flex; align-items: center; height: var(--nav-item-h);
+  padding: 0 calc(var(--space-2) + var(--space-1) / 2); margin: 0 calc((var(--space-2) + var(--space-1) / 2) * -1);
+  border: 0; border-radius: var(--radius-md); background: transparent;
+  color: var(--color-text-2); text-decoration: none; text-align: left; cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+/* The icon sits in the 40px square the row becomes when the drawer is closed. */
+.nav-ico { position: absolute; left: 0; top: 0; width: var(--nav-item-h); height: var(--nav-item-h); display: grid; place-items: center; }
+.nav-link:hover { background: var(--color-accent-soft); }
+.nav-link[aria-current='page'] { background: var(--color-accent-soft); color: var(--color-accent-strong); font-weight: var(--weight-semibold); }
+/* When the window is short, the namespace list gives up its height first and scrolls on its own,
+   so the views above and the foot below still fit. It keeps the heading and a row and a half, and its
+   last 16px fade out, which shows there is more (the padding is the same 16px, so a list that fits
+   fades nothing). In the rail it is hidden and its floor eases to 0 with the drawer, so the rail
+   always fits. The transitions repeat .when-open's fades and add min-height. */
+.sidebar .namespaces {
+  display: flex; flex-direction: column; gap: calc(var(--space-1) / 2);
+  flex: 0 1 auto; min-height: calc(var(--ns-row-h) * 2.5); padding-bottom: var(--space-4); margin-bottom: calc(var(--space-4) * -1);
+  overflow-y: auto; scrollbar-width: none;
+  -webkit-mask-image: linear-gradient(black calc(100% - var(--space-4)), transparent);
+  mask-image: linear-gradient(black calc(100% - var(--space-4)), transparent);
+  transition: opacity calc(var(--dur-drawer) * 0.5) var(--ease-swap) calc(var(--dur-drawer) * 0.06), visibility 0s linear 0s, min-height var(--dur-drawer) var(--ease-drawer);
+}
+.sidebar.is-collapsed .namespaces {
+  min-height: 0;
+  transition: opacity calc(var(--dur-drawer) * 0.3) var(--ease-swap) 0s, visibility 0s linear calc(var(--dur-drawer) * 0.3), min-height var(--dur-drawer) var(--ease-drawer);
+}
+.namespaces::-webkit-scrollbar { display: none; }
+.namespaces .heading { padding-bottom: calc(var(--space-1) * 1.5); }
+.ns-btn {
+  display: flex; justify-content: space-between; gap: var(--space-2); width: 100%; min-height: var(--ns-row-h);
+  align-items: center; padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; color: var(--color-text-2);
+}
+.ns-btn[aria-pressed='true'] { color: var(--color-accent-strong); font-weight: var(--weight-semibold); }
+.ns-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ns-btn .n { font: var(--weight-regular) var(--text-value) var(--font-mono); color: var(--color-text-muted); }
+.sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: var(--space-3); }
+.status { font: var(--text-label) var(--font-mono); color: var(--color-text-muted); }
+/* The avatar is the account row's icon in both states: 6px in, so it is centred in the 40px square. */
+.account-link { gap: var(--space-2); padding-left: calc((var(--nav-item-h) - var(--avatar)) / 2); }
+/* The account name takes .soft-edge in the markup: a long name fades out at the right instead of ending in an ellipsis. */
+
+/* ── StoreSwitcher (new) ────────────────────────────────────── */
+.store-switcher { position: relative; margin: calc(var(--space-2) * -1) 0 0; transition: margin var(--dur-drawer) var(--ease-drawer); }
+.sidebar.is-collapsed .store-switcher { margin-left: calc((var(--space-2) + var(--space-1) / 2) * -1); margin-right: calc((var(--space-2) + var(--space-1) / 2) * -1); }
+.store-btn {
+  position: relative; overflow: hidden;
+  display: flex; align-items: center; gap: var(--space-2); width: 100%; height: var(--button-h);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  background: var(--color-surface); border: var(--hairline) solid var(--color-border); border-radius: var(--radius-md);
+  text-align: left; cursor: pointer; font-weight: var(--weight-medium);
+}
+.store-btn:hover { border-color: var(--color-border-strong); }
+/* The store name takes .soft-edge in the markup, so it fades at its right edge and never re-truncates on the way. */
+.store-initial { position: absolute; inset: 0; display: grid; place-items: center; font: var(--weight-medium) var(--text-control) var(--font-mono); color: var(--color-accent-strong); }
+.store-btn svg { width: var(--icon-sm); height: var(--icon-sm); color: var(--color-text-muted); flex: none; }
+.store-kind { display: block; font: var(--text-label) var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-muted); line-height: 1.2; }
+.store-switcher .menu { top: calc(100% + var(--space-1)); left: 0; right: 0; min-width: 0; width: 100%; }
+.store-switcher .menu-item { gap: var(--space-2); padding-left: var(--space-2); padding-right: var(--space-2); }
+.copy-field.stacked { flex-direction: column; align-items: stretch; padding: var(--space-2) var(--space-3) var(--space-3); }
+.copy-field.stacked .v { flex: none; }
+.copy-field.stacked > button { align-self: flex-end; }
+.store-menu-row { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.store-menu-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Screen and PageHeader (exist) ──────────────────────────── */
+.screen {
+  flex: 999 1 var(--main-min); min-width: 0; min-height: 0; height: 100%;
+  display: flex; flex-direction: column; gap: var(--space-4);
+  padding: var(--space-7) var(--space-8); overflow: auto; position: relative;
+}
+.screen.loose { gap: var(--space-5); }
+.header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); }
+.header .title { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; min-width: 0; }
+.header h1 { margin: 0; font: var(--weight-regular) var(--text-page) / 1.15 var(--font-serif); letter-spacing: -0.01em; }
+.header .meta { font: var(--text-value) var(--font-mono); color: var(--color-text-muted); }
+.crumb { font-size: var(--text-control); }
+.search {
+  display: flex; align-items: center; gap: var(--space-2); height: var(--button-h);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border: var(--hairline) solid var(--color-border); border-radius: var(--radius-pill);
+  background: var(--color-surface); color: var(--color-text-2);
+  font: var(--text-control) var(--font-sans); cursor: pointer; text-align: left;
+}
+.search:hover { border-color: var(--color-border-strong); }
+.search svg { width: var(--icon-md); height: var(--icon-md); }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.toolbar .end { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
+.lede { max-width: var(--form-w); color: var(--color-text-2); }
+
+/* ── DaemonBanner (exists) and Notice (new: the same bar, on Sand, for warnings) ── */
+.banner {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface); border: var(--hairline) solid var(--color-border-strong); border-radius: var(--radius-md);
+}
+.banner .dot { width: var(--dot); height: var(--dot); border-radius: var(--radius-pill); background: var(--color-text-muted); flex: none; }
+.banner .text { display: flex; flex-direction: column; flex: 1 1 240px; min-width: 0; }
+.banner strong { font-weight: var(--weight-medium); }
+.banner .path, .banner code { font: var(--text-status) var(--font-mono); color: var(--color-text-muted); overflow-wrap: anywhere; }
+.banner.warn { background: var(--color-notice); border-color: var(--color-notice-border); }
+.banner.warn .dot { background: var(--color-live); }
+.banner.warn .path, .banner.warn code { color: var(--color-text-2); }
+
+/* ── Tag, Avatar, StatusDot (new small parts) ───────────────── */
+.tag {
+  display: inline-flex; align-items: center; height: 22px; padding: 0 var(--space-2);
+  border: var(--hairline) solid var(--color-border-strong); border-radius: var(--radius-sm);
+  font-size: var(--text-small); color: var(--color-text-2); white-space: nowrap;
+}
+.tag.warn { background: var(--color-notice); border-color: var(--color-notice-border); color: var(--color-notice-text); }
+.tag.dashed { border-style: dashed; border-color: var(--color-supersedes); color: var(--color-suppressed-text); }
+.tags { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }
+.avatar {
+  width: var(--avatar); height: var(--avatar); border-radius: var(--radius-pill); flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--color-accent-soft); border: var(--hairline) solid var(--color-accent-soft-border);
+  color: var(--color-accent-strong); font: var(--weight-medium) var(--text-status) var(--font-mono);
+}
+.avatar.lg { width: 48px; height: 48px; font-size: var(--text-input); }
+.sdot { display: inline-block; width: var(--dot); height: var(--dot); border-radius: var(--radius-pill); background: var(--color-accent); flex: none; }
+.sdot.live { background: var(--color-live); }
+.sdot.idle { background: transparent; box-shadow: inset 0 0 0 var(--hairline) var(--color-text-muted); }
+.sdot.down { background: var(--color-danger); }
+.state { display: inline-flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+
+/* ── DataTable (new: the Explore table's look, for short lists) ── */
+.table-card { padding: 0; overflow: hidden; }
+.table-scroll { overflow-x: auto; }
+.table { display: grid; min-width: 100%; }
+.trow, .thead { display: grid; grid-template-columns: subgrid; grid-column: 1 / -1; align-items: center; column-gap: var(--space-5); padding: 0 var(--space-4); }
+.thead { min-height: 36px; border-bottom: var(--hairline) solid var(--color-border); }
+.thead > * { font: var(--weight-medium) var(--text-label) var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-text-muted); white-space: nowrap; }
+.trow { min-height: var(--row-h); border-bottom: var(--hairline) solid var(--color-divider); }
+.trow:last-child { border-bottom: 0; }
+.trow > * { min-width: 0; }
+.trow .num, .thead .num { text-align: right; }
+.trow .val { font: var(--text-value) var(--font-mono); color: var(--color-text-2); white-space: nowrap; }
+.trow.selected { background: var(--color-accent-soft); }
+.trow.dim .cell-main, .trow.dim .val { color: var(--color-text-muted); }
+.cell-main { display: flex; flex-direction: column; min-width: 0; padding: var(--space-2) 0; }
+.cell-main .sub { font: var(--text-status) var(--font-mono); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-btn { display: block; width: 100%; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; font-weight: var(--weight-medium); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cell-btn:hover { color: var(--color-accent-strong); text-decoration: underline; text-underline-offset: 2px; }
+.cell-user { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.trow > .pop { justify-self: end; }
+.trow > .tags { flex-wrap: nowrap; }
+.row-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+
+/* ── Field, CopyField, CodeBlock, Steps, Segmented (new form and doc parts) ── */
+.field { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
+.field > label, .field > .label { font-size: var(--text-control); font-weight: var(--weight-medium); color: var(--color-text-2); }
+.input {
+  height: var(--button-h); width: 100%; padding: 0 var(--space-3);
+  background: var(--color-surface); border: var(--hairline) solid var(--color-border-input); border-radius: var(--radius-md);
+  font-size: var(--text-input);
+}
+.input::placeholder { color: var(--color-text-muted); }
+.hint { font-size: var(--text-control); color: var(--color-text-muted); }
+/* An action that failed: the API's message, next to the field, in danger text (6.5:1 light, 6.1:1 dark). */
+.field-error { font-size: var(--text-control); color: var(--color-danger); }
+.check { display: flex; align-items: flex-start; gap: var(--space-3); min-height: var(--control-h); cursor: pointer; }
+.check input { width: 18px; height: 18px; margin: 2px 0 0; accent-color: var(--color-accent); flex: none; }
+.check .t { display: flex; flex-direction: column; }
+.copy-field {
+  display: flex; align-items: center; gap: var(--space-2); min-height: var(--button-h); padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  background: var(--color-sunken); border: var(--hairline) solid var(--color-border); border-radius: var(--radius-md); min-width: 0;
+}
+.copy-field .v { flex: 1; min-width: 0; padding: var(--space-2) 0; font: var(--text-value) / 1.6 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; user-select: all; }
+.copy-field > button { align-self: flex-start; margin-top: 2px; flex: none; }
+.code {
+  position: relative; margin: 0; padding: var(--space-3) calc(var(--icon-btn) + var(--space-3)) var(--space-3) var(--space-3);
+  background: var(--color-sunken); border: var(--hairline) solid var(--color-border); border-radius: var(--radius-md);
+  font: var(--text-value) / 1.6 var(--font-mono); color: var(--color-text); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.code .icon-btn { position: absolute; top: var(--space-1); right: var(--space-1); }
+.steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--space-5); counter-reset: step; max-width: var(--form-w); }
+.steps > li { counter-increment: step; display: grid; grid-template-columns: var(--space-6) minmax(0, 1fr); column-gap: var(--space-2); row-gap: var(--space-2); }
+.steps > li::before { content: counter(step); font: var(--text-value) / 1.7 var(--font-mono); color: var(--color-text-muted); }
+.steps > li > * { grid-column: 2; }
+.steps > li > :first-child { grid-row: 1; }
+.segmented { display: inline-flex; flex-wrap: wrap; padding: 3px; background: var(--color-sunken); border-radius: var(--radius-md); }
+.segmented button {
+  height: 30px; padding: 0 var(--space-3); border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--color-text-2); font: var(--weight-medium) var(--text-control) var(--font-sans); cursor: pointer;
+}
+.segmented button[aria-pressed='true'] { background: var(--color-surface); color: var(--color-text); font-weight: var(--weight-semibold); box-shadow: 0 0 0 var(--hairline) var(--color-border); }
+
+/* ── Dialog (exists inside MemoryPanel as the Forget confirm; now shared) ── */
+.dialog-scrim { position: absolute; inset: 0; z-index: 60; background: var(--color-scrim); display: flex; align-items: flex-start; justify-content: center; padding: var(--palette-top) var(--space-4) var(--space-4); overflow: auto; }
+.dialog {
+  width: min(var(--dialog-w), 100%); display: flex; flex-direction: column; gap: var(--space-4);
+  padding: var(--space-6); background: var(--color-surface);
+  border: var(--hairline) solid var(--color-border); border-radius: var(--radius-lg); box-shadow: var(--shadow-popover);
+}
+.dialog-text { color: var(--color-text-2); }
+.dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-2); }
+
+/* ── EmptyState and WaitState (new) ─────────────────────────── */
+.empty { flex: 1; min-height: 280px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4); padding: var(--space-8) var(--space-4); text-align: center; }
+.empty p { max-width: 44ch; color: var(--color-text-2); }
+.wait { flex: 1; min-height: 320px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); padding: var(--space-8) var(--space-4); text-align: center; }
+.wait h2 { margin: var(--space-3) 0 0; font: var(--weight-regular) var(--text-memory) / 1.2 var(--font-serif); letter-spacing: -0.01em; text-wrap: balance; }
+.wait p { max-width: 46ch; color: var(--color-text-2); }
+.wait .detail { font: var(--text-status) var(--font-mono); color: var(--color-text-muted); overflow-wrap: anywhere; }
+.wait .actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); margin-top: var(--space-3); }
+.wait .logo-mark { --logo-rail: 44px; }
+.wait.breathing .logo-mark { animation: breathe var(--dur-wait) ease-in-out infinite; }
+.progress { width: min(320px, 100%); height: var(--bar-h); border-radius: var(--radius-pill); background: var(--color-border); overflow: hidden; margin-top: var(--space-2); }
+.progress > span { display: block; height: 100%; border-radius: inherit; background: var(--color-accent); }
+.progress.indeterminate > span { width: 36%; animation: slide var(--dur-wait) var(--ease-out) infinite; }
+.progress.failed > span { background: var(--color-text-muted); }
+@keyframes slide { from { transform: translateX(-110%); } to { transform: translateX(290%); } }
+@keyframes breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) {
+  .progress.indeterminate > span { animation: none; width: 100%; opacity: 0.5; }
+  .wait.breathing .logo-mark { animation: none; }
+}
+
+/* ── AuthPage (new: sign-in, connection and whole-page states; fluid, no breakpoints) ── */
+.standalone { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; align-items: center; background: var(--color-bg); }
+.auth { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-5); padding: var(--space-8) max(var(--space-5), env(safe-area-inset-left, 0px)); text-align: center; }
+.auth-col { width: min(var(--auth-w), 100%); display: flex; flex-direction: column; align-items: center; gap: var(--space-4); }
+.auth h1 { margin: var(--space-4) 0 0; font: var(--weight-regular) var(--text-memory) / 1.2 var(--font-serif); letter-spacing: -0.01em; text-wrap: balance; }
+.auth p { color: var(--color-text-2); text-wrap: pretty; }
+.auth .detail { font: var(--text-status) var(--font-mono); color: var(--color-text-muted); overflow-wrap: anywhere; }
+.auth .actions { width: 100%; display: flex; flex-direction: column; gap: var(--space-2); margin-top: var(--space-2); }
+.auth-foot { padding: var(--space-5); font-size: var(--text-control); color: var(--color-text-muted); text-align: center; }
+.auth .logo-mark { --logo-rail: 52px; }
+.copy-field { flex-wrap: wrap; }
+.steps { max-width: 640px; }
+.row > .narrow { flex-basis: 340px; }
+
+/* ── Settings-style pages (new: Apps overview, Set up an agent, Account, Server status) ── */
+.stack { display: flex; flex-direction: column; gap: var(--space-4); }
+.split { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3) var(--space-5); }
+.split > .t { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.split > .t strong { font-weight: var(--weight-medium); }
+.rule { height: var(--hairline); background: var(--color-divider); margin: var(--space-4) 0; }
+.profile { display: flex; align-items: center; gap: var(--space-4); min-width: 0; flex: 1 1 260px; }
+.profile .who { display: flex; flex-direction: column; min-width: 0; }
+.profile .who .name { font: var(--weight-regular) var(--text-section) var(--font-serif); }
+.profile .who span { overflow: hidden; text-overflow: ellipsis; }
+.kv { margin: 0; display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: var(--space-2) var(--space-5); }
+.kv dt { color: var(--color-text-muted); }
+.kv dd { margin: 0; font: var(--text-value) / 1.7 var(--font-mono); overflow-wrap: anywhere; }
+.keys-table { grid-template-columns: minmax(140px, 1.2fr) minmax(150px, auto) auto auto auto auto 36px; }
+.apps-table { grid-template-columns: minmax(200px, 1.6fr) auto auto auto auto minmax(96px, auto); }
+.users-table { grid-template-columns: minmax(220px, 1.6fr) auto minmax(150px, auto) auto auto minmax(36px, auto); }
+.snaps-table { grid-template-columns: minmax(130px, 1fr) minmax(190px, auto) minmax(80px, auto) auto auto; }
+
+/* ── Responsive (same breakpoints as today) ─────────────────── */
+@media (max-width: 900px) {
+  .screen { padding: var(--space-6) var(--space-5); }
+}
+@media (max-width: 600px) {
+  .shell { flex-direction: column; overflow: auto; }
+  /* On a phone the sidebar is a bar across the top. It does not slide; closed just means icons only. */
+  .sidebar, .sidebar.is-collapsed {
+    flex: 0 0 auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4);
+    padding: var(--space-3) var(--space-4); border-right: 0; border-bottom: var(--hairline) solid var(--color-border);
+    min-width: 0; width: 100%; overflow: visible; transition: none;
+  }
+  .views { flex-direction: row; flex-wrap: wrap; }
+  .nav-link { margin: 0; }
+  .sidebar .nav-ico { display: none; }
+  .sidebar.is-collapsed .nav-ico { display: grid; }
+  .sidebar.is-collapsed .nav-link { width: var(--nav-item-h); padding: 0; }
+  .sidebar.is-collapsed .nav-label, .sidebar.is-collapsed .account-link .who, .sidebar.is-collapsed .caption, .sidebar.is-collapsed .status { display: none; }
+  .sidebar.is-collapsed .logo { transform: none; }
+  .sidebar .keep-width { width: auto; }
+  .sidebar .soft-edge { overflow: visible; -webkit-mask-image: none; mask-image: none; }
+  .sidebar .namespaces { display: none; }
+  .sidebar-foot { margin-top: 0; flex-direction: row; align-items: center; flex-wrap: wrap; }
+  .store-switcher, .sidebar.is-collapsed .store-switcher { margin: 0; flex: 1 1 200px; }
+  .sidebar.is-collapsed .store-switcher { flex: 0 0 var(--nav-item-h); }
+  .sidebar.is-collapsed .store-btn { width: var(--nav-item-h); padding: 0; }
+  .sidebar.is-collapsed .store-name, .sidebar.is-collapsed .store-btn svg { display: none; }
+  .screen { padding: var(--space-5) var(--space-4); height: auto; overflow: visible; flex: 0 0 auto; }
+  .kv { grid-template-columns: minmax(0, 1fr); gap: 0 var(--space-5); }
+  .kv dd { margin-bottom: var(--space-2); }
+}
+
+
+/* ── Knoggin app additions (not in the prototype's sheet) ───── */
+/* The prototype's stage was a flex column; here the shell fills the page. */
+.shell { height: 100%; }
+.standalone { min-height: 100%; }
+/* Dialogs are native modal <dialog> elements: closed ones stay hidden, and the
+   scrim is the backdrop. */
+dialog.dialog { margin: var(--palette-top) auto auto; max-height: calc(100vh - var(--palette-top) - var(--space-6)); overflow: auto; color: var(--color-text); }
+dialog.dialog:not([open]) { display: none; }
+dialog.dialog::backdrop { background: var(--color-scrim); }
+.dialog .fade-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-text-2); }
+/* The account's scheduled deletion and "Open Knoggin from your terminal" use a wider column. */
+.auth-col.wide { width: min(var(--form-w), 100%); }
+.auth-notice, .auth-cmd { align-self: stretch; text-align: left; }
+.auth.breathing .logo-mark { animation: breathe var(--dur-wait) ease-in-out infinite; }
+.auth-foot { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); }
+.wait .progress, .banner .progress { margin-top: var(--space-2); }
+.banner .progress > span, .progress > span { transition: width var(--dur-panel) var(--ease-out); }
+/* From the prototype's Health and map blocks: the parts the new pages share. */
+.window { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--color-text-muted); font-size: var(--text-control); margin-left: var(--space-1); }
+.select {
+  height: var(--control-h); padding: 0 var(--space-2); background: var(--color-surface);
+  border: var(--hairline) solid var(--color-border-input); border-radius: var(--radius-sm);
+  font: var(--weight-medium) var(--text-control) var(--font-sans); color: var(--color-text);
+}
+.select.tall { height: var(--button-h); border-radius: var(--radius-md); font-size: var(--text-input); font-weight: var(--weight-regular); padding: 0 var(--space-3); width: 100%; }
+.row { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.row > .narrow { flex: 1 1 300px; }
+.row > .wide { flex: 2.4 1 420px; }
+.fade-row { display: flex; align-items: center; gap: var(--space-4); min-height: 52px; border-bottom: var(--hairline) solid var(--color-divider); }
+.fade-row:last-child { border-bottom: 0; }
+.fade-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); }
+.tile { display: flex; flex-direction: column; gap: 2px; padding: var(--tile-pad); background: var(--color-sunken); border-radius: var(--radius-md); min-width: 0; }
+.tile .tl { font-size: var(--text-small); color: var(--color-text-muted); }
+.tile .tv { font: var(--weight-regular) var(--text-tile) / 1.1 var(--font-serif); overflow-wrap: anywhere; }
+.tile .tc { font-size: var(--text-small); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile .tc.mono { font-family: var(--font-mono); }

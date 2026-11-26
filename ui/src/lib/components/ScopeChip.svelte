@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- First chip of every toolbar: the global namespace scope (DESIGN §2, §5). -->
 <script lang="ts">
   import { DropdownMenu } from 'bits-ui';
@@ -21,7 +22,7 @@
     <DropdownMenu.Content class="menu" sideOffset={6} align="start">
       <DropdownMenu.RadioGroup value={current ?? ''} onValueChange={(v) => choose(v || null)}>
         <DropdownMenu.RadioItem value="" class="menu-item">All namespaces</DropdownMenu.RadioItem>
-        {#each namespaces.data ?? [] as ns (ns.id)}
+        {#each namespaces.data ?? [] as ns (ns.name)}
           <DropdownMenu.RadioItem value={ns.name} class="menu-item"><span>{ns.name}</span><span class="mono menu-n">{ns.memoryCount}</span></DropdownMenu.RadioItem>
         {/each}
       </DropdownMenu.RadioGroup>

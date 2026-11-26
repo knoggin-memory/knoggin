@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Open state of the ⌘K palette, shared by the header field and shortcuts.
 class Palette {
   open = $state(false);

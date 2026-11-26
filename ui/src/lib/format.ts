@@ -1,4 +1,6 @@
-// Words and numbers as DESIGN §9 spells them.
+// SPDX-License-Identifier: AGPL-3.0-only
+// Words and numbers as DESIGN §9 spells them. The API sends RFC 3339 times; they
+// are shown in the browser's own time zone.
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
@@ -56,5 +58,24 @@ export function truncateWords(text: string, max = 26): string {
   return (space > max * 0.5 ? cut.slice(0, space) : text.slice(0, max)).trimEnd() + '…';
 }
 
-export const PHASES = ['', 'Full', 'Summary', 'Ghost', 'Tombstone'] as const;
+export const PHASES = ['', 'Full', 'Summary', 'Ghost', 'Removed'] as const;
 export const phaseName = (code: number) => PHASES[code] ?? 'Unknown';
+const PHASE_LABEL: Record<string, string> = { full: 'Full', summary: 'Summary', ghost: 'Ghost', deleted: 'Removed' };
+/** "Full", "Summary", "Ghost" for a phase name; "Removed" for `deleted`. */
+export const phaseLabel = (name: string) => PHASE_LABEL[name] ?? name;
+
+/** Milliseconds for an RFC 3339 time; 0 for a missing one. */
+export const ms = (t: string | null | undefined) => (t ? Date.parse(t) : 0);
+
+/** "Nov 23, 2026", in the browser's time zone. */
+export function longDate(t: string | number | null): string {
+  if (t === null || t === '') return '';
+  return new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/** Whole days from now until `t` (at least 0), for "in 6 d" and "Deletes in 6 days". */
+export function daysUntil(t: string | null, now = Date.now()): number {
+  return t ? Math.max(0, Math.ceil((Date.parse(t) - now) / DAY)) : 0;
+}
+
+export const days = (n: number) => `${n} ${n === 1 ? 'day' : 'days'}`;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Messages between the map and its layout worker.
 export type ToWorker =
   | {

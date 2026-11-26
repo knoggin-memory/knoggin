@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 import { describe, expect, it } from 'vitest';
 import fixture from './fsrs.fixture.json';
 import { daysUntil, PERMASTORE_DAYS, phaseFor, retrievability, THRESHOLDS } from './fsrs';

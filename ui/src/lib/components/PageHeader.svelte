@@ -1,15 +1,23 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { palette } from '$lib/palette.svelte';
   import Icon from './Icon.svelte';
-  let { title, meta, children }: { title: string; meta?: string; children?: Snippet } = $props();
+  let {
+    title,
+    meta,
+    crumb,
+    pageTitle,
+    children,
+  }: { title: string; meta?: string; crumb?: { href: string; label: string }; pageTitle?: string; children?: Snippet } = $props();
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 </script>
 
-<svelte:head><title>recalld · {title}</title></svelte:head>
+<svelte:head><title>Knoggin · {pageTitle ?? title}</title></svelte:head>
 
 <header class="header">
   <div class="title">
+    {#if crumb}<a class="crumb" href={crumb.href}>{crumb.label}</a>{/if}
     <h1>{title}</h1>
     {#if meta}<span class="mono meta">{meta}</span>{/if}
     {@render children?.()}

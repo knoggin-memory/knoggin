@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
   import { untrack } from 'svelte';
   import { page } from '$app/state';
@@ -11,13 +12,15 @@
   import FilterMenu from '$lib/components/FilterMenu.svelte';
   import MemoryPanel from '$lib/components/MemoryPanel.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import LoadFailed from '$lib/components/LoadFailed.svelte';
+  import Loading from '$lib/components/Loading.svelte';
   import { scope } from '$lib/scope.svelte';
-  import { live } from '$lib/live.svelte';
   import { selection } from '$lib/selection.svelte';
-  import { memoryPage, tags as fetchTags, PAGE, type PageQuery, type SortKey } from '$lib/api/memories';
-  import type { MemoryRow } from '$lib/api/types';
-  import { ago, count, duration, phaseName } from '$lib/format';
-  import { DAY_MS, strengthAt } from '$lib/fsrs';
+  import { facets as fetchFacets, memoryPage, PAGE, type PageQuery, type SortKey } from '$lib/api/memories';
+  import type { MemoryRow, Phase } from '$lib/api/shapes';
+  import { ago, count, duration, ms, phaseLabel } from '$lib/format';
+  import { DAY_MS } from '$lib/fsrs';
+  import { storeKey } from '$lib/queries';
 
   // ── URL state (DESIGN §8: sort and filter state lives in the URL) ───────
   const SORTS: { key: SortKey; label: string; desc: boolean }[] = [
@@ -28,26 +31,12 @@
     { key: 'summary', label: 'Memory', desc: false },
   ];
   const params = $derived(page.url.searchParams);
-  const phases = $derived(params.has('phase') ? params.getAll('phase').map(Number) : [1, 2, 3]);
+  const ALL: Phase[] = ['full', 'summary', 'ghost'];
+  const phases = $derived(params.has('phase') ? ALL.filter((p) => params.getAll('phase').includes(p)) : ALL);
   const tagSel = $derived(params.getAll('tag'));
   const entitySel = $derived(params.getAll('entity'));
-  const agentSel = $derived(params.getAll('agent'));
-  $effect(() => {
-    live.start();
-    return () => live.release();
-  });
-  // recalld doesn't persist who touched a memory: the Agent filter covers
-  // what agents did while this UI was open.
-  const agentIds = $derived.by(() => {
-    if (!agentSel.length) return [];
-    const ids = new Set<string>();
-    for (const { event: e } of live.recent) {
-      if (!('agent' in e) || !e.agent || !agentSel.includes(e.agent)) continue;
-      if (e.kind === 'recall') e.returned.forEach((id) => ids.add(id));
-      else if ('id' in e) ids.add(e.id);
-    }
-    return [...ids].slice(0, 500);
-  });
+  // The agent is the client that saved the memory (GET /v1/ui/facets).
+  const clientSel = $derived(params.getAll('client'));
   const sort = $derived((params.get('sort') as SortKey) ?? 'lastAccess');
   const desc = $derived(params.has('dir') ? params.get('dir') === 'desc' : SORTS.find((s) => s.key === sort)!.desc);
 
@@ -56,27 +45,31 @@
     update(next);
     goto(`?${next}`, { replace: true, reset: false });
   }
-  const togglePhase = (p: number) =>
+  const togglePhase = (p: Phase) =>
     setParams((q) => {
-      const cur = phases.includes(p) ? phases.filter((x) => x !== p) : [...phases, p].sort();
+      const cur = phases.includes(p) ? phases.filter((x) => x !== p) : ALL.filter((x) => x === p || phases.includes(x));
       q.delete('phase');
-      cur.forEach((x) => q.append('phase', String(x)));
+      cur.forEach((x) => q.append('phase', x));
       if (cur.length === 3) q.delete('phase');
-      if (!cur.length) q.append('phase', '0');
+      if (!cur.length) q.append('phase', 'none');
     });
+  const filtered = $derived(phases.length < 3 || tagSel.length > 0 || entitySel.length > 0 || clientSel.length > 0);
+  const clearFilters = () =>
+    setParams((q) => ['phase', 'tag', 'entity', 'client'].forEach((k) => q.delete(k)));
   const setList = (key: string, values: string[]) =>
     setParams((q) => {
       q.delete(key);
       values.forEach((v) => q.append(key, v));
     });
 
-  const query: PageQuery = $derived({ namespace: scope.current, phases, tags: tagSel, entities: entitySel, sort, desc, ids: agentSel.length ? (agentIds.length ? agentIds : ['00000000-0000-0000-0000-000000000000']) : [] });
+  const query: PageQuery = $derived({ namespace: scope.current, phases, tags: tagSel, entities: entitySel, clients: clientSel, sort, desc });
   const key = $derived(JSON.stringify(query));
 
-  // ── Rows: fetched in pages as the virtual window moves ────────────────
+  // ── Rows: fetched in pages as the reader reaches them ─────────────────
   const first = createQuery(() => ({
-    queryKey: ['memories', key, 0],
-    queryFn: () => memoryPage(query, 0),
+    queryKey: storeKey('memories', key, 0),
+    // No phase chip on: nothing to ask for.
+    queryFn: () => (phases.length ? memoryPage(query, 0) : Promise.resolve({ total: 0, offset: 0, rows: [] })),
     placeholderData: (prev) => prev,
   }));
   const total = $derived(first.data?.total ?? 0);
@@ -130,7 +123,7 @@
   const padBottom = $derived(items.length ? $virtualizer.getTotalSize() - items[items.length - 1].end : 0);
 
   // ── Filters' options ──────────────────────────────────────────────────
-  const tagList = createQuery(() => ({ queryKey: ['tags', scope.current], queryFn: () => fetchTags(scope.current) }));
+  const facetList = createQuery(() => ({ queryKey: storeKey('facets', scope.current), queryFn: () => fetchFacets(scope.current) }));
 
   // ── Selection and keyboard ────────────────────────────────────────────
   const selectedIndex = $derived.by(() => {
@@ -169,29 +162,29 @@
   const now = Date.now();
   function next(m: MemoryRow) {
     if (!m.nextChange) return m.permastore ? 'Permastore' : '—';
-    const days = (m.nextChange.at - now) / DAY_MS;
-    return `${m.nextChange.to === 4 ? 'Deleted' : phaseName(m.nextChange.to)} ${days <= 0 ? 'next sweep' : `in ${duration(days)}`}`;
+    const days = (ms(m.nextChange.at) - now) / DAY_MS;
+    return `${phaseLabel(m.nextChange.to)} ${days <= 0 ? 'next sweep' : `in ${duration(days)}`}`;
   }
 </script>
 
 <svelte:window {onkeydown} />
 
-<Screen>
+<Screen title="Explore">
   <PageHeader title="Explore" meta={first.data ? `${count(total)} memories` : undefined} />
 
   <div role="toolbar" aria-label="Filters" class="toolbar">
     <ScopeChip />
     <span class="toolbar-divider"></span>
-    {#each [1, 2, 3] as p (p)}
-      <button type="button" class="chip" aria-pressed={phases.includes(p)} onclick={() => togglePhase(p)}>{phaseName(p)}</button>
+    {#each ALL as p (p)}
+      <button type="button" class="chip" aria-pressed={phases.includes(p)} onclick={() => togglePhase(p)}>{phaseLabel(p)}</button>
     {/each}
     <span class="toolbar-divider"></span>
-    <FilterMenu label="Tags" options={(tagList.data?.tags.items ?? []).map((t: { name: string; count: number }) => ({ value: t.name, count: t.count }))}
+    <FilterMenu label="Tags" options={(facetList.data?.tags ?? []).map((t) => ({ value: t.name, count: t.count }))}
       bind:selected={() => tagSel, (v) => setList('tag', v)} />
-    <FilterMenu label="Entities" options={(tagList.data?.entities.items ?? []).map((t: { name: string; count: number }) => ({ value: t.name, count: t.count }))}
+    <FilterMenu label="Entities" options={(facetList.data?.entities ?? []).map((t) => ({ value: t.name, count: t.count }))}
       bind:selected={() => entitySel, (v) => setList('entity', v)} />
-    <FilterMenu label="Agent" options={live.agents.map((a) => ({ value: a }))} empty="Agents appear here once they act while the UI is open"
-      bind:selected={() => agentSel, (v) => setList('agent', v)} />
+    <FilterMenu label="Agent" options={(facetList.data?.clients ?? []).map((t) => ({ value: t.name, count: t.count }))} empty="No memory names the agent that saved it yet"
+      bind:selected={() => clientSel, (v) => setList('client', v)} />
     <DropdownMenu.Root>
       <DropdownMenu.Trigger class="chip sort-chip"><span class="sort-label">Sort</span> {SORTS.find((s) => s.key === sort)?.label}<Icon name="chevron" stroke={1.8} size="var(--icon-sm)" /></DropdownMenu.Trigger>
       <DropdownMenu.Portal>
@@ -214,6 +207,19 @@
     </div>
   {/if}
 
+  {#if first.isPending && !first.data}
+    <Loading />
+  {:else if first.isError && !first.data}
+    <LoadFailed onretry={() => first.refetch()} />
+  {:else if total === 0}
+    <div class="empty">
+      {#if filtered}
+        <p>No memories match these filters.</p><button type="button" class="btn-secondary" onclick={clearFilters}>Clear filters</button>
+      {:else}
+        <p>No memories in this store yet. Agents add them with store_memory.</p><a class="btn-secondary" href="/setup">Set up an agent</a>
+      {/if}
+    </div>
+  {:else}
   <div class="table-card" bind:this={scroller}>
     <table>
       <thead>
@@ -232,8 +238,6 @@
             <tr class="row"><td colspan="6" class="skel-cell"><span class="skeleton bar"></span></td></tr>
           {/each}
         </tbody>
-      {:else if total === 0}
-        <tbody><tr><td colspan="6" class="empty">{phases.length === 3 && !tagSel.length && !entitySel.length ? 'No memories in this scope yet. Agents add them with store_memory.' : 'Nothing matches these filters.'}</td></tr></tbody>
       {:else}
         {#if padTop > 0}<tbody aria-hidden="true"><tr style:height="{padTop}px"></tr></tbody>{/if}
         {#each items as item (item.key)}
@@ -242,18 +246,17 @@
           <!-- One tbody per row so the virtualizer can measure an expanded row. -->
           <tbody data-index={item.index} use:measure>
             <!-- The whole row is a click target; the summary button is the keyboard path. -->
-            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
             <tr class="row" class:selected={open} onclick={() => m && toggle(m.id)}>
               {#if m}
-                {@const r = strengthAt(m.lastAccessedAt, m.stability, m.decayMultiplier)}
+                {@const r = m.strength}
                 <td class="first cell-btn">
                   <button type="button" data-id={m.id} aria-expanded={open} class:ghost={m.summary === null} onclick={(e) => { e.stopPropagation(); toggle(m.id); }}>{m.summary ?? 'Summary dropped'}</button>
                 </td>
-                <td><span class="phase"><span class="ph ph-{m.phase}"></span>{phaseName(m.phase)}</span></td>
+                <td><span class="phase"><span class="ph ph-{m.phase}"></span>{phaseLabel(m.phase)}</span></td>
                 <td><span class="strength"><span class="track"><span class="fill" style:width="{Math.round(r * 100)}%"></span></span><span class="mono num">{r.toFixed(2)}</span></span></td>
                 <td class="meta">{next(m)}</td>
                 <td class="mono num muted">{m.namespace}</td>
-                <td class="mono num muted last">{ago(m.lastAccessedAt)}</td>
+                <td class="mono num muted last">{m.retrievedAt ? ago(ms(m.retrievedAt)) : 'Never'}</td>
               {:else}
                 <td colspan="6" class="skel-cell"><span class="skeleton bar"></span></td>
               {/if}
@@ -272,6 +275,7 @@
       {/if}
     </table>
   </div>
+  {/if}
 </Screen>
 
 
@@ -404,10 +408,10 @@
     border-radius: var(--radius-pill);
     background: var(--color-node);
   }
-  .ph-2 {
+  .ph-summary {
     opacity: 0.38;
   }
-  .ph-3 {
+  .ph-ghost {
     background: transparent;
     border: var(--hairline) solid var(--color-node);
   }
@@ -446,10 +450,5 @@
     display: block;
     height: var(--space-3);
     width: 70%;
-  }
-  .empty {
-    padding: var(--space-8) var(--space-4);
-    color: var(--color-text-muted);
-    white-space: normal;
   }
 </style>

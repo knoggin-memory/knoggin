@@ -1,9 +1,13 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
   import { palette } from '$lib/palette.svelte';
   import { fly } from 'svelte/transition';
   import { untrack } from 'svelte';
   import { page } from '$app/state';
-  import { createQuery } from '@tanstack/svelte-query';
+  import { createQuery, useQueryClient } from '@tanstack/svelte-query';
+  import LoadFailed from '$lib/components/LoadFailed.svelte';
+  import Loading from '$lib/components/Loading.svelte';
+  import { storeKey } from '$lib/queries';
   import Screen from '$lib/components/Screen.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import ScopeChip from '$lib/components/ScopeChip.svelte';
@@ -33,22 +37,29 @@
     const t = setInterval(() => (tick = Date.now()), 15_000);
     return () => clearInterval(t);
   });
+  // The recall pill: only for a recall that arrived while the page is open. Without a client name it leaves the name out.
   const pill = $derived.by(() => {
     tick;
-    const r = live.latest;
-    if (!r) return null;
+    const r = [...live.recent].reverse().find((x) => x.event.kind === 'recall');
+    if (!r || r.event.kind !== 'recall') return null;
     const e = r.event;
-    if (e.kind === 'lagged') return null;
-    const who = 'agent' in e && e.agent ? e.agent : e.kind === 'sweep' || e.kind === 'phase_change' ? 'recalld' : 'unknown agent';
-    const verb = e.kind === 'phase_change' ? 'decay' : e.kind === 'sweep' ? 'decay sweep' : e.kind;
-    return { who, verb, when: ago(e.at), recent: Date.now() - e.at < 60_000, event: r };
+    return { text: `${e.client ? `${e.client} · ` : ''}recall · ${ago(e.at)}`, recent: Date.now() - e.at < 60_000, event: r };
   });
 
   const graph = createQuery(() => ({
-    queryKey: ['graph', scope.current],
+    queryKey: storeKey('graph', scope.current),
     queryFn: () => fetchGraph(scope.current),
     staleTime: 60_000,
   }));
+  // A store or forget event changes the counts and the namespaces' sums.
+  const client = useQueryClient();
+  $effect(() =>
+    live.subscribe(({ event }) => {
+      if (event.kind === 'store' || event.kind === 'forget' || event.kind === 'phase_change') {
+        void client.invalidateQueries({ queryKey: storeKey('namespaces') });
+      }
+    }),
+  );
 
   // Large stores start with the last 90 days of activity: fewer nodes keep the
   // physics calm. The Window menu widens it to everything.
@@ -71,17 +82,11 @@
     else next.add(p);
     phases = next;
   };
-  // Only associative links show by default (DESIGN §6); the Links menu adds the rest.
-  let linkSel = $state<string[]>(['2']);
+  // The link filter offers the five edge types; every one but Supersedes shows by default.
+  const ALL_TYPES = [EDGE.parent, EDGE.associative, EDGE.entity, EDGE.temporal, EDGE.supersedes];
+  let linkSel = $state<string[]>(ALL_TYPES.filter((t) => t !== EDGE.supersedes).map(String));
   const edgeTypes = $derived(new Set(linkSel.map(Number)));
-  const presentTypes = $derived.by(() => {
-    const t = graph.data?.type;
-    if (!t) return [] as number[];
-    const seen = new Set<number>();
-    for (let i = 0; i < t.length; i++) seen.add(t[i]);
-    return [...seen].sort();
-  });
-  const shownTypes = $derived(presentTypes.filter((t) => edgeTypes.has(t)).length);
+  const shownTypes = $derived(edgeTypes.size);
 
   let days = $state(0);
 
@@ -139,7 +144,7 @@
 
 <svelte:window {onkeydown} />
 
-<Screen>
+<Screen title="Memory map">
   <PageHeader
     title="Memory map"
     meta={graph.data && shown
@@ -157,7 +162,7 @@
     {/each}
     <FilterMenu
       label="Links · {shownTypes} {shownTypes === 1 ? 'type' : 'types'}"
-      options={presentTypes.map((t) => ({ value: String(t), label: EDGE_LABELS[t] }))}
+      options={ALL_TYPES.map((t) => ({ value: String(t), label: EDGE_LABELS[t] }))}
       bind:selected={linkSel}
       showCount={false}
     />
@@ -176,23 +181,25 @@
 
   <div class="canvas-card">
     {#if graph.isPending}
-      <div class="state"><span class="skeleton blob"></span></div>
+      <div class="state"><Loading /></div>
     {:else if graph.isError}
-      <div class="state muted">The map could not load: {graph.error.message}</div>
+      <div class="state"><LoadFailed onretry={() => graph.refetch()} /></div>
     {:else if graph.data && graph.data.ids.length === 0}
-      <div class="state muted">No memories in this scope yet. Agents add them with store_memory.</div>
+      <div class="state">
+        <div class="empty">
+          <p>No memories in this store yet. Agents add them with <span class="mono small">store_memory</span>.</p>
+          <a class="btn-secondary" href="/setup">Set up an agent</a>
+        </div>
+      </div>
     {:else if shown && shown.ids.length === 0}
-      <div class="state muted">
-        No memories active in the last {WINDOWS.find((w) => w.days === windowDays)?.label}.
-        <button type="button" class="link" onclick={() => (windowDays = 0)}>Show all time</button>
+      <div class="state">
+        <div class="empty"><p>No memories match these filters.</p><button type="button" class="link" onclick={() => (windowDays = 0)}>Show all time</button></div>
       </div>
     {:else if shown}
       {#if pill}
         <button type="button" class="pill" class:quiet={!pill.recent} title="Replay in slow motion" onclick={() => live.replay(pill.event)}>
-          <span class="pill-dot"></span>{pill.who} · {pill.verb} · {pill.when}
+          <span class="pill-dot"></span>{pill.text}
         </button>
-      {:else}
-        <span class="pill quiet"><span class="pill-dot idle"></span>{live.connected ? 'listening for agents' : 'connecting to the daemon'}</span>
       {/if}
       {#if localGraph}
         <button type="button" class="pill back" onclick={() => map?.exitFocus()}>← Back</button>
@@ -216,8 +223,8 @@
         {/await}
       {/key}
       <div class="legend" aria-label="Legend">
-        <span><span class="sw full"></span>Full</span>
-        <span><span class="sw summary"></span>Summary</span>
+        <span title="Lighter means it is fading"><span class="sw full"></span>Full</span>
+        <span title="Lighter means it is fading"><span class="sw summary"></span>Summary</span>
         <span><span class="sw ghost"></span>Ghost</span>
         <span><span class="sw lit"></span>Recalled</span>
         <span><span class="sw suppressed"></span>Suppressed</span>
@@ -305,14 +312,6 @@
     justify-content: center;
     padding: var(--space-8);
   }
-  .muted {
-    color: var(--color-text-muted);
-  }
-  .skeleton.blob {
-    width: 40%;
-    height: 40%;
-    border-radius: var(--radius-lg);
-  }
   .pill {
     position: absolute;
     left: calc(var(--space-3) + var(--space-1) / 2);
@@ -345,10 +344,6 @@
     background: var(--color-accent);
     box-shadow: 0 0 0 calc(var(--hairline) * 3) var(--color-accent-soft-border);
   }
-  .pill-dot.idle {
-    background: var(--color-border-strong);
-    box-shadow: none;
-  }
   .legend {
     position: absolute;
     left: calc(var(--space-3) + var(--space-1) / 2);
@@ -371,18 +366,21 @@
     height: var(--swatch);
     border-radius: var(--radius-pill);
   }
+  /* Two-tone swatches: strong on the left, fading on the right. */
   .sw.full {
-    background: var(--color-node);
+    width: calc(var(--swatch) * 2);
+    background: linear-gradient(90deg, var(--color-node) 50%, var(--color-node-fading) 50%);
   }
   .sw.summary {
-    background: var(--color-node-summary);
-    opacity: 0.6;
+    width: calc(var(--swatch) * 2);
+    background: linear-gradient(90deg, var(--color-node-summary) 50%, var(--color-node-summary-fading) 50%);
   }
   .sw.ghost {
-    border: var(--hairline) solid var(--color-node-ghost);
+    background: var(--color-node-ghost);
   }
   .sw.lit {
     background: var(--color-node-lit);
+    box-shadow: inset 0 0 0 calc(var(--hairline) * 2) var(--color-live);
   }
   .sw.suppressed {
     background: var(--color-suppressed);

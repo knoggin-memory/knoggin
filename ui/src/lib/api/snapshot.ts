@@ -1,6 +1,9 @@
-// Decodes graph_snapshot's base64 little-endian columns into typed arrays.
-import type { GraphSnapshot, NamespaceRef } from './types';
-import { get } from './client';
+// SPDX-License-Identifier: AGPL-3.0-only
+// Decodes GET /v1/ui/graph's base64 little-endian columns into typed arrays.
+// This one route keeps recalld's numbers: phase 1 to 3, edge types 1, 2, 5, 6
+// and 7, and 0 in `lastAccess` for a memory that was never accessed.
+import type { GraphSnapshot, NamespaceRef } from './shapes';
+import { sget } from './client';
 import { DAY_MS, phaseFor, retrievability } from '$lib/fsrs';
 
 function bytes(b64: string): Uint8Array<ArrayBuffer> {
@@ -14,6 +17,7 @@ const f32 = (s: string) => new Float32Array(bytes(s).buffer);
 const f64 = (s: string) => new Float64Array(bytes(s).buffer);
 
 export interface Graph {
+  /** Milliseconds since 1970. */
   generatedAt: number;
   namespaces: NamespaceRef[];
   ids: string[];
@@ -52,7 +56,7 @@ export function decode(first: GraphSnapshot, pages: GraphSnapshot[] = []): Graph
     return out;
   };
   return {
-    generatedAt: first.generatedAt,
+    generatedAt: Date.parse(first.generatedAt),
     namespaces: first.namespaces,
     ids: n.ids,
     index: new Map(n.ids.map((id, i) => [id, i])),
@@ -74,11 +78,11 @@ export function decode(first: GraphSnapshot, pages: GraphSnapshot[] = []): Graph
 
 /** Fetch every page of the snapshot for `namespace` (null = all). */
 export async function fetchGraph(namespace: string | null): Promise<Graph> {
-  const first = await get<GraphSnapshot>('/graph', { namespace });
+  const first = await sget<GraphSnapshot>('/v1/ui/graph', { namespace }, true);
   const pages: GraphSnapshot[] = [];
   let next = first.nextEdgeOffset;
   while (next !== null) {
-    const page = await get<GraphSnapshot>('/graph', { namespace, edgeOffset: next });
+    const page = await sget<GraphSnapshot>('/v1/ui/graph', { namespace, edgeOffset: next }, true);
     if (page.nodeCount !== first.nodeCount) return fetchGraph(namespace); // graph changed mid-read
     pages.push(page);
     next = page.nextEdgeOffset;
@@ -125,6 +129,9 @@ export function activeSince(g: Graph, since: number): Graph {
   };
 }
 
+/** When memory `i`'s decay clock started: its last access, else when it was saved. */
+export const decayAnchor = (g: Graph, i: number) => g.lastAccess[i] || g.createdAt[i];
+
 /** The decay multiplier the sweep applies to memory `i`'s namespace. */
 export function decayMultiplier(g: Graph, i: number): number {
   return g.namespaces.find((n) => n.id === g.ns[i])?.decayMultiplier ?? 1;
@@ -134,13 +141,13 @@ export function decayMultiplier(g: Graph, i: number): number {
 export function strengthAt(g: Graph, i: number, at = Date.now()): number {
   if (i < 0 || g.permastore[i]) return 1;
   if (g.stability[i] <= 0) return g.strength[i];
-  return retrievability(Math.max(0, at - g.lastAccess[i]) / DAY_MS, g.stability[i], decayMultiplier(g, i));
+  return retrievability(Math.max(0, at - decayAnchor(g, i)) / DAY_MS, g.stability[i], decayMultiplier(g, i));
 }
 
 /** The phase memory `i` would be in at `at` (the map's Decay scrubber). */
 export function projectedPhase(g: Graph, i: number, at: number): number {
   if (g.permastore[i] || g.phase[i] === 4 || g.stability[i] <= 0) return g.phase[i];
   const ns = g.namespaces.find((n) => n.id === g.ns[i]);
-  // The projection never makes a memory stronger than recalld says it is now.
+  // The projection never makes a memory stronger than Knoggin says it is now.
   return Math.max(g.phase[i], phaseFor(strengthAt(g, i, at), (ns?.thresholds as [number, number, number]) ?? undefined));
 }

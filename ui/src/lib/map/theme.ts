@@ -1,14 +1,17 @@
+// SPDX-License-Identifier: AGPL-3.0-only
 // Map colors, read from the design tokens at runtime so tokens.css stays the
 // only source of values (WebGL needs concrete colors).
 export interface MapTheme {
   node: string;
-  /** Stage greens: Full fades from `node` toward `nodeFading`, then Summary, Ghost. */
+  /** Phase hues: Full fades from `node` toward `nodeFading`, Summary from `nodeSummary` toward `nodeSummaryFading`. */
   nodeFading: string;
   nodeSummary: string;
+  nodeSummaryFading: string;
   nodeGhost: string;
   nodeLit: string;
   edge: string;
-  contradicts: string;
+  supersedes: string;
+  live: string;
   permastore: string;
   text: string;
   accent: string;
@@ -29,10 +32,12 @@ export function readTheme(): MapTheme {
     node: css('--color-node'),
     nodeFading: css('--color-node-fading'),
     nodeSummary: css('--color-node-summary'),
+    nodeSummaryFading: css('--color-node-summary-fading'),
     nodeGhost: css('--color-node-ghost'),
     nodeLit: css('--color-node-lit'),
     edge: css('--color-edge'),
-    contradicts: css('--color-contradicts'),
+    supersedes: css('--color-supersedes'),
+    live: css('--color-live'),
     permastore: css('--color-permastore'),
     text: css('--color-text'),
     accent: css('--color-accent'),
@@ -40,7 +45,7 @@ export function readTheme(): MapTheme {
     halo: css('--color-label-halo'),
     canvasDot: css('--color-canvas-dot'),
     canvas: css('--color-canvas'),
-    moss: css('--color-agent-2'),
+    moss: css('--color-moss'),
     agents: [1, 2, 3, 4].map((i) => css(`--color-agent-${i}`)),
     fontSans: css('--font-sans'),
   };

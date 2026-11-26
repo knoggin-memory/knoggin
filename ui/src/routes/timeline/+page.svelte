@@ -1,16 +1,18 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <script lang="ts">
-  import { createQuery } from '@tanstack/svelte-query';
+  import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { scaleBand, scaleLinear } from 'd3-scale';
   import Screen from '$lib/components/Screen.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';
   import ScopeChip from '$lib/components/ScopeChip.svelte';
+  import LoadFailed from '$lib/components/LoadFailed.svelte';
   import { scope } from '$lib/scope.svelte';
   import { live } from '$lib/live.svelte';
   import { activity } from '$lib/api/memories';
-  import type { ActivityRow, UiEvent } from '$lib/api/types';
-  import { truncateWords } from '$lib/format';
+  import type { ActivityRow } from '$lib/api/shapes';
+  import { count as fmtCount, ms, truncateWords } from '$lib/format';
+  import { storeKey } from '$lib/queries';
 
-  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const RANGES = [
     { key: '30', label: '30 days', days: 30 },
     { key: '90', label: '90 days', days: 90 },
@@ -20,23 +22,33 @@
   let range = $state<(typeof RANGES)[number]['key']>('90');
   const since = $derived.by(() => {
     const r = RANGES.find((x) => x.key === range)!;
-    return r.days === null ? null : Date.now() - r.days * 86_400_000;
+    return r.days === null ? null : new Date(Date.now() - r.days * 86_400_000).toISOString();
   });
 
+  // No timer: the rows come again when an event arrives (store routes are never polled).
   const data = createQuery(() => ({
-    queryKey: ['activity', scope.current, range],
+    queryKey: storeKey('activity', scope.current, range),
     queryFn: () => activity(scope.current, since),
-    refetchInterval: 30_000,
   }));
-
+  const client = useQueryClient();
   $effect(() => {
     live.start();
-    return () => live.release();
+    let t: ReturnType<typeof setTimeout> | undefined;
+    const off = live.subscribe(({ event }) => {
+      if (!['store', 'recall', 'reinforce', 'sweep'].includes(event.kind)) return;
+      clearTimeout(t);
+      t = setTimeout(() => client.invalidateQueries({ queryKey: storeKey('activity') }), 400);
+    });
+    return () => {
+      off();
+      clearTimeout(t);
+      live.release();
+    };
   });
 
-  // ── Chart: stored per bucket stacked by current phase, recalls mirrored below ──
+  // ── Chart: stored per bucket stacked by current phase, memories recalled mirrored below ──
   const W = 1000, H = 240, AXIS = 132;
-  const buckets = $derived(data.data?.buckets ?? []);
+  const buckets = $derived((data.data?.buckets ?? []).map((b) => ({ ...b, t: ms(b.start) })));
   const maxUp = $derived(Math.max(1, ...buckets.map((b) => b.full + b.summary + b.ghost)));
   const maxDown = $derived(Math.max(1, ...buckets.map((b) => b.recalls)));
   const x = $derived(scaleBand<number>().domain(buckets.map((_, i) => i)).range([0, W]).paddingInner(0.25));
@@ -46,46 +58,30 @@
   const fmt = (t: number) => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const ticks = $derived(buckets.filter((_, i) => i % Math.max(1, Math.ceil(buckets.length / 8)) === 0));
 
-  // ── Stream: persisted rows plus live events (which add agent and query) ──
+  // ── Stream: the route's rows, which already hold the events the store keeps ──
+  // A row names the agent only when Knoggin knows it; without one it starts with the verb.
+  const VERB = { recall: 'recalled', store: 'stored', reinforce: 'reinforced' } as const;
   interface Line {
     at: number;
-    kind: 'recall' | 'store' | 'reinforce' | 'sweep';
-    agent: string | null;
+    kind: ActivityRow['kind'];
+    lead: string;
     text: string;
     meta: string;
   }
-  const liveLines = $derived(
-    live.recent
-      .map((r) => r.event)
-      .filter((e): e is Extract<UiEvent, { kind: 'recall' | 'reinforce' | 'sweep' }> => ['recall', 'reinforce', 'sweep'].includes(e.kind))
-      .filter((e) => (scope.current === null || !('namespace' in e) || e.namespace === scope.current))
-      .map((e): Line => {
-        if (e.kind === 'recall')
-          return { at: e.at, kind: 'recall', agent: e.agent, text: e.query, meta: plural(e.returned.length, 'result') };
-        if (e.kind === 'reinforce') return { at: e.at, kind: 'reinforce', agent: e.agent, text: 'a memory', meta: '' };
-        const moved = e.moved.fullToSummary + e.moved.summaryToGhost + e.moved.ghostToDeleted;
-        return { at: e.at, kind: 'sweep', agent: null, text: `Decay sweep moved ${moved} ${moved === 1 ? 'memory' : 'memories'}`, meta: '' };
-      }),
-  );
-  const persisted = $derived(
-    (data.data?.rows ?? []).map((r: ActivityRow): Line => ({
-      at: r.at,
-      kind: r.kind as Line['kind'],
-      agent: null,
-      text: r.kind === 'sweep' ? `Decay sweep checked ${r.count} ${r.count === 1 ? 'memory' : 'memories'}` : (r.summary ?? 'Summary dropped'),
-      meta: r.kind === 'recall' ? plural(r.count, 'result') : r.kind === 'store' ? plural(r.count, 'link') : '',
-    })),
-  );
-  const lines = $derived.by(() => {
-    // A live recall and its persisted access rows share a moment; keep the live one.
-    const out = [...liveLines];
-    for (const p of persisted) if (!out.some((l) => l.kind === p.kind && Math.abs(l.at - p.at) < 2000)) out.push(p);
-    return out.sort((a, b) => b.at - a.at);
-  });
+  function line(r: ActivityRow): Line {
+    const at = ms(r.at);
+    if (r.kind === 'sweep') return { at, kind: r.kind, lead: 'Knoggin ran a decay sweep', text: '', meta: `${fmtCount(r.count ?? 0)} moved` };
+    const verb = VERB[r.kind];
+    const lead = r.client ? `${r.client} ${verb}` : verb.charAt(0).toUpperCase() + verb.slice(1);
+    const n = r.count;
+    const meta =
+      r.kind === 'recall' && n !== null ? `${fmtCount(n)} ${n === 1 ? 'memory' : 'memories'}` : r.kind === 'store' && n !== null ? `${fmtCount(n)} ${n === 1 ? 'link' : 'links'}` : '';
+    return { at, kind: r.kind, lead, text: r.summary ?? 'Summary dropped', meta };
+  }
   const days = $derived.by(() => {
     const groups: { title: string; lines: Line[] }[] = [];
     const today = new Date().toDateString();
-    for (const l of lines) {
+    for (const l of (data.data?.rows ?? []).map(line).sort((a, b) => b.at - a.at)) {
       const d = new Date(l.at);
       const title = d.toDateString() === today ? 'Today' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       const g = groups.at(-1);
@@ -94,11 +90,10 @@
     }
     return groups;
   });
-  const VERB = { recall: 'recalled', store: 'stored', reinforce: 'reinforced' } as const;
   const time = (t: number) => new Date(t).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 </script>
 
-<Screen gap="var(--space-5)">
+<Screen title="Timeline" loose>
   <PageHeader title="Timeline" />
   <div role="toolbar" aria-label="Filters" class="toolbar"><ScopeChip /></div>
 
@@ -113,31 +108,31 @@
         <span><span class="sq full"></span>Full</span>
         <span><span class="sq summary"></span>Summary</span>
         <span><span class="sq ghost"></span>Ghost</span>
-        <span><span class="sq recalls"></span>Recalls</span>
+        <span><span class="sq recalls"></span>Memories recalled</span>
       </div>
     </div>
-    <div class="captions"><span>Stored each {monthly ? 'month' : 'week'}, by phase today</span><span>Recalls each {monthly ? 'month' : 'week'} ↓</span></div>
+    <div class="captions"><span>Stored each {monthly ? 'month' : 'week'}, by phase today</span><span>Memories recalled each {monthly ? 'month' : 'week'} ↓</span></div>
     {#if data.isPending}
       <div class="skeleton chart-skel"></div>
     {:else}
       <svg viewBox="0 0 {W} {H}" width="100%" height={H} role="img" aria-label="Memories stored and recalled per {monthly ? 'month' : 'week'}" preserveAspectRatio="none">
         <line class="axis" x1="0" x2={W} y1={AXIS} y2={AXIS} />
-        {#each buckets as b, i (b.start)}
+        {#each buckets as b, i (b.t)}
           {@const bx = x(i) ?? 0}
           {@const bw = x.bandwidth()}
           {@const hf = up(b.full)}
           {@const hs = up(b.summary)}
           {@const hg = up(b.ghost)}
           <g>
-            <title>{fmt(b.start)}: {b.full} Full, {b.summary} Summary, {b.ghost} Ghost stored; {b.recalls} recalls</title>
+            <title>{fmt(b.t)}: {b.full + b.summary + b.ghost} stored, {b.recalls} recalled</title>
             <rect class="full" x={bx} y={AXIS - hf} width={bw} height={hf} />
             <rect class="summary" x={bx} y={AXIS - hf - hs} width={bw} height={hs} />
-            {#if hg > 0}<rect class="ghost" x={bx + 0.5} y={AXIS - hf - hs - hg + 0.5} width={Math.max(0, bw - 1)} height={Math.max(0, hg - 1)} />{/if}
+            <rect class="ghost" x={bx} y={AXIS - hf - hs - hg} width={bw} height={hg} />
             <rect class="recalls" x={bx} y={AXIS + 2} width={bw} height={down(b.recalls)} />
           </g>
         {/each}
-        {#each ticks as b (b.start)}
-          <text class="tick" x={(x(buckets.indexOf(b)) ?? 0) + x.bandwidth() / 2} y={H - 4} text-anchor="middle">{fmt(b.start)}</text>
+        {#each ticks as b (b.t)}
+          <text class="tick" x={(x(buckets.indexOf(b)) ?? 0) + x.bandwidth() / 2} y={H - 4} text-anchor="middle">{fmt(b.t)}</text>
         {/each}
       </svg>
     {/if}
@@ -146,8 +141,10 @@
   <section aria-label="Activity" class="stream">
     {#if data.isPending}
       {#each [0, 1, 2, 3] as i (i)}<div class="skeleton row-skel"></div>{/each}
-    {:else if !lines.length}
-      <p class="muted">No activity in this range yet. It appears as agents store and recall memories.</p>
+    {:else if data.isError}
+      <LoadFailed onretry={() => data.refetch()} />
+    {:else if !days.length}
+      <div class="empty"><p>No activity yet.</p></div>
     {/if}
     {#each days as d, i (i)}
       <div class="day">
@@ -155,11 +152,11 @@
         {#each d.lines as l, i (l.at + l.kind + i)}
           <div class="line">
             <span class="mono t">{time(l.at)}</span>
-            <span class="dot {l.kind}" style:--agent="var(--color-agent-{live.agentSlot(l.agent) + 1})"></span>
+            <span class="dot {l.kind}"></span>
             {#if l.kind === 'sweep'}
-              <span class="sweep-text">{l.text}</span>
+              <span class="sweep-text">{l.lead}</span>
             {:else}
-              <span class="what"><span class="muted">{l.agent ?? 'An agent'} {VERB[l.kind]}</span> {truncateWords(l.text, 90)}</span>
+              <span class="what"><span class="muted">{l.lead}</span> {truncateWords(l.text, 90)}</span>
             {/if}
             <span class="meta">{l.meta}</span>
           </div>
@@ -233,28 +230,24 @@
   }
   .sq.summary {
     background: var(--color-node-summary);
-    opacity: 0.6;
   }
   .sq.ghost {
-    border: var(--hairline) solid var(--color-node-ghost);
+    background: var(--color-node-ghost);
   }
   .sq.recalls {
-    background: var(--color-agent-2);
+    background: var(--color-moss);
   }
   svg rect.full {
     fill: var(--color-node);
   }
   svg rect.summary {
     fill: var(--color-node-summary);
-    fill-opacity: 0.6;
   }
   svg rect.ghost {
-    fill: none;
-    stroke: var(--color-node-ghost);
-    vector-effect: non-scaling-stroke;
+    fill: var(--color-node-ghost);
   }
   svg rect.recalls {
-    fill: var(--color-agent-2);
+    fill: var(--color-moss);
   }
   .axis {
     stroke: var(--color-grid);
@@ -298,15 +291,16 @@
     height: calc(var(--dot) + var(--hairline));
     border-radius: var(--radius-pill);
   }
-  .dot.recall {
-    background: var(--agent);
+  .dot {
+    background: var(--color-accent);
   }
-  .dot.store,
-  .dot.reinforce {
-    border: var(--rule) solid var(--agent);
+  .dot.store {
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--rule) var(--color-accent);
   }
   .dot.sweep {
-    border: var(--hairline) solid var(--color-text-muted);
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--rule) var(--color-text-muted);
   }
   .what {
     min-width: 0;

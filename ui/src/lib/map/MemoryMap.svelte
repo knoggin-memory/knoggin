@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- The Memory map canvas (DESIGN §6): sigma on WebGL2 for nodes and edges,
      d3-force in a worker, rings and collision-free labels on a 2D overlay
      redrawn only when sigma renders. Nothing animates while idle. -->
@@ -9,6 +10,7 @@
   import { layerBorder } from '@sigma/node-border';
   import { decayMultiplier, projectedPhase as projectPhase, strengthAt as strengthOf, type Graph as Snapshot } from '$lib/api/snapshot';
   import { memoryRows } from '$lib/api/memories';
+  import { decayAnchor } from '$lib/api/snapshot';
   import { placeLabels, PointGrid, type LabelCandidate } from '$lib/labels';
   import { ago, phaseName, truncateWords, duration } from '$lib/format';
   import { DAY_MS, retrievability } from '$lib/fsrs';
@@ -75,15 +77,15 @@
   let visibleIds = $state<string[]>([]);
   const started = performance.now();
   const perf = window as unknown as {
-    __recalldSettled?: boolean;
-    __recalldCached?: boolean;
-    __recalldLit?: number[];
-    __recalldLitPair?: [number, number];
-    __recalldNodeAt?: () => { x: number; y: number } | null;
+    __knogginSettled?: boolean;
+    __knogginCached?: boolean;
+    __knogginLit?: number[];
+    __knogginLitPair?: [number, number];
+    __knogginNodeAt?: () => { x: number; y: number } | null;
   };
-  perf.__recalldSettled = false;
+  perf.__knogginSettled = false;
   // Test hook: viewport positions of every visible node.
-  (perf as { __recalldPositions?: () => { id: string; x: number; y: number; size: number; r: number }[] }).__recalldPositions = () => {
+  (perf as { __knogginPositions?: () => { id: string; x: number; y: number; size: number; r: number }[] }).__knogginPositions = () => {
     const out: { id: string; x: number; y: number; size: number; r: number }[] = [];
     graph?.forEachNode((id, a) => {
       if (a.visibility === 'visible') out.push({ id, size: a.size as number, r: sigma!.scaleSize(a.size as number), ...sigma!.graphToViewport(drawn(id)) });
@@ -92,7 +94,7 @@
   };
   // Test hook: page coordinates of a node near the middle that is big enough
   // to hover reliably (nodes scale with the layout, so some are tiny).
-  perf.__recalldNodeAt = () => {
+  perf.__knogginNodeAt = () => {
     if (!graph || !sigma) return null;
     const box = container.getBoundingClientRect();
     const w = container.clientWidth / 2, h = container.clientHeight / 2;
@@ -259,7 +261,8 @@
     for (const id of highlighted) ring(id, 4.5, theme.accent, 1.3);
     const t = performance.now();
     rings = rings.filter((r) => r.until > t);
-    for (const r of rings) ring(r.id, 4.5, r.linked ? theme.moss : theme.accent, 1.3);
+    // A node reached by a recall sits in a Terracotta ring; one reached through links gets moss.
+    for (const r of rings) ring(r.id, 4.5, r.linked ? theme.moss : theme.live, 2.5);
     // Links growing out of a new memory.
     for (const g of growing) {
       const u = Math.min(1, Math.max(0, (t - g.start) / g.dur));
@@ -329,7 +332,7 @@
     // A hidden tab keeps the graph current but plays no light: it would queue
     // up unseen and all fire when the tab comes back.
     if (document.hidden) return;
-    const slot = 'agent' in e ? live.agentSlot(e.agent) : 0;
+    const slot = 'client' in e ? live.clientSlot(e.client) : 0;
     const colors = { agent: rgb(theme.agents[slot]), lit: rgb(theme.nodeLit), moss: rgb(theme.moss), cool: rgb(theme.suppressed) };
     const scale = sigma.scaleSize(DRAW);
     const c = choreograph(e, position, performance.now(), colors, { speed: replay?.speed ?? 1, reducedMotion, scale });
@@ -354,8 +357,8 @@
     sigma.refresh({ skipIndexation: true });
     if (e.kind === 'recall' && !replay && e.seq < 1_000_000) {
       requestAnimationFrame(() => {
-        perf.__recalldLitPair = [Date.now(), e.at];
-        (perf.__recalldLit ??= []).push(Date.now());
+        perf.__knogginLitPair = [Date.now(), e.at];
+        (perf.__knogginLit ??= []).push(Date.now());
       });
     }
   }
@@ -449,7 +452,7 @@
         if (a.visibility !== 'visible') return;
         any.push(id);
         const i = a.index as number;
-        if (i >= 0 && snapshot.ns[i] === e.namespaceId) same.push(id);
+        if (i >= 0 && snapshot.namespaces.find((n) => n.id === snapshot.ns[i])?.name === e.namespace) same.push(id);
       });
       const from = same.length ? same : any;
       anchorId = from.length ? from[Math.floor(Math.random() * from.length)] : null;
@@ -958,15 +961,15 @@
             sigma!.setSetting('autoRescale', 'once');
           }
           savePositions(scopeKey, snapshot.ids, e.data.x, e.data.y);
-          perf.__recalldSettled = true;
+          perf.__knogginSettled = true;
           onsettled?.();
         }
         if (first) {
           first = false;
           const cached = cachedAll;
           // Marks read by the perf harness (ui/perf); cheap and inert otherwise.
-          performance.mark('recalld:map-ready');
-          perf.__recalldCached = cached;
+          performance.mark('knoggin:map-ready');
+          perf.__knogginCached = cached;
           onready?.({ cached, ms: performance.now() - started });
         }
       };
@@ -1020,11 +1023,11 @@
   {#if tooltip && tipIndex !== undefined}
     {@const i = tipIndex}
     {@const text = summaries.get(tooltip.id)}
-    {@const r = retrievability(Math.max(0, Date.now() - snapshot.lastAccess[i]) / DAY_MS, snapshot.stability[i], decayMultiplier(snapshot, i))}
+    {@const r = snapshot.permastore[i] ? 1 : retrievability(Math.max(0, Date.now() - decayAnchor(snapshot, i)) / DAY_MS, snapshot.stability[i], decayMultiplier(snapshot, i))}
     <div class="tooltip" role="tooltip" class:flip={tooltip.flip} style:left="{tooltip.x}px" style:top="{tooltip.y}px">
       <div class="t1">{text === null ? 'Summary dropped' : (text ?? '…')}</div>
       <div class="t2 mono">{phaseName(snapshot.phase[i])} · R {r.toFixed(2)} · S {duration(snapshot.stability[i])}</div>
-      <div class="t2 mono">{snapshot.namespaces.find((n) => n.id === snapshot.ns[i])?.name ?? ''} · {snapshot.degree[i]} links · accessed {ago(snapshot.lastAccess[i])}</div>
+      <div class="t2 mono">{snapshot.namespaces.find((n) => n.id === snapshot.ns[i])?.name ?? ''} · {snapshot.degree[i]} links · {snapshot.lastAccess[i] ? `accessed ${ago(snapshot.lastAccess[i])}` : `saved ${ago(snapshot.createdAt[i])}`}</div>
     </div>
   {/if}
 </div>
