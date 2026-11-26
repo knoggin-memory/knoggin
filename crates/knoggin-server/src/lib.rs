@@ -6,6 +6,7 @@
 //! `lease`, `pool`, `reconcile` and `rollout`) and the container role and broker are
 //! built on top of these; `CONTRACT.md` says where each goes.
 
+pub mod admin;
 pub mod aws;
 pub mod broker;
 pub mod container;

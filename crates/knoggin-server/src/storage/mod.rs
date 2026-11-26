@@ -15,7 +15,7 @@ pub mod memory;
 pub mod names;
 mod s3;
 
-pub use memory::{Fault, MemoryStorage};
+pub use memory::{Fault, MemoryStorage, Weakness};
 pub use s3::S3Storage;
 
 /// The bucket.

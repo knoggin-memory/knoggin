@@ -66,6 +66,20 @@ pub enum Fault {
     Gone,
 }
 
+/// A property of a real bucket that the stand-in can be told to lack, so that the bucket
+/// self-test's own tests see each of its checks fail.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Weakness {
+    /// An upload to an existing name replaces it instead of answering 412.
+    Overwrites,
+    /// Uploads and downloads are taken without checking the signature or what it covers.
+    Unsigned,
+    /// A link works after it has expired.
+    NoExpiry,
+    /// A listing does not show any object yet.
+    StaleListing,
+}
+
 /// One request it received, for tests that check what reached the bucket.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SeenRequest {
@@ -92,6 +106,13 @@ struct Shared {
     fault: watch::Sender<Fault>,
     seen: Mutex<Vec<SeenRequest>>,
     addr: SocketAddr,
+    weakness: Mutex<Option<Weakness>>,
+}
+
+impl Shared {
+    fn weak(&self, w: Weakness) -> bool {
+        *lock(&self.weakness) == Some(w)
+    }
 }
 
 /// The in-memory bucket and its loopback server. The server stops when this is dropped.
@@ -137,6 +158,7 @@ impl MemoryStorage {
             fault: watch::Sender::new(Fault::None),
             seen: Mutex::new(Vec::new()),
             addr: listener.local_addr()?,
+            weakness: Mutex::new(None),
         });
         let server = tokio::spawn(serve(listener, shared.clone()));
         Ok(Self {
@@ -170,6 +192,11 @@ impl MemoryStorage {
             *lock(&self.server) = Some(tokio::spawn(serve(listener, self.shared.clone())));
         }
         Ok(())
+    }
+
+    /// Takes away one property of a real bucket, or with `None` gives it back.
+    pub fn weaken(&self, weakness: Option<Weakness>) {
+        *lock(&self.shared.weakness) = weakness;
     }
 
     /// Stores an object directly, as if uploaded at `last_modified`.
@@ -286,6 +313,9 @@ impl MemoryStorage {
 impl ObjectStorage for MemoryStorage {
     async fn list(&self, prefix: &str) -> Result<Vec<ObjectInfo>, StorageError> {
         self.admit().await?;
+        if self.shared.weak(Weakness::StaleListing) {
+            return Ok(Vec::new());
+        }
         Ok(lock(&self.shared.objects)
             .range(prefix.to_owned()..)
             .take_while(|(k, _)| k.starts_with(prefix))
@@ -489,69 +519,11 @@ async fn answer(shared: &Shared, req: Request<Incoming>) -> Response<Full<Bytes>
     let Some(params) = parse_query(req.uri().query().unwrap_or("")) else {
         return status(StatusCode::BAD_REQUEST);
     };
-    let one = |name: &str| {
-        let mut it = params.iter().filter(|(k, _)| k == name);
-        match (it.next(), it.next()) {
-            (Some((_, v)), None) => Some(v.clone()),
-            _ => None,
-        }
-    };
-    let known = |k: &str| SIGNED_PARAMS.contains(&k) || k == SIGNATURE || k == X_ID;
-    if params.iter().any(|(k, _)| !known(k)) {
-        return status(StatusCode::BAD_REQUEST);
-    }
-    let (Some(algorithm), Some(date), Some(expires), Some(names), Some(given)) = (
-        one("X-Amz-Algorithm"),
-        one("X-Amz-Date"),
-        one("X-Amz-Expires"),
-        one("X-Amz-SignedHeaders"),
-        one(SIGNATURE),
-    ) else {
-        return status(StatusCode::FORBIDDEN);
-    };
-    if one("X-Amz-Credential").is_none() || algorithm != ALGORITHM {
-        return status(StatusCode::FORBIDDEN);
-    }
-    let x_id = match params.iter().filter(|(k, _)| k == X_ID).count() {
-        0 => None,
-        1 => one(X_ID),
-        _ => return status(StatusCode::BAD_REQUEST),
-    };
-    let expected_id = if req.method() == Method::PUT {
-        "PutObject"
-    } else {
-        "GetObject"
-    };
-    if x_id.is_some_and(|id| id != expected_id) {
-        return status(StatusCode::BAD_REQUEST);
-    }
-    let (Some(signed_at), Ok(expires)) = (parse_amz_date(&date), expires.parse::<i64>()) else {
-        return status(StatusCode::FORBIDDEN);
-    };
     let now = (shared.clock)();
-    if signed_at
-        .millis()
-        .saturating_add(expires.saturating_mul(1000))
-        <= now
+    if !shared.weak(Weakness::Unsigned)
+        && let Err(code) = authorize(shared, &req, &path, &params, now)
     {
-        return status(StatusCode::FORBIDDEN);
-    }
-    let signed_names: Vec<String> = names.split(';').map(str::to_owned).collect();
-    if !signed_names.iter().any(|n| n == "host") {
-        return status(StatusCode::FORBIDDEN);
-    }
-    let Some(expected) = signature(
-        &shared.key,
-        req.method().as_str(),
-        &path,
-        &params,
-        &signed_names,
-        req.headers(),
-    ) else {
-        return status(StatusCode::FORBIDDEN);
-    };
-    if verify_slices_are_equal(expected.as_bytes(), given.as_bytes()).is_err() {
-        return status(StatusCode::FORBIDDEN);
+        return status(code);
     }
     match *req.method() {
         Method::GET => match lock(&shared.objects).get(&key) {
@@ -561,6 +533,81 @@ async fn answer(shared: &Shared, req: Request<Incoming>) -> Response<Full<Bytes>
         Method::PUT => put(shared, key, req, now).await,
         _ => status(StatusCode::METHOD_NOT_ALLOWED),
     }
+}
+
+/// Checks a request's signature and expiry; the status to refuse it with.
+fn authorize(
+    shared: &Shared,
+    req: &Request<Incoming>,
+    path: &str,
+    params: &[(String, String)],
+    now: i64,
+) -> Result<(), StatusCode> {
+    let one = |name: &str| {
+        let mut it = params.iter().filter(|(k, _)| k == name);
+        match (it.next(), it.next()) {
+            (Some((_, v)), None) => Some(v.clone()),
+            _ => None,
+        }
+    };
+    let known = |k: &str| SIGNED_PARAMS.contains(&k) || k == SIGNATURE || k == X_ID;
+    if params.iter().any(|(k, _)| !known(k)) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let (Some(algorithm), Some(date), Some(expires), Some(names), Some(given)) = (
+        one("X-Amz-Algorithm"),
+        one("X-Amz-Date"),
+        one("X-Amz-Expires"),
+        one("X-Amz-SignedHeaders"),
+        one(SIGNATURE),
+    ) else {
+        return Err(StatusCode::FORBIDDEN);
+    };
+    if one("X-Amz-Credential").is_none() || algorithm != ALGORITHM {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let x_id = match params.iter().filter(|(k, _)| k == X_ID).count() {
+        0 => None,
+        1 => one(X_ID),
+        _ => return Err(StatusCode::BAD_REQUEST),
+    };
+    let expected_id = if req.method() == Method::PUT {
+        "PutObject"
+    } else {
+        "GetObject"
+    };
+    if x_id.is_some_and(|id| id != expected_id) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let (Some(signed_at), Ok(expires)) = (parse_amz_date(&date), expires.parse::<i64>()) else {
+        return Err(StatusCode::FORBIDDEN);
+    };
+    if !shared.weak(Weakness::NoExpiry)
+        && signed_at
+            .millis()
+            .saturating_add(expires.saturating_mul(1000))
+            <= now
+    {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let signed_names: Vec<String> = names.split(';').map(str::to_owned).collect();
+    if !signed_names.iter().any(|n| n == "host") {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let Some(expected) = signature(
+        &shared.key,
+        req.method().as_str(),
+        path,
+        params,
+        &signed_names,
+        req.headers(),
+    ) else {
+        return Err(StatusCode::FORBIDDEN);
+    };
+    if verify_slices_are_equal(expected.as_bytes(), given.as_bytes()).is_err() {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    Ok(())
 }
 
 async fn put(
@@ -580,7 +627,8 @@ async fn put(
     if len > MAX_OBJECT {
         return status(StatusCode::PAYLOAD_TOO_LARGE);
     }
-    if lock(&shared.objects).contains_key(&key) {
+    let overwrites = shared.weak(Weakness::Overwrites);
+    if !overwrites && lock(&shared.objects).contains_key(&key) {
         return status(StatusCode::PRECONDITION_FAILED);
     }
     let Ok(body) = Limited::new(req.into_body(), len).collect().await else {
@@ -591,7 +639,7 @@ async fn put(
         return status(StatusCode::BAD_REQUEST);
     }
     let mut objects = lock(&shared.objects);
-    if objects.contains_key(&key) {
+    if !overwrites && objects.contains_key(&key) {
         return status(StatusCode::PRECONDITION_FAILED);
     }
     objects.insert(

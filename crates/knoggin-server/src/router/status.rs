@@ -13,7 +13,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Extension, Router};
 use http::{HeaderValue, StatusCode, header};
-use knoggin_core::snapshot::{SnapshotName, SnapshotObject, thin};
 use knoggin_core::{StoreId, Timestamp};
 use knoggin_http::ApiError;
 use knoggin_http::edge::Caller;
@@ -24,7 +23,6 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::lease::{Fleet, db_error, peer_of};
-use crate::storage::names;
 
 /// The `status` limit of the store status route.
 const STATUS_LIMIT: Duration = Duration::from_secs(2);
@@ -206,55 +204,16 @@ async fn snapshots(State(s): State<ModeState>, Path(id): Path<String>) -> Answer
         .await
         .map_err(db_error)?
         .ok_or_else(|| ApiError::not_found("No such store"))?;
-    let prefix = names::snapshot_prefix(id);
-    let listed = s.fleet.storage.list(&prefix).await.map_err(|e| {
+    let list = crate::admin::snapshot_list(
+        &*s.fleet.storage,
+        &record.value,
+        s.info.retention_days,
+        Timestamp::from_millis(s.fleet.now()),
+    )
+    .await
+    .map_err(|e| {
         tracing::warn!(kind = "bucket", error = %e, "the snapshot list failed");
         ApiError::unavailable(2)
     })?;
-    let mut objects: Vec<(SnapshotObject, u64)> = listed
-        .iter()
-        .filter_map(|o| {
-            let name = names::name_in(&prefix, &o.key)?;
-            Some((
-                SnapshotObject {
-                    name,
-                    last_modified: o.last_modified,
-                },
-                o.size,
-            ))
-        })
-        .collect();
-    objects.sort_by_key(|o| std::cmp::Reverse(o.0.name));
-    let restore_from = record
-        .value
-        .restore_from
-        .as_deref()
-        .and_then(|t| t.parse::<SnapshotName>().ok());
-    let newest = record
-        .value
-        .newest
-        .and_then(|n| SnapshotName::new(n.generation, n.sequence).ok());
-    let plain: Vec<SnapshotObject> = objects.iter().map(|(o, _)| *o).collect();
-    let labels = thin(
-        &plain,
-        restore_from,
-        newest,
-        s.info.retention_days,
-        Timestamp::from_millis(s.fleet.now()),
-    );
-    let items: Vec<Value> = objects
-        .iter()
-        .zip(labels)
-        .map(|((o, size), kept)| {
-            json!({
-                "name": o.name.to_string(),
-                "generation": o.name.generation(),
-                "sequence": o.name.sequence(),
-                "sizeBytes": size,
-                "lastModified": o.last_modified.to_rfc3339(),
-                "keptBecause": kept,
-            })
-        })
-        .collect();
-    ok(&json!({ "items": items }))
+    ok(&list)
 }
