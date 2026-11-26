@@ -123,7 +123,7 @@ pub(crate) fn row(s: &Store, m: &Memory, now: Timestamp) -> MemoryRow {
 }
 
 /// The filters and order of `GET /v1/ui/memories`.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct RowQuery {
     pub(crate) namespace: Option<String>,
     pub(crate) phases: Vec<Phase>,
@@ -135,6 +135,24 @@ pub(crate) struct RowQuery {
     pub(crate) desc: Option<bool>,
     pub(crate) offset: usize,
     pub(crate) limit: usize,
+}
+
+/// Counts only: tags, entities, client names and the namespace are the user's words.
+impl std::fmt::Debug for RowQuery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RowQuery")
+            .field("namespace", &self.namespace.is_some())
+            .field("phases", &self.phases)
+            .field("tags", &self.tags.len())
+            .field("entities", &self.entities.len())
+            .field("clients", &self.clients.len())
+            .field("ids", &self.ids.len())
+            .field("sort", &self.sort)
+            .field("desc", &self.desc)
+            .field("offset", &self.offset)
+            .field("limit", &self.limit)
+            .finish()
+    }
 }
 
 /// Explore's orders.
