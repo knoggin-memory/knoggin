@@ -64,6 +64,8 @@ pub enum Fault {
     Stall,
     /// Closes its port and every open connection; `list` and `delete` are `Unavailable`.
     Gone,
+    /// Answers every HTTP request with this status and no body; `list` and `delete` work.
+    Answer(u16),
 }
 
 /// A property of a real bucket that the stand-in can be told to lack, so that the bucket
@@ -237,7 +239,7 @@ impl MemoryStorage {
             .await
             .map_err(|_| StorageError::Unavailable)?;
         match fault {
-            Fault::None => Ok(()),
+            Fault::None | Fault::Answer(_) => Ok(()),
             _ => Err(StorageError::Unavailable),
         }
     }
@@ -510,6 +512,9 @@ async fn answer(shared: &Shared, req: Request<Incoming>) -> Response<Full<Bytes>
     let mut rx = shared.fault.subscribe();
     match rx.wait_for(|f| *f != Fault::Stall).await.map(|f| *f) {
         Ok(Fault::None) => {}
+        Ok(Fault::Answer(code)) => {
+            return status(StatusCode::from_u16(code).unwrap_or(StatusCode::BAD_GATEWAY));
+        }
         _ => return status(StatusCode::SERVICE_UNAVAILABLE),
     }
     let path = req.uri().path().to_owned();

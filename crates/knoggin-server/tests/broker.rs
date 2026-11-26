@@ -392,12 +392,12 @@ async fn send_link(
     method: Method,
     url: &str,
     headers: &std::collections::BTreeMap<String, String>,
-    body: &'static [u8],
+    body: &[u8],
 ) -> (StatusCode, Bytes) {
     let mut req = http::Request::builder()
         .method(method)
         .uri(url)
-        .body(Body::from(body))
+        .body(Body::from(body.to_vec()))
         .unwrap();
     for (n, v) in headers {
         req.headers_mut().insert(
@@ -644,11 +644,17 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
     let up: UploadLink = serde_json::from_slice(&body).unwrap();
     let mut longer = up.headers.clone();
     longer.insert("content-length".into(), "6".into());
-    let (status, _) = send_link(&rig, id_a, a.user, Method::PUT, &up.url, &longer, b"sixsix").await;
+    let (status, body) =
+        send_link(&rig, id_a, a.user, Method::PUT, &up.url, &longer, b"sixsix").await;
     assert_eq!(
-        status,
-        StatusCode::FORBIDDEN,
+        rig.storage.seen().last().unwrap().status,
+        403,
         "the bucket refuses another length"
+    );
+    // A bucket's refusal reaches the container as the broker's own `unavailable`.
+    assert_eq!(
+        (status, code(&body).0.as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
     );
     let mut chunked = http::Request::put(&up.url)
         .header("if-none-match", "*")
@@ -714,6 +720,58 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn the_blob_route_answers_a_bucket_refusal_as_unavailable() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let g = rig.generation();
+    let id = holder(&rig, a.user, g).await;
+    put(&rig, a.store, g, 1, b"x");
+    let (_, body) = open(&rig, id, a, "").await;
+    let get = serde_json::from_slice::<OpenAnswer>(&body)
+        .unwrap()
+        .snapshot
+        .unwrap();
+    let (_, body) = upload_link(&rig, id, a, 2, 1).await;
+    let up: UploadLink = serde_json::from_slice(&body).unwrap();
+    for bucket in [404, 410, 409, 500] {
+        rig.storage
+            .set_fault(knoggin_server::storage::Fault::Answer(bucket))
+            .await
+            .unwrap();
+        for (method, url, headers, bytes) in [
+            (Method::GET, &get.url, &get.headers, &b""[..]),
+            (Method::PUT, &up.url, &up.headers, &b"y"[..]),
+        ] {
+            let (status, body) = send_link(&rig, id, a.user, method, url, headers, bytes).await;
+            assert_eq!(
+                (status, code(&body).0.as_str()),
+                (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+                "{bucket}"
+            );
+            assert_eq!(rig.storage.seen().last().unwrap().status, bucket);
+        }
+    }
+    // A 412 (the name exists) is passed on: the container takes the next sequence.
+    rig.storage
+        .set_fault(knoggin_server::storage::Fault::None)
+        .await
+        .unwrap();
+    let (_, body) = upload_link(&rig, id, a, 1, 1).await;
+    let taken: UploadLink = serde_json::from_slice(&body).unwrap();
+    let (status, _) = send_link(
+        &rig,
+        id,
+        a.user,
+        Method::PUT,
+        &taken.url,
+        &taken.headers,
+        b"z",
+    )
+    .await;
+    assert_eq!(status, StatusCode::PRECONDITION_FAILED);
 }
 
 #[tokio::test]

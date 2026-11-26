@@ -607,6 +607,64 @@ async fn an_idle_container_parks_but_not_while_the_bucket_is_down() {
     assert_eq!(idle.end(SECONDS).await.reason, EndReason::Parked);
 }
 
+/// Only the broker's own answers mean deleted or lease lost. A bucket's 404, 410 or 409
+/// through the blob route is an outage: the store stays in memory, the lease stays, and
+/// the store is saved once the bucket answers again.
+#[tokio::test]
+async fn a_bucket_status_through_the_blob_route_is_only_an_outage() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let mut c = rig.container(quick()).await;
+    let g = rig.generation();
+    rig.lease(a.user, &c, g).await;
+    c.claim(a.user, g, settings(600, GIB)).await;
+    assert_eq!(c.save(a, "acknowledged").await, StatusCode::CREATED);
+    for code in [404, 410, 409] {
+        rig.storage.set_fault(Fault::Answer(code)).await.unwrap();
+        let failures = c.status().await.snapshot_failures;
+        // The request stands: the park is tried again every 300 ms.
+        c.park(ParkReason::Restore).await;
+        let failed = || async { c.ended() || c.status().await.snapshot_failures > failures };
+        assert!(eventually(SECONDS, failed).await, "{code}");
+        assert!(!c.ended(), "{code}: the container ended");
+        let status = c.status().await;
+        assert!(
+            status
+                .stores
+                .iter()
+                .any(|s| s.store_id == a.store && s.unsaved),
+            "{code}: the store was dropped"
+        );
+    }
+    assert!(rig.parked.lock().unwrap().is_empty());
+    assert!(snapshots(&rig, a.store).is_empty());
+    rig.storage.set_fault(Fault::None).await.unwrap();
+    let end = c.end(SECONDS).await;
+    assert_eq!((end.reason, end.exit_code), (EndReason::Parked, 0));
+    assert_eq!(snapshots(&rig, a.store).len(), 1);
+
+    // A download answered 404 by the bucket is `unavailable`, not a deleted store.
+    rig.clock.advance(5_000);
+    let c2 = rig.container(quick()).await;
+    let g2 = rig.generation();
+    rig.lease(a.user, &c2, g2).await;
+    c2.claim(a.user, g2, settings(600, GIB)).await;
+    rig.storage.set_fault(Fault::Answer(404)).await.unwrap();
+    let (status, _, body) = c2
+        .forward(a.user, a.store, Method::GET, "/v1/memories", Body::empty())
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+    rig.storage.set_fault(Fault::None).await.unwrap();
+    let loaded = || async {
+        let (status, _, body) = c2
+            .forward(a.user, a.store, Method::GET, "/v1/memories", Body::empty())
+            .await;
+        status == StatusCode::OK && memories_of(&body) == ["acknowledged"]
+    };
+    assert!(eventually(SECONDS, loaded).await);
+    assert_eq!(rig.lease_of(a.user).await.container_id, Some(c2.id));
+}
+
 #[tokio::test]
 async fn a_stop_signal_parks_a_claimed_container_and_ends_a_pool_one_at_once() {
     let rig = Rig::start(Options::default()).await;

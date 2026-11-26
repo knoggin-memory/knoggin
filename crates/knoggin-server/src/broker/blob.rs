@@ -202,7 +202,21 @@ pub(super) async fn blob(
         );
         BrokerError::unavailable()
     })?;
-    let status = StatusCode::from_u16(answer.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    // Only the broker's own answers may mean deleted or lease lost: a bucket's refusal
+    // other than 412 (the name exists) is an outage to the container.
+    let status = match answer.status().as_u16() {
+        code @ (200..=299 | 412) => {
+            StatusCode::from_u16(code).map_err(|_| BrokerError::unavailable())?
+        }
+        code => {
+            tracing::warn!(
+                kind = "bucket",
+                status = code,
+                "the bucket refused a blob transfer"
+            );
+            return Err(BrokerError::unavailable());
+        }
+    };
     let content_length = answer.content_length();
     let counted = broker.clone();
     let stream = answer.bytes_stream().map(move |chunk| {

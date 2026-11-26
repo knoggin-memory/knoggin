@@ -18,7 +18,7 @@ use http_body_util::{BodyExt, Limited};
 use knoggin_core::snapshot::SnapshotName;
 use knoggin_core::{StoreId, UserId};
 use knoggin_crypto::{DataKey, WrappedKey};
-use knoggin_http::error::LockReason;
+use knoggin_http::error::{Code, LockReason};
 use knoggin_http::host::{BackendError, OpenedStore, SealedSnapshot, SnapshotSource, StoreBackend};
 use tokio::sync::watch;
 use tokio_util::io::{StreamReader, SyncIoBridge};
@@ -26,8 +26,8 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::broker::api::{
-    CommitRequest, ErrorEnvelope, NameParts, OpenAnswer, OpenRequest, SnapshotsRequest,
-    UPLOAD_BUDGET, UploadLink, paths,
+    BrokerCode, CommitRequest, ErrorBody, ErrorEnvelope, NameParts, OpenAnswer, OpenRequest,
+    SnapshotsRequest, UPLOAD_BUDGET, UploadLink, paths,
 };
 use crate::link::{LaunchSecret, MAX_ANSWER_BYTES, RouterClient, write_container_call};
 
@@ -59,22 +59,40 @@ impl std::fmt::Debug for Link {
     }
 }
 
-/// How the broker answered a call it refused.
-fn refusal(link: &Link, status: StatusCode, reason: Option<&str>) -> BackendError {
-    match status.as_u16() {
-        409 => {
+/// What a refused broker call means, by the broker's own error code in the body; never by
+/// the bare status, which a bucket's answer could carry. Only `lease_lost`,
+/// `store_deleting` and `not_found` end the lease or drop a store; anything unknown is an
+/// outage.
+fn refusal(link: &Link, error: Option<ErrorBody>) -> BackendError {
+    let Some(error) = error else {
+        return BackendError::Unavailable;
+    };
+    let reason = error.reason.as_deref();
+    match error.code.as_str() {
+        c if c == BrokerCode::LeaseLost.as_str() => {
             link.lost.send_replace(true);
             BackendError::LeaseLost
         }
-        404 | 410 => BackendError::Deleted,
-        423 => BackendError::Locked(
+        c if c == Code::StoreDeleting.as_str() || c == Code::NotFound.as_str() => {
+            BackendError::Deleted
+        }
+        c if c == Code::StoreLocked.as_str() => BackendError::Locked(
             reason
                 .and_then(|r| serde_json::from_value(serde_json::Value::from(r)).ok())
                 .unwrap_or(LockReason::SnapshotUnreadable),
         ),
-        429 if reason == Some(UPLOAD_BUDGET) => BackendError::OverBudget,
+        c if c == Code::RateLimited.as_str() && reason == Some(UPLOAD_BUDGET) => {
+            BackendError::OverBudget
+        }
         _ => BackendError::Unavailable,
     }
+}
+
+/// The error of a broker answer's body, if it has the broker's shape.
+fn error_of(body: &[u8]) -> Option<ErrorBody> {
+    serde_json::from_slice::<ErrorEnvelope>(body)
+        .ok()
+        .map(|e| e.error)
 }
 
 impl Link {
@@ -133,15 +151,16 @@ impl Link {
             if status.is_success() {
                 return Ok(bytes);
             }
-            let reason = serde_json::from_slice::<ErrorEnvelope>(&bytes)
-                .ok()
-                .and_then(|e| e.error.reason);
-            if status == StatusCode::TOO_MANY_REQUESTS && reason.is_none() {
+            let error = error_of(&bytes);
+            if error
+                .as_ref()
+                .is_some_and(|e| e.code == Code::RateLimited.as_str() && e.reason.is_none())
+            {
                 tokio::time::sleep(pause).await;
                 pause *= 2;
                 continue;
             }
-            return Err(refusal(self, status, reason.as_deref()));
+            return Err(refusal(self, error));
         }
         Err(BackendError::Unavailable)
     }
@@ -176,8 +195,9 @@ impl Link {
             .is_some_and(|rest| rest.starts_with(paths::BLOB_PREFIX))
     }
 
-    /// Sends a signed request exactly as given, with `body`. Returns the status and the
-    /// answer's bytes as a stream.
+    /// Sends a signed request exactly as given, with `body`. Returns the status (a success
+    /// or 412) and the answer's bytes as a stream. Any other answer is an error: by the
+    /// broker's code from the blob route, `Unavailable` from a bucket.
     async fn send_signed(
         &self,
         user: UserId,
@@ -209,6 +229,20 @@ impl Link {
                 .map_err(|_| unavailable())?
                 .map_err(|_| unavailable())?;
             let status = answer.status();
+            if !status.is_success() && status != StatusCode::PRECONDITION_FAILED {
+                let read = Limited::new(answer.into_body(), MAX_ANSWER_BYTES).collect();
+                let body = tokio::time::timeout(CALL_TIMEOUT, read).await;
+                let error = match body {
+                    Ok(Ok(b)) => error_of(&b.to_bytes()),
+                    _ => None,
+                };
+                tracing::warn!(
+                    kind = "transfer",
+                    status = status.as_u16(),
+                    "the blob route refused a transfer"
+                );
+                return Err(refusal(self, error));
+            }
             let stream = answer
                 .into_body()
                 .into_data_stream()
@@ -227,6 +261,14 @@ impl Link {
             .map_err(|_| unavailable())?
             .map_err(|_| unavailable())?;
         let status = StatusCode::from_u16(answer.status().as_u16()).map_err(|_| unavailable())?;
+        if !status.is_success() && status != StatusCode::PRECONDITION_FAILED {
+            tracing::warn!(
+                kind = "transfer",
+                status = status.as_u16(),
+                "the bucket refused a transfer"
+            );
+            return Err(BackendError::Unavailable);
+        }
         Ok((
             status,
             Box::pin(answer.bytes_stream().map_err(io::Error::other)),
@@ -353,12 +395,7 @@ impl StoreBackend for RouterBackend {
                     .await?;
                 if !status.is_success() {
                     tracing::warn!(store_id = %store, status = status.as_u16(), "a snapshot download was refused");
-                    return Err(match status.as_u16() {
-                        409 | 404 | 410 if self.link.via_router(&link.url) => {
-                            refusal(&self.link, status, None)
-                        }
-                        _ => BackendError::Unavailable,
-                    });
+                    return Err(BackendError::Unavailable);
                 }
                 // The host reads it on a blocking thread; the bridge gets this runtime.
                 let reader = SyncIoBridge::new_with_handle(
@@ -444,16 +481,8 @@ impl StoreBackend for RouterBackend {
         let (status, answer) = sent?;
         // Read the rest of the answer so the connection can be used again.
         let _ = tokio::time::timeout(TRANSFER_IDLE, answer.take(64).count()).await;
-        match status.as_u16() {
-            200..=299 => {}
-            412 => return Err(BackendError::NameTaken),
-            409 | 404 | 410 if self.link.via_router(&link.url) => {
-                return Err(refusal(&self.link, status, None));
-            }
-            code => {
-                tracing::warn!(store_id = %store, status = code, "a snapshot upload was refused");
-                return Err(BackendError::Unavailable);
-            }
+        if status == StatusCode::PRECONDITION_FAILED {
+            return Err(BackendError::NameTaken);
         }
         let commit = CommitRequest {
             memory_count,
