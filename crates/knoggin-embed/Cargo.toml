@@ -1,0 +1,26 @@
+[package]
+name = "knoggin-embed"
+description = "The real Knoggin embedding model: ONNX Runtime provider, model files, download and checks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+aws-lc-rs = { workspace = true }
+knoggin-core = { path = "../knoggin-core" }
+ort = { workspace = true }
+reqwest = { workspace = true }
+rustix = { workspace = true }
+thiserror = { workspace = true }
+tokenizers = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+wiremock = { workspace = true }
