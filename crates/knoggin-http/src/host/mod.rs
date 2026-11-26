@@ -716,6 +716,9 @@ impl StoreHost {
         *lock(&open.task) = Some(handle);
         metrics::gauge!("knoggin_open_stores").increment(1.0);
         if summary.pending_embeddings > 0 {
+            // Not in `open_list` until its load is announced, so add it by hand.
+            metrics::gauge!("knoggin_embed_queue_depth")
+                .increment(summary.pending_embeddings as f64);
             self.work.notify_one();
         }
         open
@@ -748,6 +751,16 @@ impl StoreHost {
             .iter()
             .map(|o| o.estimated.load(Ordering::Relaxed))
             .fold(0, u64::saturating_add)
+    }
+
+    /// Sets `knoggin_embed_queue_depth`: the memories waiting in every open store's queue.
+    fn report_queue_depth(&self) {
+        let depth = self
+            .open_list()
+            .iter()
+            .map(|o| o.pending.load(Ordering::Relaxed))
+            .fold(0, u64::saturating_add);
+        metrics::gauge!("knoggin_embed_queue_depth").set(depth as f64);
     }
 
     /// The open stores, by ID.
@@ -845,6 +858,7 @@ impl StoreHost {
         })
         .await;
         let result = self.finish(open, out, true)?;
+        self.report_queue_depth();
         if result.is_ok() && kind != WriteKind::Bookkeeping {
             open.full.store(false, Ordering::Relaxed);
         }
@@ -910,6 +924,7 @@ impl StoreHost {
         }
         metrics::gauge!("knoggin_open_stores").decrement(1.0);
         self.recheck_budget();
+        self.report_queue_depth();
     }
 
     fn on_lease_lost(&self) {

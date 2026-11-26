@@ -308,11 +308,5 @@ pub(super) async fn embed_worker(host: Weak<StoreHost>) {
         if let Err(e) = result {
             tracing::warn!(store_id = %open.id, code = e.code.as_str(), "an embedding could not be applied");
         }
-        let depth: u64 = h
-            .open_list()
-            .iter()
-            .map(|o| o.pending.load(Ordering::Relaxed))
-            .sum();
-        metrics::gauge!("knoggin_embed_queue_depth").set(depth as f64);
     }
 }
