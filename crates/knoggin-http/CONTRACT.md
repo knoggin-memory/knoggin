@@ -139,8 +139,9 @@ the MCP client names an open store has seen (at most 32, with when), for `/v1/ui
   `RequestContext`. `Credential` has `Oauth` (an access token) and `Cookie` (a browser
   session from web sign-in) beside the local ones.
 - Sign-in (milestone 5): set `EdgeConfig::auth_mode = Oauth`, `public_url`, `test_mode` and
-  `oauth: Some(OauthConfig { .. })`, then call `edge.discover().await` at start (and again
-  while it answers `DiscoveryError::Unreachable`; the other errors stop a start).
+  `oauth: Some(OauthConfig { .. })`, then call `edge.discover().await` (and again while it
+  answers `DiscoveryError::Unreachable`). The daemon does this in a background task and
+  serves at once; the router's other errors stop its start.
   `edge::oauth` checks tokens and caches the signing keys; `edge::signin` serves
   `/auth/login`, `/auth/callback`, `POST /auth/logout` (also the local web session's
   logout) and the protected-resource metadata. The router's start-up guards are

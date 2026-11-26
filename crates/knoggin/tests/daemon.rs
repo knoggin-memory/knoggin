@@ -562,21 +562,34 @@ fn oauth_home(issuer: &str) -> (Home, u16) {
     (home, port)
 }
 
+/// Polls `f` for up to 10 seconds.
+fn eventually(what: &str, mut f: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !f() {
+        assert!(std::time::Instant::now() < deadline, "{what}");
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// Discovery runs in the background: the daemon serves the socket at once whatever the
+/// identity provider does, and the sign-in routes answer `unavailable` until it works.
 #[test]
 fn sign_in_discovery_at_start() {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let issuer = rt
         .block_on(knoggin_http::testing::issuer::TestIssuer::start(true))
         .unwrap();
-    // A discovery document that names another issuer stops the start, with both values.
+    // A discovery document that names another issuer: logged with both values, and
+    // sign-in stays off.
     let (home, _) = oauth_home(&format!("{}/", issuer.url()));
-    let o = home.run(&["daemon"]);
-    assert_ne!(o.code, 0);
-    assert!(
-        o.stderr.contains("is not auth.issuer") && o.stderr.contains(issuer.url()),
-        "{}",
-        o.stderr
-    );
+    let mut d = home.daemon();
+    assert_eq!(home.sock("GET", "/v1/stores", &[], None).status, 200);
+    eventually("the mismatch is logged", || {
+        let e = d.stderr();
+        e.contains("is not auth.issuer") && e.contains(&format!("{:?}", issuer.url()))
+    });
+    assert_eq!(home.tcp("GET", "/auth/login", &[], None).status, 503);
+    assert_eq!(d.stop(), 0);
     // An unreachable provider: the daemon serves the socket and answers `unavailable` on
     // the sign-in routes.
     let gone = format!("http://127.0.0.1:{}", {
@@ -591,9 +604,27 @@ fn sign_in_discovery_at_start() {
     assert_eq!(home.sock("GET", "/v1/stores", &[], None).status, 200);
     assert_eq!(home.tcp("GET", "/auth/login", &[], None).status, 503);
     assert_eq!(d.stop(), 0);
+    // A provider that takes the connection and never answers (each discovery fetch waits
+    // 5 seconds for it) does not delay the start.
+    let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let (home, _) = oauth_home(&format!("http://{}", silent.local_addr().unwrap()));
+    let started = std::time::Instant::now();
+    let mut d = home.daemon();
+    assert_eq!(home.sock("GET", "/v1/stores", &[], None).status, 200);
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(5),
+        "start took {took:?}"
+    );
+    assert_eq!(home.tcp("GET", "/auth/login", &[], None).status, 503);
+    assert_eq!(d.stop(), 0);
+    drop(silent);
     // A provider that answers: the sign-in route sends the browser to it.
     let (home, _) = oauth_home(issuer.url());
     let mut d = home.daemon();
+    eventually("discovery works", || {
+        home.tcp("GET", "/auth/login", &[], None).status == 303
+    });
     let r = home.tcp("GET", "/auth/login", &[], None);
     assert_eq!(r.status, 303, "{}", r.text());
     assert!(r.headers.contains(&format!("{}/authorize?", issuer.url())));

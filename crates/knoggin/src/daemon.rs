@@ -476,38 +476,36 @@ async fn go_live(w: &Wiring, u: Unlocked) -> anyhow::Result<(Router, Live)> {
     let router = edge::edge_layer(edge.clone(), store_layer(host.clone()), mode);
 
     let mut tasks = Vec::new();
-    // Sign-in: discovery now. A provider that cannot be reached is tried again once a
-    // minute while the socket and API keys serve; a document that names another issuer
-    // or a plain-http address stops the start.
-    match edge.discover().await {
-        Ok(()) => {}
-        Err(e @ (DiscoveryError::IssuerMismatch { .. } | DiscoveryError::Insecure(_))) => {
-            return Err(anyhow!("sign-in: {e}"));
-        }
-        Err(DiscoveryError::Unreachable) => {
-            tracing::warn!(
-                kind = "discovery_failed",
-                "the identity provider cannot be reached; sign-in answers unavailable until it can"
-            );
-            let edge = edge.clone();
-            tasks.push(tokio::spawn(async move {
-                loop {
-                    tokio::time::sleep(MINUTE).await;
-                    match edge.discover().await {
-                        Ok(()) => {
-                            tracing::info!(kind = "discovered", "the identity provider answers");
-                            return;
-                        }
-                        Err(DiscoveryError::Unreachable) => {}
-                        Err(e) => {
-                            // Sign-in stays off.
-                            tracing::error!(kind = "discovery_refused", error = %e, "sign-in stays off");
-                            return;
-                        }
+    // Sign-in: discovery in the background, so that the socket and API keys serve at once.
+    // Until it works the sign-in routes and access tokens answer `unavailable`. A provider
+    // that cannot be reached is tried again once a minute; a document that names another
+    // issuer or a plain-http address is logged with both values, and sign-in stays off.
+    if !edge.discovered() {
+        let edge = edge.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut warned = false;
+            loop {
+                match edge.discover().await {
+                    Ok(()) => {
+                        tracing::info!(kind = "discovered", "the identity provider answers");
+                        return;
+                    }
+                    Err(DiscoveryError::Unreachable) if !warned => {
+                        warned = true;
+                        tracing::warn!(
+                            kind = "discovery_failed",
+                            "the identity provider cannot be reached; sign-in answers unavailable until it can"
+                        );
+                    }
+                    Err(DiscoveryError::Unreachable) => {}
+                    Err(e) => {
+                        tracing::error!(kind = "discovery_refused", error = %e, "sign-in stays off");
+                        return;
                     }
                 }
-            }));
-        }
+                tokio::time::sleep(MINUTE).await;
+            }
+        }));
     }
     tasks.extend(model.task);
     let (h, b, d) = (host.clone(), backend.clone(), db.clone());
