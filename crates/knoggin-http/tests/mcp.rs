@@ -1541,3 +1541,62 @@ async fn store_errors_are_tool_errors() {
     let (code, _) = c.fails("list_namespaces", json!({})).await;
     assert_eq!(code, Code::StoreDeleting);
 }
+
+// ─── The body limit and the request timeout ───────────────────────────────────
+
+/// A POST of `body` to `path` with a read-write context.
+fn post(env: &Env, path: &str, body: Body) -> Request<Body> {
+    let mut req = Request::builder()
+        .method(Method::POST)
+        .uri(path)
+        .header("content-type", "application/json")
+        .body(body)
+        .unwrap();
+    req.extensions_mut().insert(env.t.ctx(RW));
+    req
+}
+
+#[tokio::test]
+async fn oversized_body_is_rejected() {
+    // Ported from recalld's `oversized_body_is_rejected`, on both endpoints, for a body
+    // with a length and for a streamed one.
+    let mut config = knoggin_http::testing::fake_config();
+    config.limits.body_bytes = 512;
+    let env = Env::with_config(config, false).await;
+    for path in ["/mcp", "/mcp/plugin"] {
+        let r = env
+            .send(post(&env, path, Body::from(vec![b'x'; 4096])))
+            .await;
+        assert_eq!(r.status, StatusCode::PAYLOAD_TOO_LARGE, "{path}");
+        assert_eq!(r.error(), Code::PayloadTooLarge, "{path}");
+        let chunks = futures_util::stream::iter(
+            (0..8).map(|_| Ok::<_, std::io::Error>(bytes::Bytes::from(vec![b'x'; 128]))),
+        );
+        let r = env.send(post(&env, path, Body::from_stream(chunks))).await;
+        assert_eq!(r.error(), Code::PayloadTooLarge, "{path} streamed");
+        // A body within the limit is read.
+        let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }).to_string();
+        let r = env.send(post(&env, path, Body::from(ping))).await;
+        assert_eq!(r.status, StatusCode::OK, "{path}: {}", r.json);
+    }
+}
+
+#[tokio::test]
+async fn a_request_past_the_timeout_is_a_timeout_error() {
+    // Real time: the host's embedding threads are OS threads, so paused time is avoided.
+    let mut config = knoggin_http::testing::fake_config();
+    config.limits.request_timeout_ms = 100;
+    let env = Env::with_config(config, false).await;
+    for path in ["/mcp", "/mcp/plugin"] {
+        // A body that never ends: the request cannot finish in time.
+        let never = futures_util::stream::pending::<Result<bytes::Bytes, std::io::Error>>();
+        let started = std::time::Instant::now();
+        let r = env.send(post(&env, path, Body::from_stream(never))).await;
+        assert_eq!(r.status, StatusCode::GATEWAY_TIMEOUT, "{path}");
+        assert_eq!(r.error(), Code::Timeout, "{path}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{path}"
+        );
+    }
+}
