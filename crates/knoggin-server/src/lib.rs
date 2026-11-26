@@ -12,6 +12,7 @@ pub mod container;
 mod hex;
 pub mod launcher;
 pub mod lease;
+pub mod lifecycle;
 pub mod link;
 pub mod pool;
 pub mod reconcile;
