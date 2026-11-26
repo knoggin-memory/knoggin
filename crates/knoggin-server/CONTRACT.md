@@ -75,6 +75,52 @@ Outside the crate: `knoggin_http::ctx::headers::{CONTAINER_ID, INTERNAL_STATUS}`
   `describe` and `list` report `endReason` (`exited`, `memory`, `stopped`) and `exitCode`. A fleet
   test wraps the container role in such a runner (its local address for the client to the router
   is the listener's IP).
+## Container and broker (built)
+
+**Run a container in process** (fleet tests' fake launcher, and `main` for `knoggin serve`):
+
+```rust
+let end: ServeEnd = container::serve_on(listener, ServeConfig {
+    env,                       // ContainerEnv: id, launch secret, router URL, router pin, log level
+    build: BuildInfo::new("0.1.0"),
+    test_mode: true,
+    local_address: None,       // Some(127.0.0.x) in the fleet tests on Linux
+    model: ServeModel::fake(), // or ServeModel::new(identity, state_rx, providers) in main
+    timings: ServeTimings::default(),
+}, stop_signal).await;         // `serve(addr, ..)` binds first; main uses `container::runtime()`
+// end.exit_code: 0 after a park or an unclaimed stop, 1 after lease_lost or a failed start;
+// end.reason: EndReason::{Parked, Stopped, LeaseLost, Failed}.
+```
+
+The role answers `hello` (needs `Knoggin-Protocol`; a nonce is answered once), `claim`
+(409 `conflict` on a second one), `park` (202) and `status` behind the router token, and any
+other path as a forwarded store request (`RequestContext::write_internal_headers` plus
+`write_router_call`). While parking it answers 503 with `Knoggin-Internal-Status: parking`.
+
+**Mount the broker** on the router's internal listener:
+
+```rust
+let peers = PeerLimits::new(clock.clone());          // keep it: the listener's admit uses it too
+let router = broker::broker_router(BrokerConfig {
+    secret, leases, stores, keys, storage, clock,
+    link_ttl: Duration::from_secs(s.storage.link_ttl_seconds),
+    memory_limit_bytes: s.containers.memory_limit_bytes(),
+    upload_bytes_per_hour: s.upload_bytes_per_hour(),
+    one_host: one_host.then(|| "https://router:8443".into()), // the fleet tests: their router URL
+    peers: peers.clone(),
+    on_parked,                // Arc<dyn Fn(ContainerCaller) -> BoxFuture<Result<(), BrokerError>>>
+})?;
+serve_tls(listener, tls, router, move |peer| {
+    // one host: also refuse peers outside containers.user_net_cidr
+    peers.admit(peer)
+}, shutdown).await;
+```
+
+- `on_parked` is the router's "Mark gone" steps 2 to 4 for that container plus a stop; the
+  broker has already checked the caller's token, lease (`claiming` or `warm`, names it) and IP.
+- `PeerLimits::clear(ip)` when a new container is recorded at an address.
+- The broker's bodies are `broker::api` (`OpenAnswer`, `UploadLink`, `CommitRequest`, ...);
+  errors are `{"error":{"code","message","reason"?}}` with `BrokerCode` (`lease_lost` = 409).
 
 ## Where the rest goes
 
