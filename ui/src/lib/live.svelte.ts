@@ -30,7 +30,7 @@ export function normalize(e: WireEvent): UiEvent {
     case 'link':
       return { ...e, edgeType: EDGE_CODE[e.edgeType] ?? 0 };
     case 'phase_change':
-      return { ...e, from: PHASE_CODE[e.from] ?? 1, to: e.to === 'deleted' ? 4 : (PHASE_CODE[e.to] ?? 1) };
+      return { ...e, from: PHASE_CODE[e.from] ?? 1, to: (e.to as string) === 'deleted' ? 4 : (PHASE_CODE[e.to] ?? 1) };
     default:
       return e;
   }

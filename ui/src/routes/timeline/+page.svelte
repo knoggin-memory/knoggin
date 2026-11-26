@@ -71,7 +71,7 @@
   function line(r: ActivityRow): Line {
     const at = ms(r.at);
     if (r.kind === 'sweep') return { at, kind: r.kind, lead: 'Knoggin ran a decay sweep', text: '', meta: `${fmtCount(r.count ?? 0)} moved` };
-    const verb = VERB[r.kind];
+    const verb = VERB[r.kind as keyof typeof VERB];
     const lead = r.client ? `${r.client} ${verb}` : verb.charAt(0).toUpperCase() + verb.slice(1);
     const n = r.count;
     const meta =

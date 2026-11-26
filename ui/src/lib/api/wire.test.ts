@@ -29,6 +29,6 @@ describe('the event stream', () => {
   it('turns names into the map’s numbers once', () => {
     const e = normalize({ kind: 'store', seq: 1, at: 0, client: null, id: 'a', namespace: 'default', phase: 'summary', edges: [{ to: 'b', edgeType: 'supersedes', weight: 1 }] });
     expect(e).toMatchObject({ phase: 2, edges: [{ edgeType: 7 }] });
-    expect(normalize({ kind: 'phase_change', seq: 2, at: 0, id: 'a', from: 'ghost', to: 'deleted' })).toMatchObject({ from: 3, to: 4 });
+    expect(normalize({ kind: 'phase_change', seq: 2, at: 0, id: 'a', from: 'full', to: 'summary' })).toMatchObject({ from: 1, to: 2 });
   });
 });

@@ -122,7 +122,7 @@ export function dayLabel(date: string | null, now = new Date()): string {
 }
 
 /** The name to show for a user: the name, else the email, else "User" and 8 characters of the ID. */
-export function who(u: { id: string; name: string | null; email: string | null }) {
+export function who(u: { id: string; name?: string | null; email?: string | null }) {
   const text = u.name || u.email || `User ${u.id.slice(0, 8)}`;
   const initials = (u.name ? text.split(/\s+/).map((w) => w[0]).join('') : text.charAt(0)).slice(0, 2).toUpperCase();
   return { text, initials };
