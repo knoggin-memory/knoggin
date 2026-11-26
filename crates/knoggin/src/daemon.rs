@@ -303,6 +303,8 @@ struct Live {
     host: Arc<StoreHost>,
     backend: Arc<LocalBackend>,
     tasks: Vec<JoinHandle<()>>,
+    /// Keeps the model state channel open for the daemon's life (see `model::Model`).
+    _model_state: watch::Sender<knoggin_core::ops::ModelState>,
 }
 
 /// What `go_live` needs besides the install.
@@ -428,6 +430,7 @@ async fn go_live(w: &Wiring, u: Unlocked) -> anyhow::Result<(Router, Live)> {
             host,
             backend,
             tasks,
+            _model_state: model.sender,
         },
     ))
 }

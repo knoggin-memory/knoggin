@@ -31,6 +31,9 @@ const RETRY_AFTER_MISMATCH: Duration = Duration::from_secs(3600);
 pub(crate) struct Model {
     pub(crate) identity: ModelIdentity,
     pub(crate) state: watch::Receiver<ModelState>,
+    /// Held for the daemon's life: once every sender is gone, the host's wait on the
+    /// channel returns at once, again and again, and spins a core.
+    pub(crate) sender: watch::Sender<ModelState>,
     pub(crate) providers: Arc<OnceCell<Providers>>,
     pub(crate) task: Option<JoinHandle<()>>,
 }
@@ -50,7 +53,7 @@ fn state(status: ModelStatus, reason: Option<ModelUnavailableReason>) -> ModelSt
 pub(crate) fn fake() -> Model {
     let fake = FakeProvider::new();
     let identity = fake.identity().clone();
-    let (_tx, rx) = watch::channel(ModelState {
+    let (tx, rx) = watch::channel(ModelState {
         state: ModelStatus::Ready,
         identity: identity.id.clone(),
         name: "Fake model".into(),
@@ -66,6 +69,7 @@ pub(crate) fn fake() -> Model {
     Model {
         identity,
         state: rx,
+        sender: tx,
         providers: Arc::new(cell),
         task: None,
     }
@@ -93,10 +97,11 @@ pub(crate) fn library_path(ort_dylib: Option<&Path>) -> anyhow::Result<PathBuf> 
 pub(crate) fn start(root: PathBuf, download: bool, library: PathBuf) -> Model {
     let (tx, rx) = watch::channel(state(ModelStatus::Loading, None));
     let providers = Arc::new(OnceCell::new());
-    let task = tokio::spawn(run(root, download, library, tx, providers.clone()));
+    let task = tokio::spawn(run(root, download, library, tx.clone(), providers.clone()));
     Model {
         identity: files::identity(),
         state: rx,
+        sender: tx,
         providers,
         task: Some(task),
     }

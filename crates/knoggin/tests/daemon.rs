@@ -295,3 +295,35 @@ fn a_home_that_others_can_write_is_refused() {
     assert_ne!(o.code, 0);
     assert!(o.stderr.contains("loopback"), "{}", o.stderr);
 }
+
+/// CPU seconds a process has used, from `ps -o time=` (`[[dd-]hh:]mm:ss[.cc]`).
+fn cpu_seconds(pid: u32) -> f64 {
+    let out = std::process::Command::new("ps")
+        .args(["-o", "time=", "-p", &pid.to_string()])
+        .output()
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    let (days, rest) = text.split_once('-').unwrap_or(("0", &text));
+    let mut secs = days.parse::<f64>().unwrap() * 86_400.0;
+    for (i, part) in rest.rsplit(':').enumerate() {
+        secs += part.parse::<f64>().unwrap() * 60f64.powi(i as i32);
+    }
+    secs
+}
+
+#[test]
+fn an_idle_daemon_uses_no_cpu() {
+    let home = Home::new();
+    let mut d = home.daemon();
+    let pid = d.child.as_ref().unwrap().id();
+    // Let start-up finish, then measure five quiet seconds. A busy loop uses about five.
+    std::thread::sleep(std::time::Duration::from_secs(2));
+    let before = cpu_seconds(pid);
+    std::thread::sleep(std::time::Duration::from_secs(5));
+    let used = cpu_seconds(pid) - before;
+    assert!(
+        used < 1.5,
+        "the idle daemon used {used:.2} s of CPU in 5 s"
+    );
+    assert_eq!(d.stop(), 0);
+}
