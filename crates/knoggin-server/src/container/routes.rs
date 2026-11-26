@@ -26,7 +26,7 @@ use knoggin_http::ctx::{self, RequestContext, headers};
 use knoggin_http::error::{ApiError, Code};
 use knoggin_http::host::{EmbedWaits, Embedder, HostConfig, SnapshotTiming, StoreHost};
 use knoggin_http::mcp::McpConfig;
-use knoggin_http::settings::StoreLimits;
+use knoggin_http::settings::{IMPORT_LINE_BYTES, StoreLimits};
 use knoggin_http::store_api::store_layer;
 use serde::Deserialize;
 use tower::ServiceExt;
@@ -297,15 +297,22 @@ fn parking() -> Response {
 }
 
 /// What a request's body takes of the 64 MiB: its length, nothing for no body, and for a
-/// body of unknown length the largest body the store layer buffers.
-fn reservation(headers: &HeaderMap, empty: bool, body_bytes: u64) -> Option<u64> {
+/// body of unknown length the largest body the store layer buffers. An import streams
+/// ("no limit on the whole body"), so it takes at most the 4 MiB of one line, whatever
+/// its length.
+fn reservation(headers: &HeaderMap, empty: bool, body_bytes: u64, streamed: bool) -> Option<u64> {
     let mut lengths = headers.get_all(header::CONTENT_LENGTH).iter();
-    match (lengths.next(), lengths.next()) {
-        (Some(v), None) => v.to_str().ok()?.parse().ok(),
-        (None, _) if empty => Some(0),
-        (None, _) => Some(body_bytes),
-        _ => None,
-    }
+    let bytes = match (lengths.next(), lengths.next()) {
+        (Some(v), None) => v.to_str().ok()?.parse().ok()?,
+        (None, _) if empty => 0,
+        (None, _) => body_bytes,
+        _ => return None,
+    };
+    Some(if streamed {
+        bytes.min(IMPORT_LINE_BYTES as u64)
+    } else {
+        bytes
+    })
 }
 
 /// A forwarded store request.
@@ -346,8 +353,13 @@ async fn forward(State(s): S, req: Request) -> Response {
             .with_request_id(ctx.request_id)
             .into_response()
     };
-    let Some(bytes) = reservation(req.headers(), req.body().is_end_stream(), claim.body_bytes)
-    else {
+    let streamed = req.method() == Method::POST && req.uri().path() == "/v1/import";
+    let Some(bytes) = reservation(
+        req.headers(),
+        req.body().is_end_stream(),
+        claim.body_bytes,
+        streamed,
+    ) else {
         return ApiError::invalid_argument("Content-Length", "Bad Content-Length").into_response();
     };
     let permit = if bytes == 0 {
@@ -428,11 +440,19 @@ mod tests {
     #[test]
     fn a_body_reserves_its_length_or_the_batch_limit() {
         let mut h = HeaderMap::new();
-        assert_eq!(reservation(&h, true, 10), Some(0));
-        assert_eq!(reservation(&h, false, 10), Some(10));
+        assert_eq!(reservation(&h, true, 10, false), Some(0));
+        assert_eq!(reservation(&h, false, 10, false), Some(10));
         h.insert(header::CONTENT_LENGTH, HeaderValue::from_static("7"));
-        assert_eq!(reservation(&h, false, 10), Some(7));
+        assert_eq!(reservation(&h, false, 10, false), Some(7));
+        let line = IMPORT_LINE_BYTES as u64;
+        h.insert(header::CONTENT_LENGTH, HeaderValue::from(1u64 << 30));
+        assert_eq!(
+            reservation(&h, false, 10, true),
+            Some(line),
+            "an import streams"
+        );
+        assert_eq!(reservation(&h, false, 10, false), Some(1 << 30));
         h.append(header::CONTENT_LENGTH, HeaderValue::from_static("7"));
-        assert_eq!(reservation(&h, false, 10), None);
+        assert_eq!(reservation(&h, false, 10, false), None);
     }
 }

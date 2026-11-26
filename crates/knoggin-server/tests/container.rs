@@ -811,6 +811,7 @@ async fn the_memory_budget_refuses_writes_and_locks_a_store_that_cannot_fit() {
 
 #[tokio::test]
 async fn request_bodies_in_flight_are_capped_at_64_mib() {
+    const MIB: u64 = 1024 * 1024;
     let rig = Rig::start(Options::default()).await;
     let a = rig.account().await;
     let c = rig.container(quick()).await;
@@ -819,32 +820,77 @@ async fn request_bodies_in_flight_are_capped_at_64_mib() {
     c.claim(a.user, g, settings(600, GIB)).await;
     let stalled =
         || Body::from_stream(futures_util::stream::pending::<Result<Bytes, std::io::Error>>());
+    let batch = |len: u64| {
+        let mut req = c.request(
+            a.user,
+            a.store,
+            Method::POST,
+            "/v1/memories/batch",
+            stalled(),
+        );
+        req.headers_mut().insert("content-length", len.into());
+        req
+    };
     // One body alone beyond the cap.
-    let mut big = c.request(a.user, a.store, Method::POST, "/v1/import", stalled());
-    ndjson(&mut big);
-    big.headers_mut()
-        .insert("content-length", (64u64 * 1024 * 1024 + 1).into());
-    let (status, headers, _) = c.send(big).await;
+    let (status, headers, _) = c.send(batch(64 * MIB + 1)).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(headers.get("retry-after").unwrap(), "1");
-    // 40 MiB held by a slow import, then 30 MiB more is refused, and a small one passes.
-    let mut held = c.request(a.user, a.store, Method::POST, "/v1/import", stalled());
-    ndjson(&mut held);
-    held.headers_mut()
-        .insert("content-length", (40u64 * 1024 * 1024).into());
-    let client = c.client.clone();
-    let holder = tokio::spawn(async move { client.request(held).await });
+    // 60 MiB held by six slow batches, then 5 MiB more is refused, and a small one passes.
+    let holders: Vec<_> = (0..6)
+        .map(|_| {
+            let client = c.client.clone();
+            let req = batch(10 * MIB);
+            tokio::spawn(async move { client.request(req).await })
+        })
+        .collect();
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(!holder.is_finished(), "the import holds its body");
-    let mut more = c.request(a.user, a.store, Method::POST, "/v1/import", stalled());
-    ndjson(&mut more);
-    more.headers_mut()
-        .insert("content-length", (30u64 * 1024 * 1024).into());
-    let (status, headers, _) = c.send(more).await;
+    assert!(
+        holders.iter().all(|h| !h.is_finished()),
+        "the batches hold their bodies"
+    );
+    let (status, headers, _) = c.send(batch(5 * MIB)).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(headers.get("retry-after").unwrap(), "1");
     assert_eq!(c.save(a, "small").await, StatusCode::CREATED);
-    holder.abort();
+    for h in holders {
+        h.abort();
+    }
+}
+
+/// An import streams: no limit on the whole body. One of more than 64 MiB goes through.
+#[tokio::test]
+async fn an_import_larger_than_the_cap_is_streamed() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let c = rig.container(quick()).await;
+    let g = rig.generation();
+    rig.lease(a.user, &c, g).await;
+    c.claim(a.user, g, settings(600, GIB)).await;
+    let header = serde_json::json!({
+        "type": "header", "format": "knoggin-export", "version": 1,
+    });
+    let mut body = format!("{header}\n").into_bytes();
+    // 17 lines just under 4 MiB each, every one of them an error line: 68 MB in all.
+    let junk = vec![b'x'; 4_000_000];
+    for _ in 0..17 {
+        body.extend_from_slice(&junk);
+        body.push(b'\n');
+    }
+    let len = body.len() as u64;
+    assert!(len > 64 * 1024 * 1024);
+    let mut req = c.request(
+        a.user,
+        a.store,
+        Method::POST,
+        "/v1/import",
+        Body::from(body),
+    );
+    ndjson(&mut req);
+    req.headers_mut().insert("content-length", len.into());
+    let (status, _, answer) = c.send(req).await;
+    assert_eq!(status, StatusCode::OK, "{answer:?}");
+    let v: serde_json::Value = serde_json::from_slice(&answer).unwrap();
+    assert_eq!(v["errors"].as_array().unwrap().len(), 17, "{v}");
 }
 
 #[tokio::test]
