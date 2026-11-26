@@ -97,7 +97,7 @@ pub(super) async fn store_task(host: Weak<StoreHost>, open: Arc<OpenStore>) {
         if let Some(idle) = idle {
             let last = *lock(&open.last_request);
             let quiet = Instant::now() >= last + idle && Instant::now() >= idle_not_before;
-            let busy = open.requests.available_permits() < open.concurrency;
+            let busy = open.requests.available_permits() < open.concurrency as usize;
             let queue_done = open.pending.load(Ordering::Relaxed) == 0
                 || allowance.is_some_and(|a| Instant::now() >= last + a);
             if quiet && !busy && queue_done {

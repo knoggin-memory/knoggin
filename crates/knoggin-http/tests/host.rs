@@ -355,6 +355,39 @@ async fn a_store_saved_under_another_model_queues_every_memory_again() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn a_write_racing_a_close_is_never_lost() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(Permissions::READ_WRITE);
+    save(&env, &ctx, "before the close").await;
+    let (release, stalled) = tokio::sync::oneshot::channel();
+    *env.counting.stall_save.lock().unwrap() = Some(stalled);
+    let host = env.t.host.clone();
+    let store = env.t.store;
+    let close = tokio::spawn(async move { host.close(store).await });
+    // The final snapshot is being written.
+    env.counting.save_entered.notified().await;
+    let host = env.t.host.clone();
+    let c = ctx.clone();
+    let write =
+        tokio::spawn(async move { host.store_memory(&c, mem("during the close"), None).await });
+    // Paused time moves on only once every task waits: the write has done what it can.
+    sleep(Duration::from_millis(100)).await;
+    release.send(()).unwrap();
+    close.await.unwrap().unwrap();
+    write.await.unwrap().unwrap();
+    // Whatever was acknowledged is in a snapshot.
+    assert!(env.t.host.save_all().await.is_empty());
+    env.t.host.drop_store(env.t.store);
+    let list = env
+        .t
+        .host
+        .list_memories(&ctx, serde_json::from_value(json!({})).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(list.items.len(), 2, "the write during the close was kept");
+}
+
+#[tokio::test(start_paused = true)]
 async fn a_caller_that_gives_up_does_not_cancel_the_load() {
     let env = Env::new(false).await;
     let ctx = env.t.ctx(Permissions::READ_WRITE);

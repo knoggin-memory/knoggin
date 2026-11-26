@@ -208,7 +208,9 @@ pub(crate) struct OpenStore {
     store: Arc<RwLock<Store>>,
     gate: Arc<Semaphore>,
     requests: Arc<Semaphore>,
-    concurrency: usize,
+    concurrency: u32,
+    /// True while the store is being closed: new requests wait for the close to end.
+    closing: watch::Sender<bool>,
     key: DataKey,
     wrapped: WrappedKey,
     generation: u64,
@@ -473,12 +475,21 @@ impl StoreHost {
         ctx: &RequestContext,
     ) -> Result<(Arc<OpenStore>, OwnedSemaphorePermit), ApiError> {
         self.counters.requests.fetch_add(1, Ordering::Relaxed);
-        let open = self.open_store(ctx.store_id).await?;
-        let permit = open
-            .requests
-            .clone()
-            .try_acquire_owned()
-            .map_err(|_| ApiError::unavailable(1))?;
+        let (open, permit) = loop {
+            let open = self.open_store(ctx.store_id).await?;
+            let permit = open.requests.clone().try_acquire_owned();
+            // Read after taking the permit: a close that has not begun yet then waits for
+            // this request (`close_open`). A store that is closing takes no new request:
+            // wait until it is closed, its final snapshot written, or open again.
+            if *open.closing.borrow() {
+                drop(permit);
+                let mut closing = open.closing.subscribe();
+                drop(open);
+                let _ = closing.wait_for(|c| !*c).await;
+                continue;
+            }
+            break (open, permit.map_err(|_| ApiError::unavailable(1))?);
+        };
         *lock(&open.last_request) = Instant::now();
         if let Some(client) = &ctx.client {
             note_client(&mut lock(&open.clients), client, now());
@@ -657,12 +668,14 @@ impl StoreHost {
             summary,
             estimated,
         } = decoded;
+        let concurrency = u32::try_from(self.config.limits.store_concurrency).unwrap_or(u32::MAX);
         let open = Arc::new(OpenStore {
             id,
             store: Arc::new(RwLock::new(store)),
             gate: Arc::new(Semaphore::new(1)),
-            requests: Arc::new(Semaphore::new(self.config.limits.store_concurrency)),
-            concurrency: self.config.limits.store_concurrency,
+            requests: Arc::new(Semaphore::new(concurrency as usize)),
+            concurrency,
+            closing: watch::Sender::new(false),
             key,
             wrapped,
             generation,
@@ -810,6 +823,10 @@ impl StoreHost {
             .acquire_owned()
             .await
             .map_err(|_| ApiError::unavailable(1))?;
+        // A closed store has written its final snapshot: a write now would be lost.
+        if open.dropped.load(Ordering::SeqCst) {
+            return Err(ApiError::unavailable(1));
+        }
         let store = open.store.clone();
         let watcher = open.clone();
         let out = tokio::task::spawn_blocking(move || {
@@ -905,6 +922,21 @@ impl StoreHost {
     }
 
     async fn close_open(&self, open: &Arc<OpenStore>) -> Result<(), BackendError> {
+        // New requests wait (`open_for`), the requests in flight and the write holding the
+        // gate end first, and a write of the host's own tasks that comes after finds the
+        // store dropped: nothing is accepted after the final snapshot.
+        open.closing.send_replace(true);
+        let _reopen = Reopen(&open.closing);
+        let _requests = open
+            .requests
+            .acquire_many(open.concurrency)
+            .await
+            .map_err(|_| BackendError::Unavailable)?;
+        let _gate = open
+            .gate
+            .acquire()
+            .await
+            .map_err(|_| BackendError::Unavailable)?;
         schedule::snapshot(self, open).await?;
         self.drop_open(open);
         Ok(())
@@ -1027,6 +1059,15 @@ impl StoreHost {
 
     pub(crate) fn notify_work(&self) {
         self.work.notify_one();
+    }
+}
+
+/// Ends a close, however it ended: the requests that waited for it look again.
+struct Reopen<'a>(&'a watch::Sender<bool>);
+
+impl Drop for Reopen<'_> {
+    fn drop(&mut self) {
+        self.0.send_replace(false);
     }
 }
 
