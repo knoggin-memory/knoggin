@@ -44,8 +44,17 @@ fn without_a_daemon_commands_exit_3_and_send_nothing_to_the_usual_port() {
     let o = home.run(&["start"]);
     assert_ne!(o.code, 0);
     assert!(o.stderr.contains("daemon.log"), "{}", o.stderr);
+    // The detached daemon's standard error is its log file: the error line it wrote there
+    // is the raw `knoggin: ...` line, once (the panic hook writes the same way).
     let log = std::fs::read_to_string(home.root().join("logs/daemon.log")).unwrap();
     assert!(log.contains("server.bind"), "{log}");
+    assert_eq!(
+        log.lines()
+            .filter(|l| l.starts_with("knoggin: ") && l.contains("server.bind"))
+            .count(),
+        1,
+        "{log}"
+    );
     assert!(
         listener.accept().is_err(),
         "a command connected to the TCP port"
@@ -342,4 +351,14 @@ fn without_test_mode_the_daemon_uses_the_real_model() {
     assert!(!d.stderr().contains("test mode is on"));
     assert_eq!(std::fs::read_dir(&models).unwrap().count(), 0);
     d.stop();
+}
+
+#[test]
+fn a_detached_daemon_logs_each_line_once() {
+    let home = Home::new();
+    let _stop = support::Started(&home);
+    assert_eq!(home.run(&["start"]).code, 0);
+    assert_eq!(home.run(&["stop"]).code, 0);
+    let log = std::fs::read_to_string(home.root().join("logs/daemon.log")).unwrap();
+    assert_eq!(log.matches("the daemon is ready").count(), 1, "{log}");
 }

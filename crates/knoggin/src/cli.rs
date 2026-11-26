@@ -303,17 +303,19 @@ async fn dispatch(cli: Cli, env: &Env) -> anyhow::Result<u8> {
     };
     let config = ctx.config(role)?;
     let log_file = matches!(cli.command, Command::Daemon { .. }).then(|| ctx.home.log_file());
-    logging::init(&config, Sink::Stderr, log_file.as_deref())?;
+    // A detached daemon's standard error is its log file already (`spawn_detached`).
+    let sink = match cli.command {
+        Command::Daemon { new_session: true } => Sink::FileOnly,
+        _ => Sink::Stderr,
+    };
+    logging::init(&config, sink, log_file.as_deref())?;
     match cli.command {
         Command::Daemon { new_session } => {
             if new_session {
                 // `knoggin start` runs the daemon in a session of its own.
                 let _ = rustix::process::setsid();
             }
-            daemon::run(config, env).await.inspect_err(|e| {
-                // Detached, standard error is /dev/null: the log file is where this is read.
-                tracing::error!(kind = "daemon_failed", error = %format!("{e:#}"), "the daemon stopped");
-            })
+            daemon::run(config, env).await
         }
         Command::Start => start(&ctx).await,
         Command::Stop => {
@@ -407,7 +409,7 @@ async fn ensure_running(ctx: &Ctx<'_>) -> anyhow::Result<bool> {
     if healthy(&client).await {
         return Ok(false);
     }
-    let mut child = daemon::spawn_detached(ctx.config_path.as_deref())?;
+    let mut child = daemon::spawn_detached(&ctx.home, ctx.config_path.as_deref())?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         if let Some(status) = child.try_wait()? {
@@ -582,10 +584,12 @@ async fn mcp(ctx: &Ctx<'_>, tool_set: ToolSet, url: Option<String>) -> anyhow::R
             Target::Remote { http, url, key }
         }
         None => {
-            let config_path = ctx.config_path.clone();
+            let (home, config_path) = (ctx.home.clone(), ctx.config_path.clone());
             Target::Local {
                 client: ctx.client().with_api_key(ctx.env.api_key.clone()),
-                start: Box::new(move || daemon::spawn_detached(config_path.as_deref()).map(drop)),
+                start: Box::new(move || {
+                    daemon::spawn_detached(&home, config_path.as_deref()).map(drop)
+                }),
             }
         }
     };

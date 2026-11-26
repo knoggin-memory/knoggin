@@ -795,9 +795,16 @@ async fn wait_for_stop(
     }
 }
 
-/// Starts `knoggin daemon` detached: a child in a session of its own, standard input,
-/// output and error on `/dev/null`. Returns the child; the caller waits for `/healthz`.
-pub(crate) fn spawn_detached(config: Option<&Path>) -> anyhow::Result<std::process::Child> {
+/// Starts `knoggin daemon` detached: a child in a session of its own, standard input and
+/// output on `/dev/null`, standard error appended to the daemon's log file, so that a
+/// failure before logging starts and the panic hook's line are kept. Returns the child;
+/// the caller waits for `/healthz`.
+pub(crate) fn spawn_detached(
+    home: &Home,
+    config: Option<&Path>,
+) -> anyhow::Result<std::process::Child> {
+    let log = crate::logging::open_log_file(&home.log_file())
+        .with_context(|| format!("opening {}", home.log_file().display()))?;
     let exe = std::env::current_exe().context("finding the knoggin binary")?;
     let mut cmd = std::process::Command::new(exe);
     if let Some(c) = config {
@@ -807,7 +814,7 @@ pub(crate) fn spawn_detached(config: Option<&Path>) -> anyhow::Result<std::proce
         .arg("--new-session")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(log);
     cmd.spawn().context("starting the daemon")
 }
 

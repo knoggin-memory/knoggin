@@ -38,6 +38,8 @@ fn level(l: LogLevel) -> LevelFilter {
 pub(crate) enum Sink {
     /// Standard error: the daemon and the commands.
     Stderr,
+    /// Only the log file: a detached daemon, whose standard error is that same file.
+    FileOnly,
     /// Standard output: the server roles.
     #[allow(dead_code, reason = "the server roles arrive in milestone 6")]
     Stdout,
@@ -50,18 +52,18 @@ pub(crate) fn init(config: &Config, sink: Sink, file: Option<&Path>) -> anyhow::
         .with_default(LevelFilter::WARN)
         .with_target("knoggin", level(config.log.level));
     let json = config.log.format == Some(LogFormat::Json);
-    let main = match (sink, json) {
-        (Sink::Stderr, false) => layer(io::stderr, false),
-        (Sink::Stderr, true) => layer(io::stderr, true),
-        (Sink::Stdout, false) => layer(io::stdout, false),
-        (Sink::Stdout, true) => layer(io::stdout, true),
+    let main = match sink {
+        Sink::Stderr => Some(layer(io::stderr, json)),
+        Sink::Stdout => Some(layer(io::stdout, json)),
+        Sink::FileOnly => None,
     };
     let file = match file {
         Some(path) => Some(layer(RotatingFile::open(path)?, json)),
         None => None,
     };
+    let layers: Vec<Boxed> = main.into_iter().chain(file).collect();
     tracing_subscriber::registry()
-        .with(main.and_then(file).with_filter(filter))
+        .with(layers.with_filter(filter))
         .try_init()
         .map_err(|e| anyhow::anyhow!("could not install the logger: {e}"))
 }
@@ -98,6 +100,18 @@ impl std::fmt::Debug for RotatingFile {
     }
 }
 
+/// Opens the log file for appending, mode 0600, its folder 0700. Also a detached daemon's
+/// standard error.
+pub(crate) fn open_log_file(path: &Path) -> io::Result<File> {
+    if let Some(dir) = path.parent() {
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(dir)?;
+    }
+    open_log(path)
+}
+
 fn open_log(path: &Path) -> io::Result<File> {
     OpenOptions::new()
         .create(true)
@@ -108,13 +122,7 @@ fn open_log(path: &Path) -> io::Result<File> {
 
 impl RotatingFile {
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
-        if let Some(dir) = path.parent() {
-            std::fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(dir)?;
-        }
-        let file = open_log(path)?;
+        let file = open_log_file(path)?;
         let len = file.metadata()?.len();
         Ok(Self {
             path: path.to_owned(),
@@ -138,6 +146,8 @@ impl RotatingFile {
                     _ => {}
                 }
             }
+            // ponytail: a detached daemon's standard error keeps pointing at the file that
+            // became `.1`, so a later panic line lands there; dup2 onto fd 2 if that matters.
             std::fs::rename(&self.path, self.numbered(1))?;
             *file = open_log(&self.path)?;
             *len = 0;
