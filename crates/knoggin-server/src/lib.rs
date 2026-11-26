@@ -8,6 +8,7 @@
 
 pub mod aws;
 pub mod broker;
+pub mod container;
 mod hex;
 pub mod launcher;
 pub mod lease;
