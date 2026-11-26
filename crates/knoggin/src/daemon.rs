@@ -14,10 +14,12 @@ use std::time::Duration;
 use anyhow::{Context, anyhow, bail};
 use axum::Router;
 use axum::extract::Request;
+use knoggin_core::Sensitive;
 use knoggin_crypto::{KeyProvider, LocalKeyProvider};
 use knoggin_http::edge::listen::{ListenConfig, serve_tcp, serve_unix};
 use knoggin_http::edge::{
-    self, Arrival, AuthMode as EdgeAuth, EdgeConfig, EdgeParts, EdgeState, Rate,
+    self, Arrival, AuthMode as EdgeAuth, DiscoveryError, EdgeConfig, EdgeParts, EdgeState,
+    OauthConfig, Rate,
 };
 use knoggin_http::host::{EmbedWaits, Embedder, HostConfig, LocalBackend, StoreHost};
 use knoggin_http::local::{self, LocalSessions, LocalState};
@@ -32,7 +34,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tower::ServiceExt;
 
-use crate::config::{AuthMode, Config, Env, Home};
+use crate::config::{AuthMode, Config, Env, Home, Role};
 use crate::keys::{self, SourceKind};
 use crate::model;
 
@@ -101,6 +103,26 @@ pub(crate) fn check_settings(config: &Config, test_mode: bool) -> anyhow::Result
         }
         if public.is_none() {
             bail!("with auth.mode = \"oauth\" the daemon needs an https server.public_url");
+        }
+        let issuer = config.auth.issuer.as_deref().unwrap_or_default();
+        let issuer_ok = reqwest::Url::parse(issuer)
+            .is_ok_and(|u| u.scheme() == "https" || (test_mode && u.scheme() == "http"));
+        if !issuer_ok {
+            bail!("with auth.mode = \"oauth\" the daemon needs an https auth.issuer");
+        }
+        if config
+            .auth
+            .web_client_id
+            .as_deref()
+            .is_none_or(str::is_empty)
+        {
+            bail!("with auth.mode = \"oauth\" the daemon needs auth.web_client_id");
+        }
+        if config
+            .secret("auth.web_client_secret", Role::Local)?
+            .is_none_or(|s| s.expose().is_empty())
+        {
+            bail!("with auth.mode = \"oauth\" the daemon needs auth.web_client_secret");
         }
     }
     let data = std::path::absolute(&config.local.data_dir)?;
@@ -348,7 +370,31 @@ struct Wiring {
     sessions: Arc<LocalSessions>,
 }
 
-fn edge_config(config: &Config, own_url: String) -> EdgeConfig {
+/// The `auth.*` settings of mode `oauth` for the edge (`None` with sign-in off).
+fn oauth_config(config: &Config) -> anyhow::Result<Option<OauthConfig>> {
+    if config.auth_mode() != AuthMode::Oauth {
+        return Ok(None);
+    }
+    let a = &config.auth;
+    Ok(Some(OauthConfig {
+        issuer: a.issuer.clone().unwrap_or_default(),
+        audiences: a.audiences.clone(),
+        provider_name: a.provider_name.clone(),
+        web_client_id: a.web_client_id.clone().unwrap_or_default(),
+        web_client_secret: config
+            .secret("auth.web_client_secret", Role::Local)?
+            .unwrap_or_else(|| Sensitive::new(String::new())),
+        admin_emails: a.admin_emails.clone(),
+        admin_subjects: a.admin_subjects.clone(),
+        allowed_emails: a.allowed_emails.clone(),
+        allowed_email_domains: a.allowed_email_domains.clone(),
+        email_claim: a.email_claim.clone(),
+        session_max_days: a.session_max_days,
+        session_idle_hours: a.session_idle_hours,
+    }))
+}
+
+fn edge_config(config: &Config, own_url: String, test_mode: bool) -> anyhow::Result<EdgeConfig> {
     let l = &config.limits;
     let mut e = EdgeConfig::local(own_url, env!("CARGO_PKG_VERSION").to_owned());
     e.auth_mode = match config.auth_mode() {
@@ -364,7 +410,9 @@ fn edge_config(config: &Config, own_url: String) -> EdgeConfig {
         burst: l.per_credential_burst,
     };
     e.limits = store_limits(config);
-    e
+    e.test_mode = test_mode;
+    e.oauth = oauth_config(config)?;
+    Ok(e)
 }
 
 fn store_limits(config: &Config) -> StoreLimits {
@@ -405,7 +453,7 @@ async fn go_live(w: &Wiring, u: Unlocked) -> anyhow::Result<(Router, Live)> {
     );
     let host = StoreHost::new(host_config, backend.clone(), embedder);
     let edge = EdgeState::new(
-        edge_config(config, w.own_url.clone()),
+        edge_config(config, w.own_url.clone(), w.test_mode)?,
         EdgeParts {
             db: db.clone(),
             field_keys: u.fields.clone(),
@@ -425,9 +473,42 @@ async fn go_live(w: &Wiring, u: Unlocked) -> anyhow::Result<(Router, Live)> {
         version: env!("CARGO_PKG_VERSION").to_owned(),
         clock: system_clock(),
     });
-    let router = edge::edge_layer(edge, store_layer(host.clone()), mode);
+    let router = edge::edge_layer(edge.clone(), store_layer(host.clone()), mode);
 
     let mut tasks = Vec::new();
+    // Sign-in: discovery now. A provider that cannot be reached is tried again once a
+    // minute while the socket and API keys serve; a document that names another issuer
+    // or a plain-http address stops the start.
+    match edge.discover().await {
+        Ok(()) => {}
+        Err(e @ (DiscoveryError::IssuerMismatch { .. } | DiscoveryError::Insecure(_))) => {
+            return Err(anyhow!("sign-in: {e}"));
+        }
+        Err(DiscoveryError::Unreachable) => {
+            tracing::warn!(
+                kind = "discovery_failed",
+                "the identity provider cannot be reached; sign-in answers unavailable until it can"
+            );
+            let edge = edge.clone();
+            tasks.push(tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(MINUTE).await;
+                    match edge.discover().await {
+                        Ok(()) => {
+                            tracing::info!(kind = "discovered", "the identity provider answers");
+                            return;
+                        }
+                        Err(DiscoveryError::Unreachable) => {}
+                        Err(e) => {
+                            // Sign-in stays off.
+                            tracing::error!(kind = "discovery_refused", error = %e, "sign-in stays off");
+                            return;
+                        }
+                    }
+                }
+            }));
+        }
+    }
     tasks.extend(model.task);
     let (h, b, d) = (host.clone(), backend.clone(), db.clone());
     let soft = config.retention.soft_delete_days;
@@ -994,7 +1075,29 @@ mod tests {
         );
         let mut with = oauth.to_vec();
         with.push(("KNOGGIN_AUTH__ALLOWED_EMAILS", "me@example.com"));
+        // The provider's settings, one at a time.
+        for missing in [
+            "auth.issuer",
+            "auth.web_client_id",
+            "auth.web_client_secret",
+        ] {
+            assert!(
+                check_settings(&config(&with), false)
+                    .unwrap_err()
+                    .to_string()
+                    .contains(missing),
+                "{missing}"
+            );
+            with.push(match missing {
+                "auth.issuer" => ("KNOGGIN_AUTH__ISSUER", "https://idp.example"),
+                "auth.web_client_id" => ("KNOGGIN_AUTH__WEB_CLIENT_ID", "web"),
+                _ => ("KNOGGIN_AUTH__WEB_CLIENT_SECRET", "s"),
+            });
+        }
         assert!(check_settings(&config(&with), false).is_ok());
+        let mut http_issuer = with.clone();
+        http_issuer.push(("KNOGGIN_AUTH__ISSUER", "http://127.0.0.1:9"));
+        assert!(check_settings(&config(&http_issuer), false).is_err());
         with.push(("KNOGGIN_AUTH__ALLOWED_EMAIL_DOMAINS", "example.com"));
         assert!(check_settings(&config(&with), false).is_err());
         let http = [("KNOGGIN_SERVER__PUBLIC_URL", "http://127.0.0.1:7690")];

@@ -108,6 +108,15 @@ enum Command {
     /// Recovery tools that also work on a local install.
     #[command(subcommand)]
     Admin(AdminCommand),
+    /// A small identity provider for tests; needs test mode. Never for real users.
+    TestIssuer {
+        /// The address to listen on.
+        #[arg(long)]
+        bind: std::net::SocketAddr,
+        /// The issuer URL it names itself by.
+        #[arg(long)]
+        issuer_url: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -298,7 +307,7 @@ async fn dispatch(cli: Cli, env: &Env, warnings: Vec<&'static str>) -> anyhow::R
     };
     let role = match &cli.command {
         Command::Config(ConfigCommand::Check { role }) => *role,
-        Command::Healthcheck { .. } | Command::Admin(_) => Role::Admin,
+        Command::Healthcheck { .. } | Command::Admin(_) | Command::TestIssuer { .. } => Role::Admin,
         _ => Role::Local,
     };
     let config = ctx.config(role)?;
@@ -374,6 +383,30 @@ async fn dispatch(cli: Cli, env: &Env, warnings: Vec<&'static str>) -> anyhow::R
             Ok(0)
         }
         Command::Healthcheck { url } => healthcheck(&ctx, url).await,
+        Command::TestIssuer { bind, issuer_url } => {
+            if !env.test_mode {
+                bail!("knoggin test-issuer runs in test mode only (KNOGGIN_TEST_MODE=1)");
+            }
+            let listener = tokio::net::TcpListener::bind(bind)
+                .await
+                .with_context(|| format!("binding {bind}"))?;
+            let issuer =
+                knoggin_http::testing::issuer::TestIssuer::serve(listener, Some(issuer_url), true)
+                    .map_err(|e| anyhow!(e))?;
+            {
+                use tokio::signal::unix::{SignalKind, signal};
+                let (mut term, mut int) = (
+                    signal(SignalKind::terminate())?,
+                    signal(SignalKind::interrupt())?,
+                );
+                tokio::select! {
+                    _ = term.recv() => {}
+                    _ = int.recv() => {}
+                }
+            }
+            drop(issuer);
+            Ok(0)
+        }
         Command::Admin(AdminCommand::Snapshot(SnapshotCommand::Inspect { file })) => {
             let i = transfer::inspect(&file)?;
             let v = serde_json::to_value(&i)?;

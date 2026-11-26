@@ -907,10 +907,6 @@ impl Config {
     /// Reads the secret `key` (one of [`SECRETS`]): its variable, else the file in
     /// `<key>_file`, trailing newline ignored. A server role refuses a file that group or
     /// others can write. `None` when neither is given.
-    #[allow(
-        dead_code,
-        reason = "the daemon reads auth.web_client_secret from milestone 5; server roles in 6"
-    )]
     pub(crate) fn secret(
         &self,
         key: &str,
