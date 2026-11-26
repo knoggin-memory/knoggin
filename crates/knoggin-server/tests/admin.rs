@@ -349,7 +349,18 @@ async fn a_restore_opens_the_chosen_snapshot_and_saves_it_before_any_write() {
         "the restored snapshot was saved under the new generation"
     );
     assert_eq!(rig.fail_commits.load(Ordering::SeqCst), 0);
-    assert_eq!(c3.save(a, "after").await, StatusCode::CREATED);
+    // The broker clears `restore_from` before the container has its answer (and after a
+    // retried commit the container saves once more under the next sequence), so the
+    // container's own block lifts a little later: until then a write is still refused.
+    let accepted = || async {
+        let status = c3.save(a, "after").await;
+        assert!(
+            status == StatusCode::CREATED || status == StatusCode::SERVICE_UNAVAILABLE,
+            "{status}"
+        );
+        status == StatusCode::CREATED
+    };
+    assert!(eventually(Duration::from_secs(15), accepted).await);
     let (_, _, body) = c3
         .forward(a.user, a.store, Method::GET, "/v1/memories", Body::empty())
         .await;
