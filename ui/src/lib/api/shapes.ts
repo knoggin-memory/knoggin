@@ -221,7 +221,6 @@ export interface MemoryRow {
   nextChange: NextChange | null;
   tags: string[];
   entities: string[];
-  client: string | null;
 }
 
 export interface MemoryPage {
@@ -315,10 +314,11 @@ export interface TransitionCounts {
 }
 export interface AtRiskMemory {
   id: string;
-  summary: string;
+  summary: string | null;
   strength: number;
-  daysUntilDeletion: number;
-  phase: string;
+  daysUntilChange: number;
+  phase: Phase;
+  to: string;
 }
 export interface HealthReport {
   scope: string;

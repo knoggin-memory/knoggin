@@ -170,7 +170,7 @@
 <svelte:window {onkeydown} />
 
 <Screen title="Explore">
-  <PageHeader title="Explore" meta={first.data ? `${count(total)} memories` : undefined} />
+  <PageHeader title="Explore" meta={first.data ? `${count(total)} ${total === 1 ? 'memory' : 'memories'}` : undefined} />
 
   <div role="toolbar" aria-label="Filters" class="toolbar">
     <ScopeChip />
