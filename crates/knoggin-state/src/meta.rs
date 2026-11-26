@@ -187,18 +187,30 @@ pub async fn rewrap_master_key(
         .await?;
 
     let users = Users::new(db.clone(), keys.clone());
-    let stores = Stores::new(db, keys);
+    let stores = Stores::new(db.clone(), keys);
     let mut count = 0;
-    let mut after: Option<UserId> = None;
+    let mut after: Option<String> = None;
     loop {
-        let page = users.list(crate::typed::PAGE, after).await?;
-        for user in &page {
-            for store in stores.list(user.value.id).await? {
+        // Paged by the directory itself: a directory item whose user record is gone
+        // shortens no page, so it cannot end the walk early.
+        let page = db
+            .query(keys::USERS, "", crate::typed::PAGE, after.as_deref())
+            .await?;
+        for item in &page {
+            let user = item
+                .sk
+                .parse()
+                .map(UserId::from_uuid)
+                .map_err(|_| StateError::Corrupt("a user directory item"))?;
+            if users.get(user).await?.is_none() {
+                continue;
+            }
+            for store in stores.list(user).await? {
                 let id = store.value.id;
                 let data_key = provider.unwrap(id, &store.value.wrapped()?).await?;
                 let wrapped = provider.wrap(id, &data_key)?;
                 stores
-                    .update(user.value.id, id, |s| {
+                    .update(user, id, |s| {
                         s.set_wrapped(&wrapped);
                         Ok::<_, StateError>(())
                     })
@@ -207,8 +219,65 @@ pub async fn rewrap_master_key(
             }
         }
         match page.last() {
-            Some(u) if page.len() == crate::typed::PAGE => after = Some(u.value.id),
+            Some(last) if page.len() == crate::typed::PAGE => after = Some(last.sk.clone()),
             _ => return Ok(count),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use knoggin_core::Sensitive;
+    use knoggin_crypto::testing::{test_key_set, test_provider};
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::db::{Item, Write};
+    use crate::{LocalFileDb, NewStore, NewUser};
+
+    #[tokio::test]
+    async fn rotation_walks_past_a_page_of_directory_items_without_users() {
+        let db: Arc<dyn StateDb> = Arc::new(LocalFileDb::in_memory(crate::system_clock()));
+        let provider = test_provider();
+        let keys = Arc::new(Meta::new(db.clone()).field_keys(&provider).await.unwrap());
+        // A whole first page of directory items whose user records are gone.
+        let dangling: Vec<Write> = (0..crate::typed::PAGE as u128)
+            .map(|i| {
+                let id = Uuid::from_u128(i);
+                Write::put(
+                    Item::new(keys::USERS, id.to_string(), serde_json::json!({})),
+                    Cond::Any,
+                )
+            })
+            .collect();
+        for chunk in dangling.chunks(25) {
+            db.write(chunk.to_vec()).await.unwrap();
+        }
+        let store = StoreId::from_uuid(Uuid::now_v7());
+        let (_, wrapped) = provider.generate(store).await.unwrap();
+        Users::new(db.clone(), keys.clone())
+            .create(
+                NewUser {
+                    id: UserId::from_uuid(Uuid::now_v7()),
+                    issuer: "local".into(),
+                    subject: Sensitive::new("local".into()),
+                    email: None,
+                    email_verified: false,
+                    name: None,
+                },
+                NewStore {
+                    id: store,
+                    name: Sensitive::new("Personal".into()),
+                    wrapped,
+                },
+                0,
+            )
+            .await
+            .unwrap();
+        let mut set = test_key_set();
+        set.rotate().unwrap();
+        let rotated = LocalKeyProvider::new(set);
+        let n = rewrap_master_key(db, keys, &rotated).await.unwrap();
+        assert_eq!(n, 1, "the store after the dangling page is re-wrapped");
     }
 }
