@@ -436,10 +436,18 @@ fn write_file(
             key.clone(),
             content.clone(),
         );
-        let _ = fs::remove_file(&tmp);
+        // Tidying after the link: the new file is already durable, so neither step may
+        // turn the write into a failure.
+        if let Err(e) = fs::remove_file(&tmp)
+            && e.kind() != io::ErrorKind::NotFound
+        {
+            tracing::warn!(kind = ?e.kind(), "removing a temporary state file failed");
+        }
         match result {
             Ok(()) => {
-                prune(dir)?;
+                if let Err(e) = prune(dir) {
+                    tracing::warn!(kind = ?e.kind(), "removing old state files failed");
+                }
                 return Ok(sequence);
             }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => sequence += 1,
@@ -469,7 +477,6 @@ fn write_once(
     f.sync_all()?;
     drop(f);
     fs::hard_link(tmp, name)?;
-    fs::remove_file(tmp)?;
     if let Err(e) = File::open(dir).and_then(|d| d.sync_all()) {
         // Not known to be durable: take it back, so the answer `unavailable` is true.
         let _ = fs::remove_file(name);
@@ -479,10 +486,12 @@ fn write_once(
 }
 
 /// Keeps the 3 newest state files.
-fn prune(dir: &Path) -> Result<(), StateError> {
-    let files = list(dir)
-        .map_err(|e| StateError::Unavailable(e.to_string()))?
-        .files;
+fn prune(dir: &Path) -> io::Result<()> {
+    #[cfg(test)]
+    if FAIL_PRUNE.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err(io::Error::other("pruning fails in this test"));
+    }
+    let files = list(dir)?.files;
     let old = files.len().saturating_sub(KEEP_FILES);
     for (_, path) in &files[..old] {
         // A file that cannot be removed now is removed after a later write.
@@ -490,6 +499,10 @@ fn prune(dir: &Path) -> Result<(), StateError> {
     }
     Ok(())
 }
+
+/// Makes `prune` fail, for the test that a failed prune does not fail the write.
+#[cfg(test)]
+static FAIL_PRUNE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Runs file work on the blocking pool. A panic there is `Internal`; a cancel at
 /// shutdown is `Unavailable`. The `JoinError` itself is never formatted.
@@ -527,5 +540,30 @@ impl From<BlockingError> for StateError {
             BlockingError::Io(e) => Self::Unavailable(e.to_string()),
             BlockingError::State(e) => e,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::Ordering;
+
+    use knoggin_crypto::testing::test_provider;
+
+    use super::*;
+    use crate::db::{Cond, Item};
+
+    #[tokio::test]
+    async fn a_write_whose_tidying_fails_still_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = LocalFileDb::create(tmp.path(), &test_provider(), crate::system_clock())
+            .await
+            .unwrap();
+        FAIL_PRUNE.store(true, Ordering::SeqCst);
+        let put = Write::put(Item::new("p", "s", serde_json::json!({})), Cond::Any);
+        let result = db.write(vec![put]).await;
+        FAIL_PRUNE.store(false, Ordering::SeqCst);
+        result.unwrap();
+        assert!(tmp.path().join(file_name(2)).exists());
+        assert!(db.get("p", "s").await.unwrap().is_some());
     }
 }
