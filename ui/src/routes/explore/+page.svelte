@@ -31,11 +31,17 @@
     { key: 'summary', label: 'Memory', desc: false },
   ];
   const params = $derived(page.url.searchParams);
-  // /explore?id=<id> (a search hit): that memory opens, above the list when the loaded rows do not hold it.
+  // /explore?id=<id> (a search hit): that memory opens above the list, whatever the filters and the loaded rows hold.
+  const hit = $derived(params.get('id'));
   $effect(() => {
-    const id = params.get('id');
+    const id = hit;
     if (id) untrack(() => selection.select(id));
   });
+  /** Selects in the list; the search hit's place above it ends. */
+  function choose(id: string | null) {
+    selection.select(id);
+    if (hit) setParams((q) => q.delete('id'));
+  }
   const ALL: Phase[] = ['full', 'summary', 'ghost'];
   const phases = $derived(params.has('phase') ? ALL.filter((p) => params.getAll('phase').includes(p)) : ALL);
   const tagSel = $derived(params.getAll('tag'));
@@ -131,7 +137,7 @@
     $virtualizer.measureElement(node);
   }
   /** Clicking a row expands it in place; clicking it again collapses it. */
-  const toggle = (id: string) => selection.select(selection.id === id ? null : id);
+  const toggle = (id: string) => choose(selection.id === id ? null : id);
   const padTop = $derived(items.length ? items[0].start : 0);
   const padBottom = $derived(items.length ? $virtualizer.getTotalSize() - items[items.length - 1].end : 0);
 
@@ -147,15 +153,15 @@
     }
     return -1;
   });
-  // A memory selected from elsewhere (search) scrolls into view and opens.
+  // A memory selected from elsewhere (the map) scrolls into view and opens; a search hit shows above the list.
   $effect(() => {
     const i = selectedIndex;
-    if (i >= 0) untrack(() => $virtualizer.scrollToIndex(i, { align: 'auto' }));
+    if (i >= 0 && selection.id !== hit) untrack(() => $virtualizer.scrollToIndex(i, { align: 'auto' }));
   });
 
   function onkeydown(e: KeyboardEvent) {
     if (e.key === 'Escape' && selection.id) {
-      selection.select(null);
+      choose(null);
       return;
     }
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
@@ -165,7 +171,7 @@
     const next = Math.min(total - 1, Math.max(0, selectedIndex + (e.key === 'ArrowDown' ? 1 : -1)));
     const row = rowAt(next);
     if (row) {
-      selection.select(row.id);
+      choose(row.id);
       $virtualizer.scrollToIndex(next, { align: 'auto' });
       requestAnimationFrame(() => scroller?.querySelector<HTMLButtonElement>(`[data-id="${row.id}"]`)?.focus());
     }
@@ -211,10 +217,10 @@
     </DropdownMenu.Root>
   </div>
 
-  {#if selection.id && selectedIndex < 0 && !first.isPending}
-    <!-- Selected from search but not among the loaded rows: show it above the table. -->
+  {#if selection.id && (selection.id === hit || selectedIndex < 0) && !first.isPending}
+    <!-- A search hit, or a selection that is not among the loaded rows: shown above the table. -->
     <div class="pinned">
-      <MemoryPanel id={selection.id} layout="inline" heading onclose={() => selection.select(null)} onopen={(id) => selection.select(id)}
+      <MemoryPanel id={selection.id} layout="inline" heading onclose={() => choose(null)} onopen={(id) => choose(id)}
         secondary={{ label: 'Show on map', onclick: () => goto(`/map?id=${selection.id}`) }} />
     </div>
   {/if}
@@ -254,7 +260,7 @@
         {#if padTop > 0}<tbody aria-hidden="true"><tr style:height="{padTop}px"></tr></tbody>{/if}
         {#each items as item (item.key)}
           {@const m = rowAt(item.index)}
-          {@const open = !!m && m.id === selection.id}
+          {@const open = !!m && m.id === selection.id && m.id !== hit}
           <!-- One tbody per row so the virtualizer can measure an expanded row. -->
           <tbody data-index={item.index} use:measure>
             <!-- The whole row is a click target; the summary button is the keyboard path. -->
@@ -282,7 +288,7 @@
             {#if open && m}
               <tr class="expanded">
                 <td colspan="6">
-                  <MemoryPanel id={m.id} layout="inline" onclose={() => selection.select(null)} onopen={(id) => selection.select(id)}
+                  <MemoryPanel id={m.id} layout="inline" onclose={() => choose(null)} onopen={(id) => choose(id)}
                     secondary={{ label: 'Show on map', onclick: () => goto(`/map?id=${m.id}`) }} />
                 </td>
               </tr>

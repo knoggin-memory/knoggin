@@ -67,5 +67,7 @@ test('search finds a memory and opens it in Explore', async ({ page }) => {
   await page.getByRole('combobox', { name: 'Search memories' }).fill('window seats');
   await page.getByRole('option', { name: new RegExp(PERSONAL[0]) }).click();
   await expect(page).toHaveURL(/\/explore\?id=/);
-  await expect(page.getByText('Said so while booking the Lisbon trip.')).toBeVisible();
+  // Shown above the list, although the loaded rows hold it; its row stays closed.
+  await expect(page.locator('.pinned').getByText('Said so while booking the Lisbon trip.')).toBeVisible();
+  await expect(page.locator('[data-id]', { hasText: PERSONAL[0] })).toHaveAttribute('aria-expanded', 'false');
 });
