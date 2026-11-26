@@ -206,7 +206,10 @@ pub(crate) struct Provider {
     test_mode: bool,
     client: reqwest::Client,
     discovery: RwLock<Option<Arc<Discovery>>>,
-    keys: tokio::sync::Mutex<KeyCache>,
+    /// Never held across a fetch.
+    keys: RwLock<KeyCache>,
+    /// Held by the one fetch of the key set that runs at a time.
+    fetching: tokio::sync::Mutex<()>,
     clock: Clock,
 }
 
@@ -223,7 +226,8 @@ impl Provider {
             public_url: public_url.trim_end_matches('/').to_owned(),
             test_mode,
             discovery: RwLock::new(None),
-            keys: tokio::sync::Mutex::new(KeyCache::default()),
+            keys: RwLock::new(KeyCache::default()),
+            fetching: tokio::sync::Mutex::new(()),
             clock,
         })
     }
@@ -277,32 +281,52 @@ impl Provider {
     }
 
     /// The key for `kid`, fetching the set when it is an hour old or does not hold the
-    /// ID (at most once per 30 seconds). Keys older than 24 hours are not used.
+    /// ID (at most once per 30 seconds). Keys older than 24 hours are not used. One fetch
+    /// runs at a time: a token with an unknown key ID waits for it, since it may bring
+    /// the key, and a token with a known one is checked against the keys held meanwhile.
     async fn decoding_key(&self, kid: &str, alg: Algorithm) -> Result<DecodingKey, Refusal> {
         let discovery = self.discovery().ok_or(Refusal::Unavailable)?;
         let now = (self.clock)();
-        let mut cache = self.keys.lock().await;
-        let may_fetch = |c: &KeyCache| c.tried_at.is_none_or(|t| now - t >= REFETCH_MS);
-        if cache.ok_at.is_none_or(|t| now - t >= REFRESH_MS) && may_fetch(&cache) {
-            self.refresh(&mut cache, &discovery, now).await;
-        }
-        let known = |c: &KeyCache| {
-            c.keys
-                .iter()
-                .any(|k| k.common.key_id.as_deref() == Some(kid))
+        let (wanted, unknown) = self.wants_fetch(kid, now);
+        let fetching = if unknown {
+            Some(self.fetching.lock().await)
+        } else if wanted {
+            self.fetching.try_lock().ok()
+        } else {
+            None
         };
-        if !known(&cache) && may_fetch(&cache) {
-            self.refresh(&mut cache, &discovery, now).await;
+        // Looked at again: the fetch this waited for may have done it.
+        if fetching.is_some() && self.wants_fetch(kid, now).0 {
+            self.refresh(&discovery, now).await;
         }
+        drop(fetching);
+        let cache = self.keys.read().unwrap_or_else(PoisonError::into_inner);
         if cache.ok_at.is_none_or(|t| now - t > STALE_MS) {
             return Err(Refusal::Unavailable);
         }
         select_key(&cache.keys, kid, alg).map_err(Refusal::Invalid)
     }
 
-    /// Replaces the whole set on success; keeps the old one on failure.
-    async fn refresh(&self, cache: &mut KeyCache, d: &Discovery, now: i64) {
-        cache.tried_at = Some(now);
+    /// Whether the set should be fetched for `kid` now (it is an hour old or lacks the ID,
+    /// and no fetch began in the last 30 seconds), and whether the ID is unknown.
+    fn wants_fetch(&self, kid: &str, now: i64) -> (bool, bool) {
+        let c = self.keys.read().unwrap_or_else(PoisonError::into_inner);
+        let unknown = !c
+            .keys
+            .iter()
+            .any(|k| k.common.key_id.as_deref() == Some(kid));
+        let due = c.ok_at.is_none_or(|t| now - t >= REFRESH_MS);
+        let may = c.tried_at.is_none_or(|t| now - t >= REFETCH_MS);
+        ((due || unknown) && may, unknown)
+    }
+
+    /// Replaces the whole set on success; keeps the old one on failure. The cache is
+    /// locked only to note the attempt and to store the result, not during the fetch.
+    async fn refresh(&self, d: &Discovery, now: i64) {
+        self.keys
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .tried_at = Some(now);
         let list = match get_json(&self.client, d.jwks_uri.clone()).await {
             Ok(doc) => doc.get("keys").and_then(Value::as_array).cloned(),
             Err(()) => None,
@@ -315,10 +339,12 @@ impl Provider {
             return;
         };
         // One key at a time: a key the library does not know is skipped, not fatal.
-        cache.keys = list
+        let keys = list
             .into_iter()
             .filter_map(|k| serde_json::from_value(k).ok())
             .collect();
+        let mut cache = self.keys.write().unwrap_or_else(PoisonError::into_inner);
+        cache.keys = keys;
         cache.ok_at = Some(now);
     }
 
@@ -852,6 +878,86 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    /// The key cache is not locked during a fetch. A token with an unknown key ID waits
+    /// for the one fetch that runs, and is not fetched for again; a token with a known key
+    /// is checked against the keys held meanwhile, even when the hourly refresh is due.
+    #[tokio::test]
+    async fn one_key_fetch_at_a_time_and_known_keys_do_not_wait_for_it() {
+        use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (h, g) = (hits.clone(), gate.clone());
+        let base = https_stub(move |base| {
+            axum::Router::new()
+                .route(
+                    "/i/.well-known/openid-configuration",
+                    serve_json(document(&format!("{base}/i"), "https")),
+                )
+                .route(
+                    "/i/jwks",
+                    axum::routing::get(move || {
+                        let (h, g) = (h.clone(), g.clone());
+                        async move {
+                            if h.fetch_add(1, Ordering::SeqCst) == 0 {
+                                return axum::Json(json!({ "keys": [rsa(json!({}))] }));
+                            }
+                            let _held = g.acquire().await.unwrap();
+                            axum::Json(
+                                json!({ "keys": [rsa(json!({})), rsa(json!({ "kid": "r2" }))] }),
+                            )
+                        }
+                    }),
+                )
+        })
+        .await;
+        let now = Arc::new(AtomicI64::new(0));
+        let n = now.clone();
+        let p = Arc::new(provider(
+            &format!("{base}/i"),
+            false,
+            Arc::new(move || n.load(Ordering::SeqCst)),
+        ));
+        p.discover().await.unwrap();
+        assert!(p.decoding_key("r1", Algorithm::RS256).await.is_ok());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        // A new key ID 31 seconds later starts a fetch, which the stub holds.
+        now.store(31_000, Ordering::SeqCst);
+        let first = tokio::spawn({
+            let p = p.clone();
+            async move { p.decoding_key("r2", Algorithm::RS256).await.is_ok() }
+        });
+        while hits.load(Ordering::SeqCst) < 2 {
+            tokio::task::yield_now().await;
+        }
+        let second = tokio::spawn({
+            let p = p.clone();
+            async move { p.decoding_key("r2", Algorithm::RS256).await.is_ok() }
+        });
+        // One thread: this lets the second check read the clock and queue for the fetch.
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        let soon = Duration::from_secs(2);
+        let known = tokio::time::timeout(soon, p.decoding_key("r1", Algorithm::RS256));
+        assert!(
+            known
+                .await
+                .expect("a known key waited for the fetch")
+                .is_ok()
+        );
+        now.store(31_000 + REFRESH_MS, Ordering::SeqCst);
+        let due = tokio::time::timeout(soon, p.decoding_key("r1", Algorithm::RS256));
+        assert!(due.await.expect("the hourly refresh waited").is_ok());
+        assert!(
+            !second.is_finished(),
+            "an unknown key waits for the running fetch"
+        );
+        gate.add_permits(10);
+        assert!(first.await.unwrap());
+        assert!(second.await.unwrap());
+        assert_eq!(hits.load(Ordering::SeqCst), 2, "one fetch for both");
     }
 
     #[test]
