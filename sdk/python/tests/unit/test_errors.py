@@ -233,7 +233,10 @@ def test_no_daemon_raises_configuration_error_and_opens_no_tcp_connection(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
 ) -> None:
     monkeypatch.setenv("KNOGGIN_HOME", str(_private_home(tmp_path)))
-    listener = socket.create_server(("127.0.0.1", 0))  # another program on a TCP port
+    try:  # another program on the daemon's usual port, or on any port when that one is taken
+        listener = socket.create_server(("127.0.0.1", 7690))
+    except OSError:
+        listener = socket.create_server(("127.0.0.1", 0))
     listener.settimeout(0.2)
     connects: list[Any] = []
     real = socket.socket.connect
