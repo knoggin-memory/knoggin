@@ -1,0 +1,95 @@
+# knoggin-http: the store layer contract
+
+For the agents that build `mcp` and `edge` (with the control routes and `local`). The spec
+(tabs "Workspace and crates", "REST API", "Engineering rules") is the authority; this file
+says what exists and how to use it. Deviations are in `docs/spec-deviations.md`.
+
+## Modules
+
+| Module | Offers |
+| --- | --- |
+| `ctx` | `RequestContext`, `CredentialRef`, `CredentialKind`, `Permissions`; `headers::*` (every header name, lower case); `RequestContext::{write_internal_headers, from_internal_headers, write_context, require_read, require_write}`; `namespace_header(&HeaderMap)` (the checked `Knoggin-Namespace`); `PROTOCOL_VERSION` |
+| `error` | `Code` (the 17 codes, `status()`, `as_str()`), `LockReason`, `ApiError` (constructors per code, `with_field/with_reason/with_retry_after/with_request_id`, `from_join(&JoinError)`, `from_bare_status`, `From<EngineError>`), `fill_request_id(Response, Uuid)` |
+| `trace` | `MakeRequestUuidV7` (for `SetRequestIdLayer` on `Knoggin-Request-Id`), `request_id(&Request)`, `route(&Request)`, `request_span(&Request)`, `observe` (middleware: span, one log line, `knoggin_requests_total` / `knoggin_request_seconds`) |
+| `panic` | `log_location(&PanicHookInfo)` (the hook body; `main` installs it), `location_line` |
+| `settings` | `StoreLimits` (`limits.body_bytes`, `request_timeout_ms`, `store_concurrency`), `DEFAULT_BODY_BYTES`, `IMPORT_LINE_BYTES`. Add the edge's settings here |
+| `host` | `StoreHost`, `HostConfig`, `SnapshotTiming`, `StoreBackend` + `OpenedStore`, `SnapshotSource`, `SealedSnapshot`, `BackendError`, `LocalBackend`, `Embedder`, `Providers`, `EmbedWaits`, `Reply<T>`, `request_hash`, `StoreStatus`/`StoreState`, `HostReport`, `HostCounters` |
+| `store_api` | `store_layer(Arc<StoreHost>) -> Router`, `export_file_name(name, date)` |
+| `testing` | `TestHost` (host over a `LocalBackend` in a folder you own, fake model, one user and personal store, `ctx`, `ctx_for`, `new_store`, `make_ready`), `fake_config`, `fake_model_state`. Add the test issuer here |
+
+## Building a host
+
+```rust
+let (model_tx, model_rx) = watch::channel(model_state);          // the binary's model loop sends here
+let providers = Arc::new(OnceCell::new());                         // filled with Providers { query, document } once loaded
+let embedder = Embedder::new(model_rx, providers.clone(), EmbedWaits::default());
+let host = StoreHost::new(config, backend, embedder);              // inside a Tokio runtime
+let router = store_layer(host.clone());
+```
+
+`HostConfig::local(model)` is the daemon's configuration; a container sets `timing:
+SnapshotTiming::SERVER`, `memory_budget: Some((limit - 640 MiB) * 0.4)`, `idle_close:
+Some(idleSeconds)`, `embed_allowance: Some(30 min)`, `web_url`, and `limits` from the claim.
+Fill the `OnceCell` before sending `ModelStatus::Ready`.
+
+Lifecycle: `close(store)` (save, then drop; stays open if the save fails), `drop_store(store)`
+(deleted: no save), `save_all()` (park, shutdown; returns the failures, the role retries),
+`shutdown()` (stop tasks, refuse requests), `lease_lost()` (a watch the container waits on).
+Status: `store_status(store)` (also retries a stale lock in the background), `report()` (the
+container's `status` answer: open stores, opening, locks), `counters`, `model_state()`.
+
+## The operations (for `mcp`)
+
+Every memory operation is a method of `StoreHost` that takes `&RequestContext` and the
+request value of `knoggin_core::ops`, and does the host's part: permissions, the default
+namespace (body, else `ctx.default_namespace`, else `default`; never a check-only namespace),
+the request hash and idempotency, the duplicate check's vector, the query vector, access
+recording (only with `memory:write`), the budget and the upload block.
+
+- Writes take `key: Option<String>` and return `Reply<T>`: `Fresh(T)` or `Replayed(bytes)`.
+  `reply.into_json()` gives the same bytes for both, so a tool result over MCP and a REST body
+  match. Dry runs are never recorded. Names: `store_memory`, `store_memories`,
+  `supersede_memory`, `reinforce_memory`, `forget_memory`, `forget_memories`, `move_memories`,
+  `create_namespace`, `update_namespace_policy`, `delete_namespace`.
+- Reads: `get_memory`, `find_similar`, `list_memories`, `list_namespaces`, `list_tags`,
+  `namespace_stats`, `recall` (returns `RecallResponse`), `context` (returns the whole
+  `Context` with `model` and `webUrl`).
+- `export(ctx) -> ExportStream` (a `Stream` of JSON Lines frames), `import(ctx, OnConflict, Body)`.
+- Set `ctx.client` to the MCP client's name; it becomes the memory's `client`.
+
+Errors are `ApiError`; on MCP map `code` to the tool error. Path IDs (`id`, `name`) are fields
+of the request types: set them before calling (`req.id = ...`).
+
+## The router (for `edge`)
+
+- `store_layer(host)` holds every store route of the REST tab except `/v1/ui/*` (milestone 4).
+  It has no fallback, so merge it into the edge router and set the edge's fallback (404 as
+  `not_found`) there. It applies its own body limits (256 KiB, `body_bytes` on the batch, none
+  on the import), the request timeout (export and import exempt), `trace::observe`, error
+  normalization (bare 405, 413, 504 become `ApiError`s with the request ID) and
+  `Cache-Control: no-store`. Do not wrap it in `trace::observe` again.
+- Put a `RequestContext` in the request extensions before it runs. Without one a route answers
+  `internal`. The request ID in error bodies comes from `ctx.request_id`.
+- The store layer never reads a client header except `Idempotency-Key`; check and strip
+  `Knoggin-*` client headers in the edge. `Knoggin-Namespace` goes into
+  `ctx.default_namespace` through `ctx::namespace_header`.
+- `GET /v1/export`: the store layer accepts the `store` parameter and ignores it. The edge
+  resolves it into `ctx.store_id`, applies the credential rule, the per-user cap of 2 exports
+  and 2 imports, and sets `Content-Disposition` with `store_api::export_file_name`.
+- Missing credential, another user's store, `rate_limited`, `store_deleting` for a deleted
+  account, `Knoggin-Store` and the browser checks are the edge's.
+- A container rebuilds the context with `RequestContext::from_internal_headers` in a small
+  middleware in front of `store_layer`; the router writes them with `write_internal_headers`.
+
+## Local install (for `local`)
+
+`LocalBackend::new(data_dir, key_provider, Stores, retention_days)`. Snapshot files live in
+`<data_dir>/stores/<store id>/`. Call `flush_records()` once a minute and at shutdown: it
+writes each store's last save (newest name, counts, last write) into its record.
+
+## Where to add things
+
+- `src/mcp/` (module `mcp` in `lib.rs`): converts tool arguments into `ops` types and calls the
+  host methods above.
+- `src/edge/`, `src/local/`: own modules; `edge_layer(edge, store_layer(host), mode_routes)`.
+- Store-status route: `host.store_status(id)` plus `host.model_state()`.
