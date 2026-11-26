@@ -16,8 +16,7 @@
 mod files;
 mod record;
 
-/// The recalld record decoder, opened to `fuzz/` (feature `fuzzing`). Not an API.
-#[cfg(feature = "fuzzing")]
+/// The recalld record decoder, opened to `fuzz/`. Not an API.
 #[doc(hidden)]
 pub mod fuzzing {
     /// Decodes `data` as a value of recalld's `memories` table, and as an edge whose

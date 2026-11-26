@@ -10,9 +10,6 @@ repository.workspace = true
 [lints]
 workspace = true
 
-[features]
-# Opens the MCP request parser to fuzz/. The daemon never enables it.
-fuzzing = []
 
 [dependencies]
 async-trait = { workspace = true }

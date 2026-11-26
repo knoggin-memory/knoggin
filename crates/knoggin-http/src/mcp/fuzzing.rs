@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The MCP request and argument parser, opened to `fuzz/` (feature `fuzzing`). Not an API:
-//! the daemon never enables the feature.
+//! The MCP request and argument parser, opened to `fuzz/`. Not an API: hidden from the
+//! docs, and no optional feature switches it on (the workspace has none).
 
 use knoggin_core::ops;
 use serde_json::Value;

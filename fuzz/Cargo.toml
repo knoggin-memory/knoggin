@@ -21,8 +21,8 @@ members = ["."]
 [dependencies]
 knoggin-core = { path = "../crates/knoggin-core" }
 knoggin-crypto = { path = "../crates/knoggin-crypto" }
-knoggin-http = { path = "../crates/knoggin-http", features = ["fuzzing"] }
-knoggin-import-recalld = { path = "../crates/knoggin-import-recalld", features = ["fuzzing"] }
+knoggin-http = { path = "../crates/knoggin-http" }
+knoggin-import-recalld = { path = "../crates/knoggin-import-recalld" }
 libfuzzer-sys = "0.4"
 serde_json = "1"
 
