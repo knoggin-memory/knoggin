@@ -670,7 +670,8 @@ pub struct Reinforced {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ForgetMemory {
-    /// The memory.
+    /// The memory (path parameter).
+    #[serde(skip_deserializing)]
     pub id: MemoryId,
     /// A check only: never filled in; a mismatch counts as an unknown ID.
     #[serde(default)]
@@ -766,7 +767,8 @@ safe_debug!(CreateNamespace: initial_stability, decay_rate_multiplier);
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdatePolicy {
-    /// The namespace.
+    /// The namespace (path parameter).
+    #[serde(skip_deserializing)]
     pub name: String,
     /// The new policy.
     pub policy: NamespacePolicy,
@@ -780,7 +782,8 @@ safe_debug!(UpdatePolicy: policy, dry_run);
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeleteNamespace {
-    /// The namespace; never `default`.
+    /// The namespace; never `default` (path parameter).
+    #[serde(skip_deserializing)]
     pub name: String,
     /// Remove its memories too.
     #[serde(default)]
@@ -1357,7 +1360,7 @@ mod tests {
         );
         let r: ReinforceMemory = serde_json::from_value(json!({})).unwrap();
         assert_eq!(r.quality, 3);
-        let d: DeleteNamespace = serde_json::from_value(json!({ "name": "x" })).unwrap();
+        let d: DeleteNamespace = serde_json::from_value(json!({})).unwrap();
         assert!(!d.force && !d.dry_run);
         let c: CreateNamespace = serde_json::from_value(json!({ "name": "x" })).unwrap();
         assert_eq!(c.initial_stability, 3.7145);
@@ -1381,10 +1384,17 @@ mod tests {
 
     #[test]
     fn path_ids_are_refused_in_a_body_but_serialized_for_the_hash() {
+        let id = json!({ "id": MemoryId::default() });
+        assert!(serde_json::from_value::<ReinforceMemory>(id.clone()).is_err());
+        assert!(serde_json::from_value::<ForgetMemory>(id).is_err());
+        assert!(serde_json::from_value::<DeleteNamespace>(json!({ "name": "x" })).is_err());
+        let policy = serde_json::to_value(NamespacePolicy::default()).unwrap();
         assert!(
-            serde_json::from_value::<ReinforceMemory>(json!({ "id": MemoryId::default() }))
+            serde_json::from_value::<UpdatePolicy>(json!({ "name": "x", "policy": policy }))
                 .is_err()
         );
+        let u: UpdatePolicy = serde_json::from_value(json!({ "policy": policy })).unwrap();
+        assert_eq!(u.name, "");
         let mut s: SupersedeMemory = serde_json::from_value(json!({ "summary": "s" })).unwrap();
         s.id = MemoryId::from_bytes([7; 16]);
         assert_eq!(
