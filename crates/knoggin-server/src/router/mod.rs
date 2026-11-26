@@ -72,26 +72,28 @@ pub fn guards(
 }
 
 /// The client address of a request: the peer, or when the peer is a trusted proxy, the
-/// right-most address in `X-Forwarded-For` that is not one. Canonical either way.
+/// right-most address in `X-Forwarded-For` that is not one. Canonical either way. An entry
+/// that does not parse ends the walk with the peer: what lies left of it cannot be told
+/// apart from what the client wrote itself.
 pub fn client_address(peer: IpAddr, headers: &HeaderMap, trusted: &[Cidr]) -> IpAddr {
     let peer = peer.to_canonical();
     let is_trusted = |ip: IpAddr| trusted.iter().any(|c| c.contains(ip));
     if !is_trusted(peer) {
         return peer;
     }
-    let forwarded: Vec<IpAddr> = headers
+    let entries: Vec<&str> = headers
         .get_all("x-forwarded-for")
         .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|v| v.split(','))
-        .filter_map(|t| t.trim().parse::<IpAddr>().ok())
-        .map(|ip| ip.to_canonical())
+        .flat_map(|v| v.to_str().unwrap_or(",").split(','))
         .collect();
-    forwarded
-        .into_iter()
-        .rev()
-        .find(|ip| !is_trusted(*ip))
-        .unwrap_or(peer)
+    for entry in entries.into_iter().rev() {
+        match entry.trim().parse::<IpAddr>() {
+            Ok(ip) if is_trusted(ip.to_canonical()) => {}
+            Ok(ip) => return ip.to_canonical(),
+            Err(_) => return peer,
+        }
+    }
+    peer
 }
 
 /// Whether a peer may connect to the public or the metrics listener: on one host only the
@@ -715,6 +717,18 @@ mod tests {
             client_address(proxy, &h, &trusted),
             "203.0.113.9".parse::<IpAddr>().unwrap()
         );
+        // An entry that does not parse counts as the peer, not as the address left of it.
+        let mut odd = HeaderMap::new();
+        odd.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.9, unknown"),
+        );
+        assert_eq!(client_address(proxy, &odd, &trusted), proxy);
+        odd.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static("203.0.113.9, garbage, 192.0.2.10"),
+        );
+        assert_eq!(client_address(proxy, &odd, &trusted), proxy);
         // Mapped addresses are made canonical.
         let mapped: IpAddr = "::ffff:192.0.2.10".parse().unwrap();
         assert_eq!(
