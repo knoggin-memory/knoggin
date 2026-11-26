@@ -273,11 +273,63 @@ struct ApiDoc;
 /// The document as JSON text, made once.
 pub(crate) fn document_json() -> String {
     static DOC: LazyLock<String> = LazyLock::new(|| {
-        ApiDoc::openapi()
-            .to_pretty_json()
-            .unwrap_or_else(|_| "{}".into())
+        public_names(ApiDoc::openapi())
+            .and_then(|doc| doc.to_pretty_json().ok())
+            .unwrap_or_else(|| "{}".into())
     });
     DOC.clone()
+}
+
+/// The public name of a generic shape that utoipa names `<Type>_<Argument>`: a page of
+/// memories is `MemoryPage`, a list that is not paged `StoreList`, the batch answer
+/// `BatchResult`. utoipa 6 names a generic only that way, and the shapes live in
+/// `knoggin-core`, so the names are set here.
+fn public_name(name: &str) -> Option<String> {
+    let (wrapper, argument) = name.split_once('_')?;
+    match wrapper {
+        "Page" => Some(format!("{argument}Page")),
+        "Items" => Some(format!("{argument}List")),
+        "BatchResult" | "BatchItemResult" => Some(wrapper.to_owned()),
+        _ => None,
+    }
+}
+
+/// `doc` with every generic shape renamed by [`public_name`], in the components and in
+/// every `$ref`.
+fn public_names(doc: utoipa::openapi::OpenApi) -> Option<utoipa::openapi::OpenApi> {
+    fn rename_refs(value: &mut serde_json::Value) {
+        const PREFIX: &str = "#/components/schemas/";
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(serde_json::Value::String(target)) = map.get_mut("$ref")
+                    && let Some(new) = target.strip_prefix(PREFIX).and_then(public_name)
+                {
+                    *target = format!("{PREFIX}{new}");
+                }
+                map.values_mut().for_each(rename_refs);
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(rename_refs),
+            _ => {}
+        }
+    }
+    let mut value = serde_json::to_value(&doc).ok()?;
+    if let Some(schemas) = value
+        .pointer_mut("/components/schemas")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        let old: Vec<String> = schemas
+            .keys()
+            .filter(|k| public_name(k).is_some())
+            .cloned()
+            .collect();
+        for name in old {
+            if let (Some(schema), Some(new)) = (schemas.remove(&name), public_name(&name)) {
+                schemas.insert(new, schema);
+            }
+        }
+    }
+    rename_refs(&mut value);
+    serde_json::from_value(value).ok()
 }
 
 /// Writes the document to `path` (`docs/openapi.json`), with a final newline.
@@ -330,5 +382,23 @@ mod tests {
             assert!(schemas.contains_key(name), "{name} missing");
         }
         assert!(doc["paths"]["/v1/stores/{id}/keys/{keyId}/rotate"]["post"].is_object());
+    }
+
+    #[test]
+    fn every_schema_has_a_public_name_and_every_ref_resolves() {
+        let text = document_json();
+        let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let schemas = doc["components"]["schemas"].as_object().unwrap();
+        for name in schemas.keys() {
+            assert!(!name.contains('_'), "{name} is not a public name");
+        }
+        for name in ["MemoryPage", "StoreList", "BatchResult", "BatchItemResult"] {
+            assert!(schemas.contains_key(name), "{name} missing");
+        }
+        for target in text.split("\"$ref\": \"").skip(1) {
+            let target = &target[..target.find('"').unwrap()];
+            let name = target.strip_prefix("#/components/schemas/").unwrap();
+            assert!(schemas.contains_key(name), "{target} does not resolve");
+        }
     }
 }

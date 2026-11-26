@@ -322,6 +322,7 @@ pub(crate) async fn browser_code(
 #[serde(deny_unknown_fields)]
 #[schema(as = LocalSessionRequest)]
 pub(crate) struct CodeBody {
+    #[schema(inline)]
     code: Sensitive<String>,
 }
 

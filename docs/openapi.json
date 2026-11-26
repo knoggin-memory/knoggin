@@ -589,7 +589,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_Memory"
+                  "$ref": "#/components/schemas/MemoryPage"
                 }
               }
             }
@@ -741,7 +741,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BatchResult_StoredMemory"
+                  "$ref": "#/components/schemas/BatchResult"
                 }
               }
             }
@@ -1225,7 +1225,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Items_SimilarHit"
+                  "$ref": "#/components/schemas/SimilarHitList"
                 }
               }
             }
@@ -1366,7 +1366,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Items_Namespace"
+                  "$ref": "#/components/schemas/NamespaceList"
                 }
               }
             }
@@ -1833,7 +1833,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Items_Store"
+                  "$ref": "#/components/schemas/StoreList"
                 }
               }
             }
@@ -2027,7 +2027,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Items_ApiKey"
+                  "$ref": "#/components/schemas/ApiKeyList"
                 }
               }
             }
@@ -2330,7 +2330,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_TagCount"
+                  "$ref": "#/components/schemas/TagCountPage"
                 }
               }
             }
@@ -2378,7 +2378,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Page_User"
+                  "$ref": "#/components/schemas/UserPage"
                 }
               }
             }
@@ -2454,7 +2454,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Items_Store"
+                  "$ref": "#/components/schemas/StoreList"
                 }
               }
             }
@@ -2687,6 +2687,76 @@
           }
         }
       },
+      "ApiKeyList": {
+        "type": "object",
+        "description": "A list that is not paged.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "An API key, without its secret.",
+              "required": [
+                "id",
+                "name",
+                "prefix",
+                "permissions",
+                "createdAt",
+                "expiresAt"
+              ],
+              "properties": {
+                "createdAt": {
+                  "$ref": "#/components/schemas/Timestamp"
+                },
+                "expiresAt": {
+                  "$ref": "#/components/schemas/Timestamp"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "lastUsedOn": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`YYYY-MM-DD`, or `null`."
+                },
+                "name": {
+                  "type": "string"
+                },
+                "permissions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "example": [
+                    "memory:read",
+                    "memory:write"
+                  ]
+                },
+                "prefix": {
+                  "type": "string"
+                },
+                "revokedAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "The items."
+          }
+        }
+      },
       "Backends": {
         "type": "object",
         "description": "The backends of this process.",
@@ -2715,7 +2785,7 @@
           }
         }
       },
-      "BatchItemResult_StoredMemory": {
+      "BatchItemResult": {
         "type": "object",
         "description": "One entry of a batch result, in request order.",
         "required": [
@@ -2824,7 +2894,7 @@
           }
         }
       },
-      "BatchResult_StoredMemory": {
+      "BatchResult": {
         "type": "object",
         "description": "The answer of a batch save.",
         "required": [
@@ -2842,7 +2912,7 @@
           "results": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/BatchItemResult_StoredMemory"
+              "$ref": "#/components/schemas/BatchItemResult"
             },
             "description": "One entry per item, in order."
           },
@@ -3668,251 +3738,6 @@
           }
         }
       },
-      "Items_ApiKey": {
-        "type": "object",
-        "description": "A list that is not paged.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "description": "An API key, without its secret.",
-              "required": [
-                "id",
-                "name",
-                "prefix",
-                "permissions",
-                "createdAt",
-                "expiresAt"
-              ],
-              "properties": {
-                "createdAt": {
-                  "$ref": "#/components/schemas/Timestamp"
-                },
-                "expiresAt": {
-                  "$ref": "#/components/schemas/Timestamp"
-                },
-                "id": {
-                  "type": "string",
-                  "format": "uuid"
-                },
-                "lastUsedOn": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "`YYYY-MM-DD`, or `null`."
-                },
-                "name": {
-                  "type": "string"
-                },
-                "permissions": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "example": [
-                    "memory:read",
-                    "memory:write"
-                  ]
-                },
-                "prefix": {
-                  "type": "string"
-                },
-                "revokedAt": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Timestamp"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "The items."
-          }
-        }
-      },
-      "Items_Namespace": {
-        "type": "object",
-        "description": "A list that is not paged.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "description": "A namespace as the API shows it (schema `Namespace`).",
-              "required": [
-                "name",
-                "createdAt",
-                "memoryCount",
-                "policy"
-              ],
-              "properties": {
-                "createdAt": {
-                  "$ref": "#/components/schemas/Timestamp",
-                  "description": "When it was made."
-                },
-                "memoryCount": {
-                  "type": "integer",
-                  "format": "int64",
-                  "description": "Memories in every phase, ghosts included.",
-                  "minimum": 0
-                },
-                "name": {
-                  "type": "string",
-                  "description": "Name."
-                },
-                "policy": {
-                  "$ref": "#/components/schemas/NamespacePolicy",
-                  "description": "Decay policy."
-                },
-                "wouldChange": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/WouldChange",
-                      "description": "On a policy dry run: what the next sweep would move under the new policy."
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              }
-            },
-            "description": "The items."
-          }
-        }
-      },
-      "Items_SimilarHit": {
-        "type": "object",
-        "description": "A list that is not paged.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "description": "One similar memory (without `fullText`).",
-              "required": [
-                "memory",
-                "score"
-              ],
-              "properties": {
-                "memory": {
-                  "$ref": "#/components/schemas/Memory",
-                  "description": "The memory."
-                },
-                "score": {
-                  "type": "number",
-                  "format": "float",
-                  "description": "Cosine."
-                }
-              }
-            },
-            "description": "The items."
-          }
-        }
-      },
-      "Items_Store": {
-        "type": "object",
-        "description": "A list that is not paged.",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "description": "An account-level store record, not its memories.",
-              "required": [
-                "id",
-                "kind",
-                "name",
-                "createdAt",
-                "memoryCount",
-                "namespaceCount",
-                "status"
-              ],
-              "properties": {
-                "createdAt": {
-                  "$ref": "#/components/schemas/Timestamp"
-                },
-                "deleteAfter": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Timestamp"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "deletedAt": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Timestamp"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "id": {
-                  "$ref": "#/components/schemas/StoreId"
-                },
-                "kind": {
-                  "$ref": "#/components/schemas/Kind"
-                },
-                "lastWriteAt": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Timestamp"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "lastWriteClient": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "memoryCount": {
-                  "type": "integer",
-                  "format": "int64",
-                  "minimum": 0
-                },
-                "name": {
-                  "type": "string"
-                },
-                "namespaceCount": {
-                  "type": "integer",
-                  "format": "int64",
-                  "minimum": 0
-                },
-                "status": {
-                  "$ref": "#/components/schemas/Status"
-                }
-              }
-            },
-            "description": "The items."
-          }
-        }
-      },
       "Kind": {
         "type": "string",
         "description": "`personal` or `app`.",
@@ -3942,7 +3767,7 @@
         ],
         "properties": {
           "code": {
-            "$ref": "#/components/schemas/String_String"
+            "type": "string"
           }
         },
         "additionalProperties": false
@@ -4123,6 +3948,186 @@
         "type": "string",
         "format": "uuid",
         "description": "Identity of one memory. UUIDv7, so the natural order is creation order."
+      },
+      "MemoryPage": {
+        "type": "object",
+        "description": "A page of a list (`nextCursor` is `null` on the last page).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "The full view of a memory (schema `Memory`). `summary` is absent for a ghost;\n`fullText` is absent when there is none or the route leaves it out.",
+              "required": [
+                "id",
+                "namespace",
+                "createdAt",
+                "tags",
+                "entities",
+                "topics",
+                "emotions",
+                "phase",
+                "strength",
+                "effectiveStrength",
+                "stability",
+                "isPermastore",
+                "accessCount",
+                "edgeCount",
+                "embedding",
+                "savedBy"
+              ],
+              "properties": {
+                "accessCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Total recorded accesses.",
+                  "minimum": 0
+                },
+                "accessHistory": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/components/schemas/AccessEvent"
+                  },
+                  "description": "Oldest first; only where a route asks for it."
+                },
+                "client": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The MCP client that saved it."
+                },
+                "createdAt": {
+                  "$ref": "#/components/schemas/Timestamp",
+                  "description": "When it was saved."
+                },
+                "edgeCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Edges stored for the memory, of every type, whatever is at the other end.",
+                  "minimum": 0
+                },
+                "effectiveStrength": {
+                  "type": "number",
+                  "format": "float",
+                  "description": "Strength with the connection bonus."
+                },
+                "embedding": {
+                  "$ref": "#/components/schemas/EmbeddingState",
+                  "description": "Whether it has a vector."
+                },
+                "emotions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Emotions, as given."
+                },
+                "entities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Entities, as given."
+                },
+                "fullText": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The long text, where the route includes it."
+                },
+                "id": {
+                  "$ref": "#/components/schemas/MemoryId",
+                  "description": "Identity."
+                },
+                "isPermastore": {
+                  "type": "boolean",
+                  "description": "Exempt from decay."
+                },
+                "namespace": {
+                  "type": "string",
+                  "description": "The namespace's name."
+                },
+                "phase": {
+                  "$ref": "#/components/schemas/Phase",
+                  "description": "How much content is left."
+                },
+                "reinforcedAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp",
+                      "description": "Last reinforcement."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "retrievedAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp",
+                      "description": "Last recorded access."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "savedBy": {
+                  "type": "string",
+                  "description": "The credential that saved it."
+                },
+                "stability": {
+                  "type": "number",
+                  "format": "float",
+                  "description": "Days."
+                },
+                "strength": {
+                  "type": "number",
+                  "format": "float",
+                  "description": "Raw strength now."
+                },
+                "summary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The short text; absent for a ghost."
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Tag"
+                  },
+                  "description": "Free labels."
+                },
+                "topics": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Topics, as given."
+                }
+              }
+            },
+            "description": "The items."
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor of the next page."
+          }
+        }
       },
       "ModelState": {
         "type": "object",
@@ -4339,6 +4344,60 @@
           }
         }
       },
+      "NamespaceList": {
+        "type": "object",
+        "description": "A list that is not paged.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A namespace as the API shows it (schema `Namespace`).",
+              "required": [
+                "name",
+                "createdAt",
+                "memoryCount",
+                "policy"
+              ],
+              "properties": {
+                "createdAt": {
+                  "$ref": "#/components/schemas/Timestamp",
+                  "description": "When it was made."
+                },
+                "memoryCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Memories in every phase, ghosts included.",
+                  "minimum": 0
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Name."
+                },
+                "policy": {
+                  "$ref": "#/components/schemas/NamespacePolicy",
+                  "description": "Decay policy."
+                },
+                "wouldChange": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WouldChange",
+                      "description": "On a policy dry run: what the next sweep would move under the new policy."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "The items."
+          }
+        }
+      },
       "NamespacePolicy": {
         "type": "object",
         "description": "A namespace's decay policy. Also the `policy` object of the API, where all five\nkeys are required and `decayRateMultiplier` may be `null`.",
@@ -4507,321 +4566,6 @@
             "type": "number",
             "format": "float",
             "description": "0.85."
-          }
-        }
-      },
-      "Page_Memory": {
-        "type": "object",
-        "description": "A page of a list (`nextCursor` is `null` on the last page).",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "description": "The full view of a memory (schema `Memory`). `summary` is absent for a ghost;\n`fullText` is absent when there is none or the route leaves it out.",
-              "required": [
-                "id",
-                "namespace",
-                "createdAt",
-                "tags",
-                "entities",
-                "topics",
-                "emotions",
-                "phase",
-                "strength",
-                "effectiveStrength",
-                "stability",
-                "isPermastore",
-                "accessCount",
-                "edgeCount",
-                "embedding",
-                "savedBy"
-              ],
-              "properties": {
-                "accessCount": {
-                  "type": "integer",
-                  "format": "int64",
-                  "description": "Total recorded accesses.",
-                  "minimum": 0
-                },
-                "accessHistory": {
-                  "type": [
-                    "array",
-                    "null"
-                  ],
-                  "items": {
-                    "$ref": "#/components/schemas/AccessEvent"
-                  },
-                  "description": "Oldest first; only where a route asks for it."
-                },
-                "client": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "The MCP client that saved it."
-                },
-                "createdAt": {
-                  "$ref": "#/components/schemas/Timestamp",
-                  "description": "When it was saved."
-                },
-                "edgeCount": {
-                  "type": "integer",
-                  "format": "int64",
-                  "description": "Edges stored for the memory, of every type, whatever is at the other end.",
-                  "minimum": 0
-                },
-                "effectiveStrength": {
-                  "type": "number",
-                  "format": "float",
-                  "description": "Strength with the connection bonus."
-                },
-                "embedding": {
-                  "$ref": "#/components/schemas/EmbeddingState",
-                  "description": "Whether it has a vector."
-                },
-                "emotions": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "description": "Emotions, as given."
-                },
-                "entities": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "description": "Entities, as given."
-                },
-                "fullText": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "The long text, where the route includes it."
-                },
-                "id": {
-                  "$ref": "#/components/schemas/MemoryId",
-                  "description": "Identity."
-                },
-                "isPermastore": {
-                  "type": "boolean",
-                  "description": "Exempt from decay."
-                },
-                "namespace": {
-                  "type": "string",
-                  "description": "The namespace's name."
-                },
-                "phase": {
-                  "$ref": "#/components/schemas/Phase",
-                  "description": "How much content is left."
-                },
-                "reinforcedAt": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Timestamp",
-                      "description": "Last reinforcement."
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "retrievedAt": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Timestamp",
-                      "description": "Last recorded access."
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "savedBy": {
-                  "type": "string",
-                  "description": "The credential that saved it."
-                },
-                "stability": {
-                  "type": "number",
-                  "format": "float",
-                  "description": "Days."
-                },
-                "strength": {
-                  "type": "number",
-                  "format": "float",
-                  "description": "Raw strength now."
-                },
-                "summary": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "The short text; absent for a ghost."
-                },
-                "tags": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Tag"
-                  },
-                  "description": "Free labels."
-                },
-                "topics": {
-                  "type": "array",
-                  "items": {
-                    "type": "string"
-                  },
-                  "description": "Topics, as given."
-                }
-              }
-            },
-            "description": "The items."
-          },
-          "nextCursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Opaque cursor of the next page."
-          }
-        }
-      },
-      "Page_TagCount": {
-        "type": "object",
-        "description": "A page of a list (`nextCursor` is `null` on the last page).",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "description": "One tag with the number of memories that carry it.",
-              "required": [
-                "tag",
-                "count"
-              ],
-              "properties": {
-                "count": {
-                  "type": "integer",
-                  "format": "int64",
-                  "description": "Memories in the namespace that carry it.",
-                  "minimum": 0
-                },
-                "tag": {
-                  "type": "string",
-                  "description": "The tag."
-                }
-              }
-            },
-            "description": "The items."
-          },
-          "nextCursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Opaque cursor of the next page."
-          }
-        }
-      },
-      "Page_User": {
-        "type": "object",
-        "description": "A page of a list (`nextCursor` is `null` on the last page).",
-        "required": [
-          "items"
-        ],
-        "properties": {
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "description": "One user of `GET /v1/users`.",
-              "required": [
-                "id",
-                "isAdmin",
-                "createdAt",
-                "appCount",
-                "container"
-              ],
-              "properties": {
-                "appCount": {
-                  "type": "integer",
-                  "format": "int64",
-                  "minimum": 0
-                },
-                "container": {
-                  "$ref": "#/components/schemas/ContainerView"
-                },
-                "createdAt": {
-                  "$ref": "#/components/schemas/Timestamp"
-                },
-                "deleteAfter": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Timestamp"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "deletedAt": {
-                  "oneOf": [
-                    {
-                      "$ref": "#/components/schemas/Timestamp"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "deletedBy": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "description": "`self`, `admin` or `null`."
-                },
-                "email": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "id": {
-                  "$ref": "#/components/schemas/UserId"
-                },
-                "isAdmin": {
-                  "type": "boolean"
-                },
-                "lastActiveOn": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                },
-                "name": {
-                  "type": [
-                    "string",
-                    "null"
-                  ]
-                }
-              }
-            },
-            "description": "The items."
-          },
-          "nextCursor": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Opaque cursor of the next page."
           }
         }
       },
@@ -5334,6 +5078,38 @@
           }
         }
       },
+      "SimilarHitList": {
+        "type": "object",
+        "description": "A list that is not paged.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One similar memory (without `fullText`).",
+              "required": [
+                "memory",
+                "score"
+              ],
+              "properties": {
+                "memory": {
+                  "$ref": "#/components/schemas/Memory",
+                  "description": "The memory."
+                },
+                "score": {
+                  "type": "number",
+                  "format": "float",
+                  "description": "Cosine."
+                }
+              }
+            },
+            "description": "The items."
+          }
+        }
+      },
       "Status": {
         "type": "string",
         "description": "`active` or `deleted`.",
@@ -5422,6 +5198,95 @@
         "type": "string",
         "format": "uuid",
         "description": "Identity of one store."
+      },
+      "StoreList": {
+        "type": "object",
+        "description": "A list that is not paged.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "An account-level store record, not its memories.",
+              "required": [
+                "id",
+                "kind",
+                "name",
+                "createdAt",
+                "memoryCount",
+                "namespaceCount",
+                "status"
+              ],
+              "properties": {
+                "createdAt": {
+                  "$ref": "#/components/schemas/Timestamp"
+                },
+                "deleteAfter": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "deletedAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "$ref": "#/components/schemas/StoreId"
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/Kind"
+                },
+                "lastWriteAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "lastWriteClient": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "memoryCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "name": {
+                  "type": "string"
+                },
+                "namespaceCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "status": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            },
+            "description": "The items."
+          }
+        }
       },
       "StoreMemories": {
         "type": "object",
@@ -5743,9 +5608,6 @@
           }
         }
       },
-      "String_String": {
-        "type": "string"
-      },
       "SupersedeMemory": {
         "type": "object",
         "description": "`POST /v1/memories/{id}/supersede`: a new memory in the old one's namespace.",
@@ -5831,6 +5693,46 @@
           "tag": {
             "type": "string",
             "description": "The tag."
+          }
+        }
+      },
+      "TagCountPage": {
+        "type": "object",
+        "description": "A page of a list (`nextCursor` is `null` on the last page).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One tag with the number of memories that carry it.",
+              "required": [
+                "tag",
+                "count"
+              ],
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Memories in the namespace that carry it.",
+                  "minimum": 0
+                },
+                "tag": {
+                  "type": "string",
+                  "description": "The tag."
+                }
+              }
+            },
+            "description": "The items."
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor of the next page."
           }
         }
       },
@@ -5951,6 +5853,101 @@
         "type": "string",
         "format": "uuid",
         "description": "Identity of one user."
+      },
+      "UserPage": {
+        "type": "object",
+        "description": "A page of a list (`nextCursor` is `null` on the last page).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One user of `GET /v1/users`.",
+              "required": [
+                "id",
+                "isAdmin",
+                "createdAt",
+                "appCount",
+                "container"
+              ],
+              "properties": {
+                "appCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "container": {
+                  "$ref": "#/components/schemas/ContainerView"
+                },
+                "createdAt": {
+                  "$ref": "#/components/schemas/Timestamp"
+                },
+                "deleteAfter": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "deletedAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "deletedBy": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`self`, `admin` or `null`."
+                },
+                "email": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "$ref": "#/components/schemas/UserId"
+                },
+                "isAdmin": {
+                  "type": "boolean"
+                },
+                "lastActiveOn": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "description": "The items."
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor of the next page."
+          }
+        }
       },
       "WouldChange": {
         "type": "object",
