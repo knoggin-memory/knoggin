@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The `Launcher` interface (tab "Workspace and crates") and its small types: how a router
-//! starts, finds and stops user containers. `EcsLauncher` (milestone 7) and
+//! starts, finds and stops user containers. `EcsLauncher` (ECS tasks on AWS) and
 //! `DockerLauncher` (a client of the launcher service, tab "Deployment") implement it, and
 //! the fleet tests' fake launcher runs `serve` in the test process. The router never sends
 //! an image, a command or a mount: only the container ID, the build's spec and the five
@@ -19,8 +19,10 @@ use zeroize::Zeroizing;
 use crate::link::{CertPin, LaunchSecret};
 
 pub mod docker;
+pub mod ecs;
 
 pub use docker::DockerLauncher;
+pub use ecs::EcsLauncher;
 
 /// Starts, describes, lists and stops user containers.
 #[async_trait]
