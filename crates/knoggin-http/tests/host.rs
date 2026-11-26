@@ -470,3 +470,194 @@ async fn a_store_too_large_for_the_budget_stays_locked_in_this_container() {
     sleep(Duration::from_secs(1)).await;
     assert_eq!(counting.opens.load(Ordering::SeqCst), opens);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_locked_store_is_tried_again_after_a_minute() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(Permissions::READ_WRITE);
+    *env.counting.lock_with.lock().unwrap() = Some(LockReason::MasterKeyMissing);
+    let e = env.t.host.list_namespaces(&ctx).await.unwrap_err();
+    assert_eq!(
+        (e.code, e.reason),
+        (Code::StoreLocked, Some("master_key_missing"))
+    );
+    // The key comes back, but for a minute the lock holds without a new try.
+    *env.counting.lock_with.lock().unwrap() = None;
+    let opens = env.counting.opens.load(Ordering::SeqCst);
+    sleep(Duration::from_secs(59)).await;
+    let e = env.t.host.list_namespaces(&ctx).await.unwrap_err();
+    assert_eq!(e.reason, Some("master_key_missing"));
+    assert_eq!(env.counting.opens.load(Ordering::SeqCst), opens);
+    // After the minute, the status route tries again in the background.
+    sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        env.t.host.store_status(env.t.store).state,
+        StoreState::Locked(LockReason::MasterKeyMissing)
+    );
+    sleep(Duration::from_millis(10)).await;
+    assert_eq!(
+        env.t.host.store_status(env.t.store).state,
+        StoreState::Ready
+    );
+    env.t.host.list_namespaces(&ctx).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_data_key_no_master_key_unwraps_locks_the_store() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(Permissions::READ_WRITE);
+    save(&env, &ctx, "one").await;
+    assert!(env.t.host.save_all().await.is_empty());
+    env.t.host.shutdown();
+    // The same files and records under a master key set that never wrapped the key.
+    let other: std::sync::Arc<dyn knoggin_crypto::KeyProvider> = std::sync::Arc::new(
+        knoggin_crypto::LocalKeyProvider::new(knoggin_crypto::MasterKeySet::generate().unwrap()),
+    );
+    let data = env.t.backend.store_dir(env.t.store);
+    let data_dir = data.parent().unwrap().parent().unwrap();
+    let backend = std::sync::Arc::new(knoggin_http::host::LocalBackend::new(
+        data_dir,
+        other,
+        env.t.stores.clone(),
+        7,
+    ));
+    let (_tx, rx) = tokio::sync::watch::channel(knoggin_http::testing::fake_model_state(
+        knoggin_core::ops::ModelStatus::Loading,
+    ));
+    let embedder = knoggin_http::host::Embedder::new(rx, Default::default(), WAITS);
+    let host = knoggin_http::StoreHost::new(fake_config(), backend, embedder);
+    let e = host.list_namespaces(&ctx).await.unwrap_err();
+    assert_eq!(
+        (e.code, e.reason),
+        (Code::StoreLocked, Some("master_key_missing"))
+    );
+}
+
+#[tokio::test]
+async fn a_snapshot_of_a_newer_format_locks_the_store_and_changes_nothing() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(Permissions::READ_WRITE);
+    save(&env, &ctx, "one").await;
+    env.t.host.close(env.t.store).await.unwrap();
+    // A newer snapshot, sealed under the store's own key, in a format this build lacks.
+    let record = env.t.stores.get(env.t.store).await.unwrap().unwrap().value;
+    let wrapped = record.wrapped().unwrap();
+    let key = env.t.keys.unwrap(env.t.store, &wrapped).await.unwrap();
+    let name = knoggin_core::snapshot::SnapshotName::new(9, 1).unwrap();
+    let header = knoggin_crypto::container::Header::new(
+        env.t.store,
+        9,
+        1,
+        0,
+        knoggin_core::snapshot::WRITE_CONTENT_FORMAT + 1,
+        wrapped,
+    );
+    let bytes = knoggin_crypto::testing::seal_to_vec(header, key, b"from the future".to_vec());
+    let dir = env.t.backend.store_dir(env.t.store);
+    std::fs::write(dir.join(name.file_name()), &bytes).unwrap();
+    let files = std::fs::read_dir(&dir).unwrap().count();
+    let e = env.t.host.list_namespaces(&ctx).await.unwrap_err();
+    assert_eq!(
+        (e.code, e.reason),
+        (Code::StoreLocked, Some("format_too_new"))
+    );
+    assert_eq!(
+        std::fs::read_dir(&dir).unwrap().count(),
+        files,
+        "nothing written"
+    );
+    assert_eq!(std::fs::read(dir.join(name.file_name())).unwrap(), bytes);
+}
+
+#[tokio::test]
+async fn a_store_over_what_is_left_of_the_budget_opens_for_reading_only() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(Permissions::READ_WRITE);
+    for i in 0..20 {
+        save(&env, &ctx, &format!("memory {i} of the first store")).await;
+    }
+    let second = env.t.new_store("Second").await;
+    let ctx2 = env.t.ctx_for(second, Permissions::READ_WRITE);
+    save(&env, &ctx2, "the second store").await;
+    let sizes: Vec<u64> = env
+        .t
+        .host
+        .report()
+        .stores
+        .iter()
+        .map(|s| s.estimated_bytes)
+        .collect();
+    assert!(env.t.host.save_all().await.is_empty());
+    env.t.host.shutdown();
+    let total: u64 = sizes.iter().sum();
+    let mut config = fake_config();
+    config.memory_budget = Some(total - 1);
+    let (host, _) = second_host(&env, config);
+    host.list_namespaces(&ctx).await.unwrap();
+    // The second store loads, but over what the first left: reads only.
+    host.list_namespaces(&ctx2).await.unwrap();
+    assert!(host.store_status(second).full);
+    let e = host
+        .store_memory(&ctx2, mem("does not fit"), None)
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, Code::ResourceExhausted);
+    // Forgetting in the first store makes room, and the second takes writes again.
+    let all = host
+        .list_memories(&ctx, serde_json::from_value(json!({})).unwrap())
+        .await
+        .unwrap();
+    let ids: Vec<_> = all.items.iter().map(|m| m.id).collect();
+    let forget = serde_json::from_value(json!({ "ids": ids })).unwrap();
+    host.forget_memories(&ctx, forget, None).await.unwrap();
+    host.store_memory(&ctx2, mem("fits now"), None)
+        .await
+        .unwrap();
+    // `full` lasts until a write to the store succeeds (tab "Server").
+    assert!(!host.store_status(second).full);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_upload_refused_for_the_budget_blocks_writes_until_one_goes_through() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(Permissions::READ_WRITE);
+    *env.counting.fail_with.lock().unwrap() = knoggin_http::host::BackendError::OverBudget;
+    env.counting.fail_next.store(1, Ordering::SeqCst);
+    save(&env, &ctx, "one").await;
+    sleep(Duration::from_millis(600)).await;
+    assert_eq!(env.counting.failures.load(Ordering::SeqCst), 1);
+    let e = env
+        .t
+        .host
+        .store_memory(&ctx, mem("refused"), None)
+        .await
+        .unwrap_err();
+    assert_eq!((e.code, e.retry_after), (Code::RateLimited, Some(60)));
+    env.t.host.list_namespaces(&ctx).await.unwrap();
+    // The retry a second later goes through; writes are taken again.
+    sleep(Duration::from_secs(2)).await;
+    assert_eq!(env.counting.count(), 1);
+    save(&env, &ctx, "taken again").await;
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_lost_lease_stops_serving_and_writes_nothing_more() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(Permissions::READ_WRITE);
+    let lost = env.t.host.lease_lost();
+    *env.counting.fail_with.lock().unwrap() = knoggin_http::host::BackendError::LeaseLost;
+    env.counting.fail_next.store(1, Ordering::SeqCst);
+    save(&env, &ctx, "one").await;
+    sleep(Duration::from_millis(600)).await;
+    assert!(*lost.borrow());
+    assert!(!env.t.host.is_open(env.t.store));
+    let e = env.t.host.list_namespaces(&ctx).await.unwrap_err();
+    assert_eq!(e.code, Code::Unavailable);
+    assert!(env.t.host.save_all().await.is_empty());
+    sleep(Duration::from_secs(600)).await;
+    assert_eq!(
+        env.counting.count(),
+        0,
+        "no snapshot after the lease was lost"
+    );
+}
