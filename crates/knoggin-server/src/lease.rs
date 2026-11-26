@@ -428,10 +428,15 @@ impl Fleet {
         container.user_id = Some(user);
         let mut writes = Leases::writes(user, &next, cond_of(read)).map_err(db_error)?;
         writes.push(Containers::write(&container, found.cond()).map_err(db_error)?);
+        let started = Instant::now();
         match self.db.write(writes).await {
             Ok(()) => {
                 let fleet = self.clone();
-                self.spawn(async move { fleet.finish_claim(user, container, generation).await });
+                self.spawn(async move {
+                    fleet.finish_claim(user, container, generation).await;
+                    metrics::histogram!("knoggin_claim_seconds")
+                        .record(started.elapsed().as_secs_f64());
+                });
                 Ok(Step::Again)
             }
             // Another router got there first, or the lease changed: look again.
