@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{Ipv4Addr, SocketAddrV4};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::Router;
@@ -39,6 +39,7 @@ use uuid::Uuid;
 
 use crate::launcher::{ContainerEnv, LogLevel};
 use crate::link::{CertPin, LaunchSecret};
+use crate::lock;
 use crate::settings::{Cidr, LauncherServiceSettings, SecretText};
 
 /// The label every user container and network carries, with the value `user`.
@@ -114,10 +115,6 @@ impl std::fmt::Debug for LauncherService {
             .field("project", &self.project)
             .finish_non_exhaustive()
     }
-}
-
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 fn unavailable(what: &str) -> ApiError {

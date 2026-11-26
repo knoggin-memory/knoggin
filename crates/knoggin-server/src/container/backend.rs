@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -29,12 +29,12 @@ use crate::broker::api::{
     BrokerCode, CommitRequest, ErrorBody, ErrorEnvelope, NameParts, OpenAnswer, OpenRequest,
     SnapshotsRequest, UPLOAD_BUDGET, UploadLink, paths,
 };
-use crate::link::{LaunchSecret, MAX_ANSWER_BYTES, RouterClient, write_container_call};
+use crate::link::{
+    LaunchSecret, MAX_ANSWER_BYTES, RouterClient, TRANSFER_IDLE, write_container_call,
+};
 
 /// The time limit of one broker call.
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
-/// A transfer of snapshot bytes ends when nothing moves for this long.
-const TRANSFER_IDLE: Duration = Duration::from_secs(60);
 /// Tries of a broker call that is answered 429 without a reason (too many calls).
 const BUSY_TRIES: u32 = 5;
 /// Tries of `parked`...
@@ -299,18 +299,7 @@ impl Link {
 type BodyStream = std::pin::Pin<Box<dyn Stream<Item = io::Result<Bytes>> + Send>>;
 
 fn idle_limited(stream: BodyStream) -> BodyStream {
-    Box::pin(futures_util::stream::unfold(
-        Some(stream),
-        |state| async move {
-            let mut stream = state?;
-            match tokio::time::timeout(TRANSFER_IDLE, stream.next()).await {
-                Ok(Some(Ok(bytes))) => Some((Ok(bytes), Some(stream))),
-                Ok(Some(Err(e))) => Some((Err(e), None)),
-                Ok(None) => None,
-                Err(_) => Some((Err(io::Error::from(io::ErrorKind::TimedOut)), None)),
-            }
-        },
-    ))
+    Box::pin(crate::link::idle_limited(stream, ()))
 }
 
 /// A commit whose upload went through but whose commit failed: it is tried again, for
@@ -345,7 +334,7 @@ impl RouterBackend {
     }
 
     fn pending(&self) -> std::sync::MutexGuard<'_, HashMap<StoreId, Pending>> {
-        self.pending.lock().unwrap_or_else(PoisonError::into_inner)
+        crate::lock(&self.pending)
     }
 
     async fn commit(

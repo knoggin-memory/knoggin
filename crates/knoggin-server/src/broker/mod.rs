@@ -25,7 +25,6 @@ use axum::extract::{Extension, Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, post};
-use bytes::Bytes;
 use knoggin_core::snapshot::SnapshotName;
 use knoggin_core::{StoreId, Timestamp, UserId};
 use knoggin_crypto::{KeyError, KeyProvider};
@@ -34,7 +33,6 @@ use knoggin_state::record::{Lease, LeaseState, Newest, ParkReason, StoreRecord};
 use knoggin_state::{Clock, Leases, StateError, Stores, Versioned};
 use serde::Serialize;
 use uuid::Uuid;
-use zeroize::Zeroizing;
 
 pub use limits::{PeerGuard, PeerLimits};
 
@@ -43,6 +41,7 @@ use self::api::{
     UPLOAD_BUDGET, UploadLink, paths,
 };
 use self::limits::{CallLimits, CallSlot, HourlyBytes};
+use crate::json;
 use crate::link::{
     CallRefused, ContainerCaller, InternalSecret, LinkError, MAX_ANSWER_BYTES, PeerAddr,
     verify_container_call,
@@ -361,19 +360,6 @@ async fn body<T: serde::de::DeserializeOwned>(body: Body) -> Result<T, BrokerErr
         .map_err(|_| BrokerError::invalid())?;
     let text: &[u8] = if bytes.is_empty() { b"{}" } else { &bytes };
     serde_json::from_slice(text).map_err(|_| BrokerError::invalid())
-}
-
-fn json(value: &impl Serialize) -> Response {
-    // The answers are structs of numbers and strings; they always serialize.
-    let bytes = Zeroizing::new(serde_json::to_vec(value).unwrap_or_default());
-    (
-        [(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
-        )],
-        Bytes::copy_from_slice(&bytes),
-    )
-        .into_response()
 }
 
 fn name_of(n: Newest) -> Option<SnapshotName> {

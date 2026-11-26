@@ -6,11 +6,13 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, SocketAddr};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 use knoggin_core::UserId;
 use knoggin_state::Clock;
 use uuid::Uuid;
+
+use crate::lock;
 
 const MINUTE_MS: i64 = 60_000;
 const HOUR_MS: i64 = 3_600_000;
@@ -42,10 +44,6 @@ impl Now {
     fn ms(&self) -> i64 {
         (self.0)()
     }
-}
-
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// A fixed one-minute window: the count and when it began.

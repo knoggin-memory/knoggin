@@ -16,7 +16,7 @@ use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::pin;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::Router;
@@ -34,6 +34,7 @@ pub use backend::RouterBackend;
 use self::backend::Link;
 use crate::launcher::{BuildInfo, ContainerEnv};
 use crate::link::{ServerIdentity, Token, router_client, serve_tls, server_config};
+use crate::lock;
 
 /// Request bodies a container holds in flight at most.
 pub const BODY_BYTES_IN_FLIGHT: u32 = 64 * 1024 * 1024;
@@ -224,10 +225,6 @@ pub(crate) struct Shared {
     cut: watch::Sender<bool>,
     /// The last `hello` nonces, refused if sent again.
     nonces: Mutex<VecDeque<String>>,
-}
-
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Counts one request as activity until dropped.

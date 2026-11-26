@@ -33,7 +33,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 use super::{
-    ActivityGuard, BODY_BYTES_IN_FLIGHT, Claim, EMBED_ALLOWANCE, Phase, RouterBackend, Shared, lock,
+    ActivityGuard, BODY_BYTES_IN_FLIGHT, Claim, EMBED_ALLOWANCE, Phase, RouterBackend, Shared,
 };
 use crate::link::api::{
     ClaimRequest, ContainerPhase, Counters, HelloAnswer, PROTOCOLS, ParkRequest, StatusAnswer,
@@ -41,6 +41,7 @@ use crate::link::api::{
 };
 use crate::link::{CallRefused, MAX_ANSWER_BYTES, Nonce, verify_router_call};
 use crate::settings::store_budget;
+use crate::{json, lock};
 
 /// How many `hello` nonces are remembered.
 const NONCES_KEPT: usize = 64;
@@ -95,17 +96,6 @@ async fn json_body<T: serde::de::DeserializeOwned>(body: Body) -> Result<T, ApiE
         .await
         .map_err(|_| ApiError::invalid_argument("body", "The body is too large"))?;
     serde_json::from_slice(&bytes).map_err(|_| ApiError::invalid_argument("body", "Bad body"))
-}
-
-fn json(value: &impl serde::Serialize) -> Response {
-    (
-        [(
-            header::CONTENT_TYPE,
-            HeaderValue::from_static("application/json"),
-        )],
-        serde_json::to_vec(value).unwrap_or_default(),
-    )
-        .into_response()
 }
 
 #[derive(Deserialize)]

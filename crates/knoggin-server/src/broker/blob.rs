@@ -6,24 +6,20 @@
 //! else. The bytes stream through; nothing is kept.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{Extension, Request, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use bytes::Bytes;
-use futures_util::{Stream, StreamExt};
+use futures_util::StreamExt;
 use knoggin_http::ctx::headers;
 use knoggin_http::error::Code;
 
 use super::api::paths;
 use super::{Broker, BrokerError, check, storage_failed, store_of};
 use crate::link::PeerAddr;
+use crate::link::idle_limited;
 use crate::storage::names;
-
-/// A transfer ends when no bytes moved for this long.
-pub(crate) const IDLE: Duration = Duration::from_secs(60);
 
 /// The query parameters a link carries; any other, or one twice, is refused.
 const SIGNED_PARAMS: [&str; 7] = [
@@ -80,34 +76,6 @@ fn is_link_header(name: &str) -> bool {
         || name == headers::CONTAINER_ID.as_str()
         || name == headers::PROTOCOL.as_str()
         || name == header::HOST.as_str()
-}
-
-/// Ends a byte stream with an error when nothing arrives for [`IDLE`], and keeps `guard`
-/// for as long as the stream lives.
-pub(crate) fn idle_limited<S, E, G>(
-    stream: S,
-    guard: G,
-) -> impl Stream<Item = Result<Bytes, std::io::Error>> + Send + 'static
-where
-    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
-    E: std::fmt::Display + Send + 'static,
-    G: Send + 'static,
-{
-    futures_util::stream::unfold(Some((Box::pin(stream), guard)), |state| async move {
-        let (mut stream, guard) = state?;
-        match tokio::time::timeout(IDLE, stream.next()).await {
-            Ok(Some(Ok(bytes))) => Some((Ok(bytes), Some((stream, guard)))),
-            Ok(None) => None,
-            Ok(Some(Err(_))) => Some((Err(std::io::Error::other("the transfer broke")), None)),
-            Err(_) => Some((
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "no bytes moved",
-                )),
-                None,
-            )),
-        }
-    })
 }
 
 /// The headers that go to the bucket: those the signature names, each sent once by the
@@ -251,22 +219,6 @@ pub(super) async fn blob(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test(start_paused = true)]
-    async fn a_transfer_ends_after_a_minute_without_bytes() {
-        let started = tokio::time::Instant::now();
-        let first =
-            futures_util::stream::once(async { Ok::<_, std::io::Error>(Bytes::from_static(b"x")) });
-        let mut s = Box::pin(idle_limited(
-            first.chain(futures_util::stream::pending()),
-            (),
-        ));
-        assert_eq!(s.next().await.unwrap().unwrap(), Bytes::from_static(b"x"));
-        let err = s.next().await.unwrap().unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
-        assert!(started.elapsed() >= IDLE);
-        assert!(s.next().await.is_none(), "nothing after the error");
-    }
 
     #[test]
     fn an_upload_sends_content_length_once() {

@@ -25,6 +25,38 @@ pub use listen::{HEADER_READ_TIMEOUT, PeerAddr, serve_tls};
 pub use secret::{CertPin, InternalSecret, LaunchSecret, Nonce, Token};
 pub use tls::{hello_client_config, pinned_client_config, server_config};
 
+/// A snapshot transfer ends when no bytes moved for this long, in either direction.
+pub(crate) const TRANSFER_IDLE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Ends a byte stream with an error when nothing arrives for [`TRANSFER_IDLE`], and keeps `guard`
+/// for as long as the stream lives.
+pub(crate) fn idle_limited<S, E, G>(
+    stream: S,
+    guard: G,
+) -> impl futures_util::Stream<Item = Result<bytes::Bytes, std::io::Error>> + Send + 'static
+where
+    S: futures_util::Stream<Item = Result<bytes::Bytes, E>> + Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+    G: Send + 'static,
+{
+    futures_util::stream::unfold(Some((Box::pin(stream), guard)), |state| async move {
+        let (mut stream, guard) = state?;
+        match tokio::time::timeout(TRANSFER_IDLE, futures_util::StreamExt::next(&mut stream)).await
+        {
+            Ok(Some(Ok(bytes))) => Some((Ok(bytes), Some((stream, guard)))),
+            Ok(None) => None,
+            Ok(Some(Err(_))) => Some((Err(std::io::Error::other("the transfer broke")), None)),
+            Err(_) => Some((
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "no bytes moved",
+                )),
+                None,
+            )),
+        }
+    })
+}
+
 /// What can go wrong on the link. No variant carries a secret, an address or a URL.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LinkError {
@@ -62,6 +94,7 @@ mod tests {
     use axum::http::{HeaderMap, Request, StatusCode};
     use axum::routing::get;
     use bytes::Bytes;
+    use futures_util::StreamExt;
     use http_body_util::{BodyExt, Empty};
     use knoggin_core::UserId;
     use tokio::net::TcpListener;
@@ -254,6 +287,22 @@ mod tests {
             assert_eq!(refused.load(std::sync::atomic::Ordering::SeqCst), 1);
         }
         stop.send(()).unwrap();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_transfer_ends_after_a_minute_without_bytes() {
+        let started = tokio::time::Instant::now();
+        let first =
+            futures_util::stream::once(async { Ok::<_, std::io::Error>(Bytes::from_static(b"x")) });
+        let mut s = Box::pin(idle_limited(
+            first.chain(futures_util::stream::pending()),
+            (),
+        ));
+        assert_eq!(s.next().await.unwrap().unwrap(), Bytes::from_static(b"x"));
+        let err = s.next().await.unwrap().unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() >= TRANSFER_IDLE);
+        assert!(s.next().await.is_none(), "nothing after the error");
     }
 
     #[tokio::test(start_paused = true)]

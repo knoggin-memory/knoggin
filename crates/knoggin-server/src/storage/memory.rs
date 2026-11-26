@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -32,6 +32,7 @@ use tokio::task::{JoinHandle, JoinSet};
 
 use super::{ObjectInfo, ObjectStorage, SignedRequest, StorageError};
 use crate::hex;
+use crate::lock;
 
 /// The value of `X-Amz-Algorithm` on its links. Not SigV4: an HMAC of its own.
 pub const ALGORITHM: &str = "KNOGGIN-TEST-HMAC-SHA256";
@@ -138,10 +139,6 @@ impl Drop for MemoryStorage {
             task.abort();
         }
     }
-}
-
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 impl MemoryStorage {
