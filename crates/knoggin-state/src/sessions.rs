@@ -100,7 +100,7 @@ impl Sessions {
         session: &Versioned<Session>,
         now: i64,
     ) -> Result<(), StateError> {
-        if now - session.value.last_seen_ms <= SEEN_EVERY_MS {
+        if now.saturating_sub(session.value.last_seen_ms) <= SEEN_EVERY_MS {
             return Ok(());
         }
         let mut value = session.value.clone();
