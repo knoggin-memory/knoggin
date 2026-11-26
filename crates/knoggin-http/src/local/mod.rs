@@ -108,14 +108,17 @@ impl LocalSessions {
         Ok(Some(token))
     }
 
-    /// The session of a whole bearer value at `now`, which this request keeps alive.
-    pub(crate) fn check(&self, token: &str, now: i64) -> Option<[u8; 32]> {
+    /// The session of a whole bearer value at `now`. A request keeps it alive (`touch`);
+    /// the 60-second re-check of an open transfer does not.
+    pub(crate) fn check(&self, token: &str, now: i64, touch: bool) -> Option<[u8; 32]> {
         let hash = hash_secret(token);
         let mut held = self.held();
         held.sessions
             .retain(|_, seen| now.saturating_sub(*seen) < SESSION_IDLE_MS);
         let seen = held.sessions.get_mut(&hash)?;
-        *seen = now;
+        if touch {
+            *seen = now;
+        }
         Some(hash)
     }
 
@@ -674,10 +677,13 @@ mod tests {
         let late = s.new_code(now).unwrap();
         now += CODE_TTL_MS;
         assert!(s.redeem(&late, now).unwrap().is_none(), "a code expires");
-        assert!(s.check(&token, now).is_some());
+        assert!(s.check(&token, now, true).is_some());
         now += SESSION_IDLE_MS - 1000;
-        assert!(s.check(&token, now).is_some(), "a request keeps it alive");
+        assert!(
+            s.check(&token, now, true).is_some(),
+            "a request keeps it alive"
+        );
         now += SESSION_IDLE_MS;
-        assert!(s.check(&token, now).is_none(), "24 idle hours end it");
+        assert!(s.check(&token, now, true).is_none(), "24 idle hours end it");
     }
 }

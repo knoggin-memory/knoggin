@@ -214,7 +214,14 @@ pub(crate) fn state_error(e: StateError) -> ApiError {
 
 impl EdgeState {
     /// Steps 3 to 11 for one request. `Ok(None)` is a request without any credential.
-    async fn resolve(&self, p: &Presented, access: Access) -> Result<Option<Caller>, ApiError> {
+    /// `touch` is false for the re-check of an open transfer, which must not keep a local
+    /// web session alive.
+    async fn resolve(
+        &self,
+        p: &Presented,
+        access: Access,
+        touch: bool,
+    ) -> Result<Option<Caller>, ApiError> {
         let inner = self.inner();
         let now = self.now();
         // Steps 3 to 9.
@@ -229,7 +236,7 @@ impl EdgeState {
                     .as_ref()
                     .filter(|_| matches!(p.arrival, Arrival::Web { .. }));
                 let hash = local
-                    .and_then(|l| l.check(value, now))
+                    .and_then(|l| l.check(value, now, touch))
                     .ok_or_else(unauthenticated)?;
                 Credential::LocalSession(hash)
             } else if let Some(random) = value.strip_prefix(API_KEY_PREFIX) {
@@ -458,7 +465,7 @@ impl EdgeState {
     /// Steps 5 to 11 once more, for a transfer that is still open.
     async fn recheck(&self, p: &Presented, store: StoreId) -> Result<(), ApiError> {
         let caller = self
-            .resolve(p, Access::Control)
+            .resolve(p, Access::Control, false)
             .await?
             .ok_or_else(unauthenticated)?;
         let record = self
@@ -510,7 +517,7 @@ pub(crate) async fn control(
         return next.run(request).await;
     }
     let p = Presented::read(arrival, request.headers(), edge.inner().config.auth_mode);
-    let resolved = edge.resolve(&p, access).await;
+    let resolved = edge.resolve(&p, access, true).await;
     if access == Access::Session {
         // The session route answers `signedIn: false` where a step would refuse.
         let seen = match resolved {
@@ -626,7 +633,7 @@ async fn prepare(
 ) -> Result<Prepared, ApiError> {
     let arrival = arrival(request)?;
     let p = Presented::read(arrival, request.headers(), edge.inner().config.auth_mode);
-    let caller = match edge.resolve(&p, Access::Control).await {
+    let caller = match edge.resolve(&p, Access::Control, true).await {
         Ok(Some(c)) => c,
         Ok(None) => return Err(edge.refused(&p, unauthenticated())),
         Err(e) => return Err(edge.refused(&p, e)),
@@ -857,6 +864,61 @@ mod tests {
         let next = body.next().await.unwrap();
         assert!(next.is_err());
         assert!(body.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_transfer_recheck_does_not_keep_a_local_session_alive() {
+        use knoggin_crypto::KeyProvider;
+        use knoggin_state::testing::{TestClock, test_field_keys};
+        use knoggin_state::{LocalFileDb, StateDb, Users};
+
+        use crate::edge::{EdgeConfig, EdgeParts};
+        use crate::local::LocalSessions;
+
+        let clock = TestClock::new();
+        let db: Arc<dyn StateDb> = Arc::new(LocalFileDb::in_memory(clock.clock()));
+        let fields = Arc::new(test_field_keys());
+        let keys: Arc<dyn KeyProvider> = Arc::new(knoggin_crypto::testing::test_provider());
+        let users = Users::new(db.clone(), fields.clone());
+        let user = crate::local::ensure_local_user(&users, &*keys, clock.now())
+            .await
+            .unwrap();
+        let personal = users
+            .get(user)
+            .await
+            .unwrap()
+            .unwrap()
+            .value
+            .personal_store_id;
+        let local = Arc::new(LocalSessions::new("http://127.0.0.1:1".into()));
+        let parts = EdgeParts {
+            db,
+            field_keys: fields,
+            keys,
+            clock: clock.clock(),
+            host: None,
+            local: Some(local.clone()),
+        };
+        let config = EdgeConfig::local("http://127.0.0.1:7690".into(), "0.1.0".into());
+        let edge = EdgeState::new(config, parts).await.unwrap();
+        let code = local.new_code(clock.now()).unwrap();
+        let token = local.redeem(&code, clock.now()).unwrap().unwrap();
+        let mut map = HeaderMap::new();
+        map.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        let web = Arrival::Web {
+            authority: "127.0.0.1:1".into(),
+        };
+        let p = Presented::read(web, &map, AuthMode::None);
+        clock.advance(23 * MILLIS_PER_DAY / 24);
+        assert!(edge.recheck(&p, personal).await.is_ok());
+        clock.advance(2 * MILLIS_PER_DAY / 24);
+        assert!(
+            edge.recheck(&p, personal).await.is_err(),
+            "24 hours after the last request the session is idle, re-checks or not"
+        );
     }
 
     fn tokio_stream_from(
