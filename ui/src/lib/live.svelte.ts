@@ -81,7 +81,7 @@ class Live {
     this.stop = null;
   }
 
-  /** Inject an event (the dev simulator uses this path too). */
+  /** Takes one event from the stream. */
   receive(r: Received) {
     const client = 'client' in r.event ? (r.event.client ?? null) : null;
     if (client && !this.clients.includes(client)) this.clients = [...this.clients, client];

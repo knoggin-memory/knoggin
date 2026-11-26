@@ -33,7 +33,6 @@
     edgeTypes,
     highlighted = [],
     onselect,
-    onready,
     onsettled,
     onfocuschange,
   }: {
@@ -46,7 +45,6 @@
     /** Ids labeled by default (the current or most recent recall's results). */
     highlighted?: string[];
     onselect: (id: string | null) => void;
-    onready?: (info: { cached: boolean; ms: number }) => void;
     /** The layout stopped moving (immediately for a cached layout). */
     onsettled?: () => void;
     /** The local graph (a memory's neighborhood) was entered or left. */
@@ -75,43 +73,6 @@
   let focus: Set<string> | null = $state(null);
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   let visibleIds = $state<string[]>([]);
-  const started = performance.now();
-  const perf = window as unknown as {
-    __knogginSettled?: boolean;
-    __knogginCached?: boolean;
-    __knogginLit?: number[];
-    __knogginLitPair?: [number, number];
-    __knogginNodeAt?: () => { x: number; y: number } | null;
-  };
-  perf.__knogginSettled = false;
-  // Test hook: viewport positions of every visible node.
-  (perf as { __knogginPositions?: () => { id: string; x: number; y: number; size: number; r: number }[] }).__knogginPositions = () => {
-    const out: { id: string; x: number; y: number; size: number; r: number }[] = [];
-    graph?.forEachNode((id, a) => {
-      if (a.visibility === 'visible') out.push({ id, size: a.size as number, r: sigma!.scaleSize(a.size as number), ...sigma!.graphToViewport(drawn(id)) });
-    });
-    return out;
-  };
-  // Test hook: page coordinates of a node near the middle that is big enough
-  // to hover reliably (nodes scale with the layout, so some are tiny).
-  perf.__knogginNodeAt = () => {
-    if (!graph || !sigma) return null;
-    const box = container.getBoundingClientRect();
-    const w = container.clientWidth / 2, h = container.clientHeight / 2;
-    let best: { x: number; y: number } | null = null;
-    let bestScore = Infinity;
-    graph.forEachNode((id, a) => {
-      if (a.visibility !== 'visible') return;
-      const p = sigma!.graphToViewport(drawn(id));
-      const r = sigma!.scaleSize(a.size as number);
-      const score = Math.hypot(p.x - w, p.y - h) + (r >= 3 ? 0 : 1e6);
-      if (score < bestScore) {
-        bestScore = score;
-        best = { x: box.left + p.x, y: box.top + p.y };
-      }
-    });
-    return best;
-  };
 
   // ── Graph construction ────────────────────────────────────────────────
   function build(s: Snapshot, cached: Map<string, [number, number]>) {
@@ -355,12 +316,6 @@
     }
     light.wake();
     sigma.refresh({ skipIndexation: true });
-    if (e.kind === 'recall' && !replay && e.seq < 1_000_000) {
-      requestAnimationFrame(() => {
-        perf.__knogginLitPair = [Date.now(), e.at];
-        (perf.__knogginLit ??= []).push(Date.now());
-      });
-    }
   }
 
   const flashUntil = new Map<string, number>();
@@ -947,10 +902,7 @@
           return a;
         }, { attributes: ['x', 'y'] });
       };
-      let first = true;
       let frozen = false;
-      // Read before `known` is transferred (and detached) to the worker.
-      const cachedAll = built.known.every((k) => k === 1);
       worker.onmessage = (e: MessageEvent<FromWorker>) => {
         apply(e.data.x, e.data.y);
         if (e.data.type === 'settled') {
@@ -961,16 +913,7 @@
             sigma!.setSetting('autoRescale', 'once');
           }
           savePositions(scopeKey, snapshot.ids, e.data.x, e.data.y);
-          perf.__knogginSettled = true;
           onsettled?.();
-        }
-        if (first) {
-          first = false;
-          const cached = cachedAll;
-          // Marks read by the perf harness (ui/perf); cheap and inert otherwise.
-          performance.mark('knoggin:map-ready');
-          perf.__knogginCached = cached;
-          onready?.({ cached, ms: performance.now() - started });
         }
       };
       sigma.on('nodeDragStart', ({ node }) => {

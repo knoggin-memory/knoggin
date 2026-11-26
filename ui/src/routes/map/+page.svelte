@@ -21,16 +21,10 @@
   import { EDGE_LABELS, EDGE } from '$lib/map/encoding';
   import { live } from '$lib/live.svelte';
   import { ago } from '$lib/format';
-  import { simulate } from '$lib/map/simulator';
 
   $effect(() => {
     live.start();
     return () => live.release();
-  });
-  // Dev simulator: /map?simulate=5 emits five synthetic recalls a second.
-  $effect(() => {
-    const rate = Number(page.url.searchParams.get('simulate') ?? 0);
-    if (rate > 0 && shown) return simulate(shown, rate);
   });
   let tick = $state(Date.now());
   $effect(() => {
