@@ -39,3 +39,18 @@ test('a local install shows Settings, and the server pages say they are not for 
   await page.getByRole('link', { name: 'Back to the Memory map' }).click();
   await expect(page.getByRole('link', { name: 'Settings' })).toBeVisible();
 });
+
+test('no screen breaks the content security policy', async ({ page }) => {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __csp: string[] };
+    w.__csp = [];
+    document.addEventListener('securitypolicyviolation', (e) => w.__csp.push(`${e.violatedDirective} ${e.sourceFile}:${e.lineNumber}`));
+  });
+  const origin = await open(page, '/map');
+  for (const path of ['/explore', '/timeline', '/health', '/keys', '/apps', '/setup', '/account']) {
+    await page.goto(origin + path);
+    await expect(page.getByRole('main')).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => (window as unknown as { __csp: string[] }).__csp), path).toEqual([]);
+  }
+});

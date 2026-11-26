@@ -9,9 +9,9 @@ export default defineConfig({
   outputDir: 'test-results',
   timeout: 60_000,
   expect: { timeout: 10_000 },
-  // One daemon is shared, and one file restarts it: run the files one at a time.
+  // The files share one daemon (the restart test runs its own); tests in a file run in order.
   fullyParallel: false,
-  workers: 1,
+  workers: 2,
   retries: process.env.CI ? 1 : 0,
   reporter: [['list']],
   globalSetup: './e2e/support/global-setup.ts',

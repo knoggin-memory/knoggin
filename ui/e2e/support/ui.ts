@@ -8,7 +8,8 @@ export const daemon = (): DaemonInfo => ({ bin: process.env.KNOGGIN_BIN!, home: 
 export async function open(page: Page, path = '/map'): Promise<string> {
   const url = new URL(openUrl(daemon()));
   await page.goto(url.toString());
-  await expect(page.getByText('daemon connected')).toBeVisible();
+  // The sidebar's status line: "daemon connected" locally, "connected" on a server.
+  await expect(page.getByText(/^(daemon )?connected$/)).toBeVisible();
   // The page posts the code and takes it out of the address bar.
   await expect(page).not.toHaveURL(/[?&]t=/);
   if (path !== '/map') await page.goto(new URL(path, url.origin).toString());

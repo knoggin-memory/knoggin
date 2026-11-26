@@ -39,7 +39,7 @@ test('the Timeline shows stored, recalled and reinforced rows', async ({ page })
 test('Health shows the phases, storage and system', async ({ page }) => {
   await open(page, '/health');
   const phases = page.getByRole('region', { name: 'Phases' });
-  await expect(phases.getByText('6', { exact: true })).toBeVisible();
+  await expect(phases.locator('.display')).toHaveText('6');
   await expect(page.getByRole('region', { name: 'Storage' }).getByText('Vectors')).toBeVisible();
   await expect(page.getByRole('region', { name: 'System' }).getByText('Fake model')).toBeVisible();
 });
@@ -47,7 +47,7 @@ test('Health shows the phases, storage and system', async ({ page }) => {
 test('search finds a memory and opens it in Explore', async ({ page }) => {
   await open(page, '/map');
   await page.getByRole('button', { name: /Search/ }).click();
-  await page.getByRole('combobox').fill('window seats');
+  await page.getByRole('combobox', { name: 'Search memories' }).fill('window seats');
   await page.getByRole('option', { name: new RegExp(PERSONAL[0]) }).click();
   await expect(page).toHaveURL(/\/explore\?id=/);
   await expect(page.getByText('Said so while booking the Lisbon trip.')).toBeVisible();

@@ -51,7 +51,7 @@ test('markup in the answers of Users and Server status is shown as text', async 
   await expect(page.getByText(`Eve ${evil}`)).toBeVisible();
   await expect(page.getByText(`eve${evil}@example.com`)).toBeVisible();
   await page.goto(page.url().replace('/users', '/status'));
-  await expect(page.getByRole('combobox', { name: 'User' })).toContainText(`Eve ${evil}`);
+  await expect(page.getByRole('combobox', { name: 'User', exact: true })).toContainText(`Eve ${evil}`);
   await expect(page.getByRole('combobox', { name: 'Store of this user' })).toContainText(`Bot ${evil}`);
   await expect(page.getByText('No snapshots yet.')).toBeVisible();
   await expect(page.locator('img[src="x"]')).toHaveCount(0);

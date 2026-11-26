@@ -55,8 +55,9 @@ test('the model banners and catching up keep the screen usable', async ({ page }
 });
 
 test('updating, temporarily unavailable and too many requests come from error codes', async ({ page }) => {
+  // Every store request answers the same, as a container being replaced would.
   const fail = (code: string, extra: object = {}, retry = '1') =>
-    page.route(/\/v1\/ui\/memories\?/, (r) =>
+    page.route(/\/v1\/(ui\/(?!events)|namespaces)/, (r) =>
       r.fulfill({ status: code === 'rate_limited' ? 429 : 503, headers: { 'Retry-After': retry }, json: { error: { code, message: 'stubbed', ...extra } } }),
     );
   await fail('upgrading');
