@@ -959,6 +959,19 @@ async fn every_tool_success_bounds_and_errors() {
         ),
         (
             "recall_memories",
+            json!({ "query": "q", "minStrength": -0.1 }),
+            Code::InvalidArgument,
+            Some("minStrength"),
+        ),
+        // Without `limit` the bound is the default limit, 25.
+        (
+            "recall_memories",
+            json!({ "query": "q", "fullTextCount": 101 }),
+            Code::InvalidArgument,
+            Some("fullTextCount"),
+        ),
+        (
+            "recall_memories",
             json!({ "query": "q", "timeRangeStart": 0 }),
             Code::InvalidArgument,
             None,
@@ -1009,6 +1022,12 @@ async fn every_tool_success_bounds_and_errors() {
         ),
         (
             "find_similar_memories",
+            json!({ "id": one, "minScore": -0.1 }),
+            Code::InvalidArgument,
+            Some("minScore"),
+        ),
+        (
+            "find_similar_memories",
             json!({}),
             Code::InvalidArgument,
             Some("id"),
@@ -1052,6 +1071,12 @@ async fn every_tool_success_bounds_and_errors() {
         (
             "list_tags",
             json!({ "limit": 201 }),
+            Code::InvalidArgument,
+            Some("limit"),
+        ),
+        (
+            "list_tags",
+            json!({ "limit": 0 }),
             Code::InvalidArgument,
             Some("limit"),
         ),
@@ -1280,7 +1305,7 @@ async fn every_tool_success_bounds_and_errors() {
         json!({ "namespace": null, "limit": null, "tags": null }),
     )
     .await;
-    // The read-only credential: every writing tool is permission_denied.
+    // The read-only credential: every writing tool is permission_denied, on both endpoints.
     for tool in [
         "store_memory",
         "store_memories",
@@ -1296,6 +1321,16 @@ async fn every_tool_success_bounds_and_errors() {
         let (code, _) = ro.fails(tool, json!({})).await;
         assert_eq!(code, Code::PermissionDenied, "{tool}");
     }
+    let ro_plugin = Client::modern(&env, env.t.ctx(RO), "/mcp/plugin");
+    for tool in [
+        "store_memory",
+        "supersede_memory",
+        "reinforce_memory",
+        "forget_memory",
+    ] {
+        let (code, _) = ro_plugin.fails(tool, json!({})).await;
+        assert_eq!(code, Code::PermissionDenied, "/mcp/plugin {tool}");
+    }
     for (tool, args) in [
         ("get_context", json!({})),
         ("recall_memories", json!({ "query": "Maya" })),
@@ -1306,7 +1341,10 @@ async fn every_tool_success_bounds_and_errors() {
         ("list_tags", json!({})),
         ("namespace_stats", json!({})),
     ] {
-        ro.ok(tool, args).await;
+        ro.ok(tool, args.clone()).await;
+        if !["list_tags", "namespace_stats"].contains(&tool) {
+            ro_plugin.ok(tool, args).await;
+        }
     }
 }
 
