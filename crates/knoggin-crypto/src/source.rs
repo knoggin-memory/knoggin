@@ -2,13 +2,14 @@
 //! Where a local master key set is kept: a key file, or the system keychain through
 //! `/usr/bin/security` (macOS) or `secret-tool` (Linux). There is no keychain crate.
 
-use std::fmt::{self, Write as _};
+use std::fmt::Write as _;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use aws_lc_rs::digest::{SHA256, digest};
 use zeroize::Zeroizing;
@@ -20,8 +21,6 @@ use crate::local::MasterKeySet;
 const MAX_KEY_FILE: u64 = 1 << 20;
 /// The service name of the keychain item.
 pub const KEYCHAIN_SERVICE: &str = "knoggin";
-const SECURITY: &str = "/usr/bin/security";
-const SECRET_TOOL: &str = "secret-tool";
 /// `security find-generic-password` exits with this code when no item matches.
 const SECURITY_NOT_FOUND: i32 = 44;
 
@@ -60,6 +59,9 @@ pub enum SourceError {
         /// Its exit code, if it exited.
         code: Option<i32>,
     },
+    /// The keychain tool did not finish in time and was killed.
+    #[error("{0} did not finish in time")]
+    ToolTimedOut(&'static str),
     /// A write reported success but reading the item back did not give the same key set.
     #[error("the keychain did not keep the key set")]
     NotKept,
@@ -163,55 +165,14 @@ fn sync_dir(path: &Path) -> Result<(), SourceError> {
         .map_err(SourceError::Io)
 }
 
-/// What a finished command returned. `stdout` wipes itself: it can hold the key set.
-#[derive(Default)]
-pub struct CommandOutput {
-    /// Exit code, `None` if a signal ended it.
-    pub code: Option<i32>,
-    /// Standard output.
-    pub stdout: Zeroizing<Vec<u8>>,
-    /// Whether anything was written to standard error. The text itself is not kept.
-    pub wrote_stderr: bool,
-}
+/// How long a keychain tool may take before it is killed. A locked keychain can prompt.
+const TOOL_TIMEOUT: Duration = Duration::from_secs(10);
 
-impl fmt::Debug for CommandOutput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CommandOutput")
-            .field("code", &self.code)
-            .field("stdout_len", &self.stdout.len())
-            .field("wrote_stderr", &self.wrote_stderr)
-            .finish()
-    }
-}
-
-/// Runs the keychain tools. Tests replace it so that they never touch a real keychain.
-pub trait CommandRunner: Send + Sync + fmt::Debug {
-    /// Runs `program` with `args`, writes `stdin` to it, waits, and returns what it printed.
-    fn run(&self, program: &str, args: &[&str], stdin: &[u8]) -> io::Result<CommandOutput>;
-}
-
-/// The real runner: spawns the process.
-#[derive(Debug, Default)]
-pub struct SystemRunner;
-
-impl CommandRunner for SystemRunner {
-    fn run(&self, program: &str, args: &[&str], stdin: &[u8]) -> io::Result<CommandOutput> {
-        let mut child = Command::new(program)
-            .args(args)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()?;
-        if let Some(mut input) = child.stdin.take() {
-            input.write_all(stdin)?;
-        }
-        let out = child.wait_with_output()?;
-        Ok(CommandOutput {
-            code: out.status.code(),
-            stdout: Zeroizing::new(out.stdout),
-            wrote_stderr: !out.stderr.is_empty(),
-        })
-    }
+/// What a finished tool returned. `stdout` wipes itself: it can hold the key set.
+struct ToolOutput {
+    code: Option<i32>,
+    stdout: Zeroizing<Vec<u8>>,
+    wrote_stderr: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,43 +186,90 @@ enum Tool {
 pub struct Keychain {
     tool: Tool,
     account: String,
-    runner: Arc<dyn CommandRunner>,
+    program: PathBuf,
+    timeout: Duration,
 }
 
 impl Keychain {
-    /// The macOS login keychain, through `/usr/bin/security`.
-    pub fn macos(account: String, runner: Arc<dyn CommandRunner>) -> Self {
+    /// The macOS login keychain, through `program` (in production `/usr/bin/security`).
+    pub fn macos(account: String, program: PathBuf) -> Self {
         Self {
             tool: Tool::MacSecurity,
             account,
-            runner,
+            program,
+            timeout: TOOL_TIMEOUT,
         }
     }
 
-    /// The Linux Secret Service, through `secret-tool`.
-    pub fn secret_service(account: String, runner: Arc<dyn CommandRunner>) -> Self {
+    /// The Linux Secret Service, through `program` (in production `secret-tool`, found on `PATH`).
+    pub fn secret_service(account: String, program: PathBuf) -> Self {
         Self {
             tool: Tool::SecretTool,
             account,
-            runner,
+            program,
+            timeout: TOOL_TIMEOUT,
         }
     }
 
     fn tool_name(&self) -> &'static str {
         match self.tool {
-            Tool::MacSecurity => SECURITY,
-            Tool::SecretTool => SECRET_TOOL,
+            Tool::MacSecurity => "security",
+            Tool::SecretTool => "secret-tool",
         }
     }
 
-    fn run(&self, args: &[&str], stdin: &[u8]) -> Result<CommandOutput, SourceError> {
-        let program = self.tool_name();
-        self.runner
-            .run(program, args, stdin)
+    /// Runs the tool with `args`, writes `stdin` to it, and waits at most `self.timeout`.
+    /// Blocking: callers run it inside `spawn_blocking`.
+    fn run(&self, args: &[&str], stdin: &[u8]) -> Result<ToolOutput, SourceError> {
+        let tool = self.tool_name();
+        let mut child = Command::new(&self.program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
             .map_err(|e| match e.kind() {
-                io::ErrorKind::NotFound => SourceError::ToolMissing(program),
+                io::ErrorKind::NotFound => SourceError::ToolMissing(tool),
                 _ => SourceError::Io(e),
-            })
+            })?;
+        // The input is a few hundred bytes, well under a pipe's buffer, so this cannot block.
+        let wrote = child
+            .stdin
+            .take()
+            .map_or(Ok(()), |mut i| i.write_all(stdin));
+        let deadline = Instant::now() + self.timeout;
+        // ponytail: output is read after exit; a tool that prints more than a pipe buffer
+        // (64 KiB) would stall until the timeout. Ours print one key set.
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+                Ok(None) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(SourceError::ToolTimedOut(tool));
+                }
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(SourceError::Io(e));
+                }
+            }
+        };
+        wrote.map_err(SourceError::Io)?;
+        let mut stdout = Zeroizing::new(Vec::new());
+        if let Some(mut out) = child.stdout.take() {
+            out.read_to_end(&mut stdout).map_err(SourceError::Io)?;
+        }
+        let mut stderr = Vec::new();
+        if let Some(mut err) = child.stderr.take() {
+            err.read_to_end(&mut stderr).map_err(SourceError::Io)?;
+        }
+        Ok(ToolOutput {
+            code: status.code(),
+            stdout,
+            wrote_stderr: !stderr.is_empty(),
+        })
     }
 
     /// Reads the key set. `NotFound` when the item does not exist.
@@ -347,7 +355,6 @@ impl Keychain {
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
-    use std::sync::Mutex;
 
     use super::*;
 
@@ -460,112 +467,79 @@ mod tests {
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
-    type Call = (String, Vec<String>, Vec<u8>);
+    /// A fake keychain tool: records each call's arguments (one per line) and standard input,
+    /// keeps one item in a file, and answers as `security` or `secret-tool` would.
+    const FAKE: &str = r#"#!/bin/sh
+d=$(dirname "$0")
+n=$(cat "$d/n" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$d/n"
+for a in "$@"; do printf '%s\n' "$a"; done > "$d/args.$n"
+cat > "$d/stdin.$n"
+case "$1" in
+  -i) [ -e "$d/drop_writes" ] || sed 's/.* //' "$d/stdin.$n" | tr -d '\n' > "$d/item"; exit 0 ;;
+  store) [ -e "$d/drop_writes" ] || cp "$d/stdin.$n" "$d/item"; exit 0 ;;
+  find-generic-password)
+    [ -e "$d/fail_reads" ] && { echo locked >&2; exit 51; }
+    [ -e "$d/item" ] || { echo 'could not be found' >&2; exit 44; }
+    cat "$d/item"; echo; exit 0 ;;
+  lookup)
+    [ -e "$d/fail_reads" ] && { echo 'no D-Bus' >&2; exit 1; }
+    [ -e "$d/item" ] || exit 1
+    cat "$d/item"; exit 0 ;;
+esac
+exit 99
+"#;
 
-    /// A pretend keychain: one item, and a record of every call (program, arguments, stdin).
-    #[derive(Debug, Default)]
-    struct FakeRunner {
-        item: Mutex<Option<Vec<u8>>>,
-        calls: Mutex<Vec<Call>>,
-        /// Ignore writes but still exit 0, as `security -i` does when its command fails.
-        drop_writes: bool,
-        missing: bool,
-        fail_reads: bool,
+    const ACCOUNT: &str = "master-key-0123abcd";
+
+    /// A temp folder holding the fake tool, and the two keychains that use it.
+    fn fake(script: &str) -> (tempfile::TempDir, [Keychain; 2]) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tool");
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        let kcs = [
+            Keychain::macos(ACCOUNT.into(), path.clone()),
+            Keychain::secret_service(ACCOUNT.into(), path),
+        ];
+        (dir, kcs)
     }
 
-    impl CommandRunner for FakeRunner {
-        fn run(&self, program: &str, args: &[&str], stdin: &[u8]) -> io::Result<CommandOutput> {
-            if self.missing {
-                return Err(io::Error::from(io::ErrorKind::NotFound));
-            }
-            self.calls.lock().unwrap().push((
-                program.into(),
-                args.iter().map(|a| a.to_string()).collect(),
-                stdin.to_vec(),
-            ));
-            let mut item = self.item.lock().unwrap();
-            let ok = |stdout: Vec<u8>| CommandOutput {
-                code: Some(0),
-                stdout: Zeroizing::new(stdout),
-                wrote_stderr: false,
-            };
-            match (program, args.first().copied()) {
-                ("/usr/bin/security", Some("-i")) => {
-                    let line = std::str::from_utf8(stdin).unwrap();
-                    let secret = line.trim_end().rsplit(' ').next().unwrap();
-                    if !self.drop_writes {
-                        *item = Some(secret.as_bytes().to_vec());
-                    }
-                    Ok(ok(Vec::new()))
-                }
-                ("/usr/bin/security", Some("find-generic-password")) => match &*item {
-                    _ if self.fail_reads => Ok(CommandOutput {
-                        code: Some(51),
-                        wrote_stderr: true,
-                        ..CommandOutput::default()
-                    }),
-                    Some(v) => Ok(ok([v.as_slice(), b"\n"].concat())),
-                    None => Ok(CommandOutput {
-                        code: Some(44),
-                        wrote_stderr: true,
-                        ..CommandOutput::default()
-                    }),
-                },
-                ("secret-tool", Some("store")) => {
-                    if !self.drop_writes {
-                        *item = Some(stdin.to_vec());
-                    }
-                    Ok(ok(Vec::new()))
-                }
-                ("secret-tool", Some("lookup")) => match &*item {
-                    _ if self.fail_reads => Ok(CommandOutput {
-                        code: Some(1),
-                        wrote_stderr: true,
-                        ..CommandOutput::default()
-                    }),
-                    Some(v) => Ok(ok(v.clone())),
-                    None => Ok(CommandOutput {
-                        code: Some(1),
-                        ..CommandOutput::default()
-                    }),
-                },
-                _ => panic!("unexpected call {program} {args:?}"),
-            }
-        }
-    }
-
-    fn both(runner: &Arc<FakeRunner>) -> [Keychain; 2] {
-        let r: Arc<dyn CommandRunner> = runner.clone();
-        [
-            Keychain::macos("master-key-0123abcd".into(), r.clone()),
-            Keychain::secret_service("master-key-0123abcd".into(), r),
-        ]
+    /// Every recorded call: (arguments, standard input).
+    fn calls(dir: &Path) -> Vec<(Vec<String>, Vec<u8>)> {
+        let n: usize = fs::read_to_string(dir.join("n")).map_or(0, |s| s.trim().parse().unwrap());
+        (1..=n)
+            .map(|i| {
+                let args = fs::read_to_string(dir.join(format!("args.{i}"))).unwrap();
+                let args = args.lines().map(str::to_string).collect();
+                (args, fs::read(dir.join(format!("stdin.{i}"))).unwrap())
+            })
+            .collect()
     }
 
     #[test]
     fn keychain_write_then_read() {
         for i in 0..2 {
-            let runner = Arc::new(FakeRunner::default());
-            let kc = both(&runner)[i].clone();
+            let (dir, kcs) = fake(FAKE);
+            let kc = &kcs[i];
             assert!(matches!(kc.read(), Err(SourceError::NotFound)));
             let keys = MasterKeySet::generate().unwrap();
             kc.write(&keys).unwrap();
             assert_eq!(kc.read().unwrap().current_kek_id(), keys.current_kek_id());
 
             let text = keys.to_keychain_text();
-            let calls = runner.calls.lock().unwrap();
+            let calls = calls(dir.path());
             // The secret never appears in an argument list.
-            for (_, args, _) in calls.iter() {
+            for (args, _) in &calls {
                 assert!(args.iter().all(|a| !a.contains(&*text)), "{args:?}");
             }
             let write = calls
                 .iter()
-                .find(|(_, a, _)| a[0] == "-i" || a[0] == "store")
+                .find(|(a, _)| a[0] == "-i" || a[0] == "store")
                 .unwrap();
             if i == 0 {
-                assert_eq!(write.0, "/usr/bin/security");
+                assert_eq!(write.0, ["-i"]);
                 assert_eq!(
-                    String::from_utf8(write.2.clone()).unwrap(),
+                    String::from_utf8(write.1.clone()).unwrap(),
                     format!(
                         "add-generic-password -U -s knoggin -a master-key-0123abcd -w {}\n",
                         *text
@@ -573,10 +547,10 @@ mod tests {
                 );
                 let read = calls
                     .iter()
-                    .find(|(_, a, _)| a[0] == "find-generic-password")
+                    .find(|(a, _)| a[0] == "find-generic-password")
                     .unwrap();
                 assert_eq!(
-                    read.1,
+                    read.0,
                     [
                         "find-generic-password",
                         "-s",
@@ -587,9 +561,8 @@ mod tests {
                     ]
                 );
             } else {
-                assert_eq!(write.0, "secret-tool");
                 assert_eq!(
-                    write.1,
+                    write.0,
                     [
                         "store",
                         "--label=Knoggin master key",
@@ -599,10 +572,10 @@ mod tests {
                         "master-key-0123abcd"
                     ]
                 );
-                assert_eq!(write.2, text.as_bytes());
-                let read = calls.iter().find(|(_, a, _)| a[0] == "lookup").unwrap();
+                assert_eq!(write.1, text.as_bytes());
+                let read = calls.iter().find(|(a, _)| a[0] == "lookup").unwrap();
                 assert_eq!(
-                    read.1,
+                    read.0,
                     [
                         "lookup",
                         "service",
@@ -618,54 +591,43 @@ mod tests {
     #[test]
     fn keychain_failures() {
         for i in 0..2 {
-            let runner = Arc::new(FakeRunner {
-                drop_writes: true,
-                ..FakeRunner::default()
-            });
-            let kc = both(&runner)[i].clone();
+            let (dir, kcs) = fake(FAKE);
+            fs::write(dir.path().join("drop_writes"), b"").unwrap();
             assert!(matches!(
-                kc.write(&MasterKeySet::generate().unwrap()),
+                kcs[i].write(&MasterKeySet::generate().unwrap()),
                 Err(SourceError::NotKept)
             ));
 
-            let runner = Arc::new(FakeRunner {
-                missing: true,
-                ..FakeRunner::default()
-            });
+            let missing = [
+                Keychain::macos(ACCOUNT.into(), dir.path().join("absent")),
+                Keychain::secret_service(ACCOUNT.into(), dir.path().join("absent")),
+            ];
             assert!(matches!(
-                both(&runner)[i].read(),
+                missing[i].read(),
                 Err(SourceError::ToolMissing(_))
             ));
 
-            let runner = Arc::new(FakeRunner {
-                fail_reads: true,
-                ..FakeRunner::default()
-            });
-            assert!(matches!(
-                both(&runner)[i].read(),
-                Err(SourceError::ToolFailed { .. })
-            ));
+            let (dir, kcs) = fake(FAKE);
+            fs::write(dir.path().join("fail_reads"), b"").unwrap();
+            assert!(matches!(kcs[i].read(), Err(SourceError::ToolFailed { .. })));
 
-            let runner = Arc::new(FakeRunner::default());
-            *runner.item.lock().unwrap() = Some(b"bm90IGEga2V5IHNldA==".to_vec());
+            let (dir, kcs) = fake(FAKE);
+            fs::write(dir.path().join("item"), b"bm90IGEga2V5IHNldA==").unwrap();
             assert!(matches!(
-                both(&runner)[i].read(),
+                kcs[i].read(),
                 Err(SourceError::Key(KeyError::InvalidKeySet(_)))
             ));
         }
     }
 
     #[test]
-    fn system_runner_pipes_stdin_and_reports_codes() {
-        let out = SystemRunner
-            .run("/bin/sh", &["-c", "cat; exit 3"], b"hi")
-            .unwrap();
-        assert_eq!(out.code, Some(3));
-        assert_eq!(&out.stdout[..], b"hi");
-        assert!(!out.wrote_stderr);
-        let err = SystemRunner
-            .run("/nonexistent/knoggin-tool", &[], b"")
-            .unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    fn a_tool_that_hangs_is_killed() {
+        let (_dir, kcs) = fake("#!/bin/sh\nexec sleep 30\n");
+        for mut kc in kcs {
+            kc.timeout = Duration::from_millis(200);
+            let started = Instant::now();
+            assert!(matches!(kc.read(), Err(SourceError::ToolTimedOut(_))));
+            assert!(started.elapsed() < Duration::from_secs(5));
+        }
     }
 }
