@@ -1,0 +1,265 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Knoggin on one host (tab "Deployment", One host). Read README.md first.
+#
+# .env keys: KNOGGIN_IMAGE (the released image, by digest), KNOGGIN_DOMAIN (the public
+# host name), KNOGGIN_NET_PREFIX (default 10.200), KNOGGIN_SECRETS_DIR (default
+# ./secrets), COMPOSE_PROFILES (tls, and local-s3 for the bundled bucket).
+
+name: knoggin
+
+x-hardened: &hardened
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: 10m, max-file: "3" }
+
+x-knoggin: &knoggin
+  <<: *hardened
+  image: ${KNOGGIN_IMAGE:-}
+  read_only: true
+  volumes:
+    - ./config.toml:/etc/knoggin/config.toml:ro
+
+services:
+  proxy:
+    <<: *hardened
+    image: caddy:2.11.9@sha256:4851e54a46b206517c574821bb5cc67f170d2156041e9fbc4c9193b45e84a75b
+    profiles: [tls]
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      KNOGGIN_DOMAIN: ${KNOGGIN_DOMAIN:-}
+    networks:
+      edge:
+        ipv4_address: ${KNOGGIN_NET_PREFIX:-10.200}.0.2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [router]
+
+  router:
+    <<: *knoggin
+    command: [router]
+    mem_limit: 1g
+    memswap_limit: 1g
+    sysctls:
+      net.ipv4.ip_forward: "0"
+    stop_grace_period: 150s
+    environment:
+      KNOGGIN_SERVER__PUBLIC_URL: https://${KNOGGIN_DOMAIN:-}
+      KNOGGIN_SERVER__TRUSTED_PROXIES: ${KNOGGIN_NET_PREFIX:-10.200}.0.2/32
+    networks: [edge, back, store, ctl]
+    secrets:
+      - postgres_url
+      - master_key
+      - state_key
+      - s3_credentials
+      - internal_secret
+      - internal_cert.pem
+      - internal_key.pem
+      - launcher_token
+      - web_client_secret
+    healthcheck:
+      test: [CMD, /usr/local/bin/knoggin, healthcheck, --url, "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    depends_on:
+      db: { condition: service_healthy }
+      launcher: { condition: service_started }
+      s3-init: { condition: service_completed_successfully, required: false }
+
+  launcher:
+    <<: *knoggin
+    command: [launcher]
+    # Root without capabilities: the Docker socket belongs to root.
+    user: "0:0"
+    mem_limit: 256m
+    memswap_limit: 256m
+    networks: [ctl]
+    volumes:
+      - ./config.toml:/etc/knoggin/config.toml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    secrets: [launcher_token]
+
+  lifecycle:
+    <<: *knoggin
+    command: [lifecycle, --every, 10m]
+    mem_limit: 512m
+    memswap_limit: 512m
+    environment:
+      KNOGGIN_STATE__POSTGRES_URL_FILE: /run/secrets/postgres_url_lifecycle
+      KNOGGIN_STORAGE__CREDENTIALS_FILE: /run/secrets/s3_credentials_lifecycle
+    networks: [back, store, out]
+    secrets: [postgres_url_lifecycle, s3_credentials_lifecycle, state_key]
+    depends_on:
+      db: { condition: service_healthy }
+      s3-init: { condition: service_completed_successfully, required: false }
+
+  db:
+    <<: *hardened
+    image: postgres:18.7-trixie@sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_superuser_password
+      POSTGRES_DB: knoggin
+    networks: [back]
+    volumes:
+      - db-data:/var/lib/postgresql
+      - ./db-init.sh:/docker-entrypoint-initdb.d/10-knoggin.sh:ro
+    secrets:
+      - postgres_superuser_password
+      - postgres_url
+      - postgres_url_lifecycle
+      - postgres_url_backup
+    healthcheck:
+      test: [CMD, pg_isready, -U, postgres, -d, knoggin]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # A nightly pg_dump at 03:00 UTC to ./backups, one file per weekday.
+  backup:
+    <<: *hardened
+    image: postgres:18.7-trixie@sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    networks: [back]
+    volumes:
+      - ./backups:/backups
+    secrets: [postgres_url_backup]
+    entrypoint: [/bin/sh, -c]
+    command:
+      - |
+        while :; do
+          sleep $$(( (27 * 3600 - $$(date -u +%s) % 86400) % 86400 + 1 ))
+          day=$$(date -u +%A | tr 'A-Z' 'a-z')
+          if pg_dump --dbname="$$(cat /run/secrets/postgres_url_backup)" --file="/backups/knoggin-$$day.sql.part"; then
+            mv "/backups/knoggin-$$day.sql.part" "/backups/knoggin-$$day.sql"
+          else
+            echo "backup failed" >&2
+          fi
+        done
+    depends_on:
+      db: { condition: service_healthy }
+
+  # The bucket stand-in, for trials and tests only (profile local-s3).
+  s3:
+    <<: *hardened
+    image: chrislusf/seaweedfs:4.54@sha256:4b42c212543a0acd4c0e675215ecdcaf62a186ef98def76c7e12701871222d15
+    profiles: [local-s3]
+    networks: [store]
+    volumes:
+      - s3-data:/data
+      - s3-config:/config:ro
+    entrypoint: [/bin/sh, -c]
+    # Never start without the identity file, so the S3 interface is never anonymous.
+    command:
+      - |
+        until [ -s /config/s3.json ]; do sleep 1; done
+        exec weed server -dir=/data -ip.bind=0.0.0.0 -s3 -s3.port=8333 -s3.config=/config/s3.json
+    healthcheck:
+      test: [CMD-SHELL, "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # Writes the S3 identities from the two credential files, waits for s3, makes the bucket.
+  s3-init:
+    image: chrislusf/seaweedfs:4.54@sha256:4b42c212543a0acd4c0e675215ecdcaf62a186ef98def76c7e12701871222d15
+    profiles: [local-s3]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+    networks: [store]
+    volumes:
+      - s3-config:/config
+    secrets: [s3_credentials, s3_credentials_lifecycle]
+    entrypoint: [/bin/sh, -c]
+    command:
+      - |
+        set -eu
+        value() { sed -n "s/^[[:space:]]*$$1[[:space:]]*=[[:space:]]*//p" "$$2" | head -n 1 | tr -d '\r'; }
+        identity() {
+          printf '{"name":"%s","credentials":[{"accessKey":"%s","secretKey":"%s"}],"actions":[%s]}' \
+            "$$1" "$$(value aws_access_key_id "$$2")" "$$(value aws_secret_access_key "$$2")" "$$3"
+        }
+        umask 077
+        {
+          printf '{"identities":['
+          identity router /run/secrets/s3_credentials '"Read","Write","List"'
+          printf ','
+          identity lifecycle /run/secrets/s3_credentials_lifecycle '"Admin","Read","Write","List","Tagging"'
+          printf ']}\n'
+        } > /config/s3.json.part
+        mv /config/s3.json.part /config/s3.json
+        tries=0
+        until echo "s3.bucket.list" | timeout 10 weed shell -master=s3:9333 >/dev/null 2>&1; do
+          tries=$$((tries + 1)); [ "$$tries" -lt 120 ] || { echo "s3 did not start" >&2; exit 1; }
+          sleep 1
+        done
+        if ! echo "s3.bucket.list" | timeout 10 weed shell -master=s3:9333 2>/dev/null | grep -qw knoggin; then
+          echo "s3.bucket.create -name knoggin" | timeout 30 weed shell -master=s3:9333
+        fi
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: ${KNOGGIN_NET_PREFIX:-10.200}.0.0/24
+          gateway: ${KNOGGIN_NET_PREFIX:-10.200}.0.1
+          ip_range: ${KNOGGIN_NET_PREFIX:-10.200}.0.128/25
+  back:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+    ipam:
+      config:
+        - subnet: ${KNOGGIN_NET_PREFIX:-10.200}.1.0/24
+  store:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+    ipam:
+      config:
+        - subnet: ${KNOGGIN_NET_PREFIX:-10.200}.2.0/24
+  ctl:
+    internal: true
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: isolated
+    ipam:
+      config:
+        - subnet: ${KNOGGIN_NET_PREFIX:-10.200}.3.0/24
+  out:
+    ipam:
+      config:
+        - subnet: ${KNOGGIN_NET_PREFIX:-10.200}.4.0/24
+
+volumes:
+  db-data:
+  s3-data:
+  s3-config:
+  caddy-data:
+  caddy-config:
+
+secrets:
+  postgres_url: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/postgres_url" }
+  postgres_url_lifecycle: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/postgres_url_lifecycle" }
+  postgres_url_backup: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/postgres_url_backup" }
+  postgres_superuser_password: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/postgres_superuser_password" }
+  master_key: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/master_key" }
+  state_key: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/state_key" }
+  s3_credentials: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/s3_credentials" }
+  s3_credentials_lifecycle: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/s3_credentials_lifecycle" }
+  internal_secret: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/internal_secret" }
+  internal_cert.pem: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/internal_cert.pem" }
+  internal_key.pem: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/internal_key.pem" }
+  launcher_token: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/launcher_token" }
+  web_client_secret: { file: "${KNOGGIN_SECRETS_DIR:-./secrets}/web_client_secret" }

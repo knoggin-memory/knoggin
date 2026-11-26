@@ -4,3 +4,10 @@
 [images]
 # postgres:18.7-trixie, pinned 2026-11-25.
 postgres = "postgres@sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b"
+# chrislusf/seaweedfs:4.54, pinned 2026-11-26: the newest release that was at least
+# 7 days old on 2026-11-23 (tab "Testing, CI, releases", Stand-ins).
+seaweedfs = "chrislusf/seaweedfs@sha256:4b42c212543a0acd4c0e675215ecdcaf62a186ef98def76c7e12701871222d15"
+# busybox:1.37.0, pinned 2026-11-26: the probe of rule I9, and the image build's unzip and xz.
+busybox = "busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
+# caddy:2.11.9, pinned 2026-11-26: the Caddyfile log test.
+caddy = "caddy@sha256:4851e54a46b206517c574821bb5cc67f170d2156041e9fbc4c9193b45e84a75b"

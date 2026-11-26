@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The TLS proxy in front of the router. Nothing here may log request addresses: a
+# request line can carry a search text, a tag or a one-time code. So the site block has
+# no `log` directive, and the global options take http.log.error, which records a
+# failed request with its address, out of the default log.
+{
+	log {
+		exclude http.log.error
+	}
+}
+
+{$KNOGGIN_DOMAIN} {
+	reverse_proxy router:8080
+}

@@ -1,0 +1,56 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The stack tests' config (compose.test.yaml mounts it at /etc/knoggin/config.toml).
+# Like config.example.toml, with the stack's test issuer, a short idle time and a small
+# cap. server.public_url and server.trusted_proxies come from compose.test.yaml.
+
+[auth]
+mode = "oauth"
+issuer = "http://test-issuer:9000"
+provider_name = "Test issuer"
+web_client_id = "knoggin-web"
+web_client_secret_file = "/run/secrets/web_client_secret"
+admin_emails = ["admin@test.example"]
+
+[log]
+level = "debug"
+format = "json"
+
+[metrics]
+bind = "0.0.0.0:9091"
+
+[state]
+backend = "postgres"
+postgres_url_file = "/run/secrets/postgres_url"
+postgres_doc_key_file = "/run/secrets/state_key"
+
+[storage]
+bucket = "knoggin"
+region = "us-east-1"
+endpoint_url = "http://s3:8333"
+force_path_style = true
+credentials_file = "/run/secrets/s3_credentials"
+
+[keys]
+provider = "key_file"
+master_key_file = "/run/secrets/master_key"
+
+[launcher]
+kind = "docker"
+
+[launcher.docker]
+url = "http://launcher:7070"
+token_file = "/run/secrets/launcher_token"
+
+[containers]
+user_net_cidr = "10.201.0.0/16"
+pool_target = 2
+max = 6
+# Parking within seconds, so that the tests can wait for it in real time.
+idle_seconds = 5
+claim_wait_ms = 60000
+
+[internal]
+secret_file = "/run/secrets/internal_secret"
+cert_file = "/run/secrets/internal_cert.pem"
+key_file = "/run/secrets/internal_key.pem"

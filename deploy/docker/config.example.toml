@@ -1,0 +1,69 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# Knoggin's config on one host. Copy it to ./config.toml and fill in [auth] and
+# [containers]. The router, the launcher and the lifecycle task read this one file at
+# /etc/knoggin/config.toml; what differs between them is set in compose.yaml. Secrets
+# are never written here: each one is a file under ./secrets, which Compose mounts at
+# /run/secrets/<name>. server.public_url and server.trusted_proxies come from compose.yaml.
+
+[auth]
+mode = "oauth"
+# Your identity provider (tab "Sign-in and credentials" of the docs).
+issuer = "https://auth.example.com"
+provider_name = "Example sign-in"
+web_client_id = "your-web-client-id"
+web_client_secret_file = "/run/secrets/web_client_secret"
+# Who is an admin. Subjects are safer than emails.
+admin_subjects = []
+# Who may sign in at all. With both lists empty, everyone the provider admits gets an
+# account and a container.
+allowed_emails = []
+allowed_email_domains = []
+
+[log]
+format = "json"
+
+[metrics]
+# Reachable only from the addresses in server.trusted_proxies (see README.md).
+bind = "0.0.0.0:9091"
+
+[state]
+backend = "postgres"
+postgres_url_file = "/run/secrets/postgres_url"
+postgres_doc_key_file = "/run/secrets/state_key"
+
+[storage]
+# The bundled SeaweedFS (profile local-s3). For your own S3-compatible bucket, change
+# these and drop local-s3 from COMPOSE_PROFILES.
+bucket = "knoggin"
+region = "us-east-1"
+endpoint_url = "http://s3:8333"
+force_path_style = true
+credentials_file = "/run/secrets/s3_credentials"
+
+[keys]
+provider = "key_file"
+master_key_file = "/run/secrets/master_key"
+
+[launcher]
+kind = "docker"
+
+[launcher.docker]
+url = "http://launcher:7070"
+token_file = "/run/secrets/launcher_token"
+
+[containers]
+# The range from which the launcher cuts each user's network. A second stack on the
+# same host may share it: the launcher skips ranges that are in use.
+user_net_cidr = "10.201.0.0/16"
+memory_mib = 1024
+pool_target = 2
+# Required on one host. Rule of thumb: the host's memory less 2 GiB, divided by
+# memory_mib. The reserve is large because this host also runs the router, the
+# database and the proxy. 6 fits a host with 8 GiB.
+max = 6
+
+[internal]
+secret_file = "/run/secrets/internal_secret"
+cert_file = "/run/secrets/internal_cert.pem"
+key_file = "/run/secrets/internal_key.pem"
