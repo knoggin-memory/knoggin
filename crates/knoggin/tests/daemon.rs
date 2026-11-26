@@ -327,3 +327,57 @@ fn an_idle_daemon_uses_no_cpu() {
     );
     assert_eq!(d.stop(), 0);
 }
+
+/// `GET /healthz` on the socket; `None` while nothing answers.
+fn healthz_now(home: &Home) -> Option<u16> {
+    use std::io::{Read, Write};
+    let mut s = std::os::unix::net::UnixStream::connect(home.socket()).ok()?;
+    s.write_all(b"GET /healthz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .ok()?;
+    let mut raw = String::new();
+    s.read_to_string(&mut raw).ok()?;
+    raw.get(9..12)?.parse().ok()
+}
+
+#[test]
+fn the_lock_file_is_complete_before_the_daemon_answers() {
+    let home = Home::new();
+    // As soon as `/healthz` answers, the lock file holds the PID and the address.
+    for _ in 0..5 {
+        let mut child = home
+            .cmd(&["daemon"])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            if healthz_now(&home) == Some(200) {
+                let lock = std::fs::read(home.root().join("run/daemon.lock")).unwrap();
+                let v: serde_json::Value = serde_json::from_slice(&lock)
+                    .unwrap_or_else(|_| panic!("lock file: {:?}", String::from_utf8_lossy(&lock)));
+                assert!(!v["address"].as_str().unwrap().is_empty());
+                assert_eq!(v["pid"].as_u64().unwrap(), u64::from(child.id()));
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "no answer");
+            assert!(child.try_wait().unwrap().is_none(), "the daemon exited");
+        }
+        let _ = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(child.id().to_string())
+            .status();
+        assert_eq!(child.wait().unwrap().code(), Some(0));
+    }
+    // `knoggin start` prints the address it reads from there, never an empty one.
+    let _guard = support::Started(&home);
+    for _ in 0..3 {
+        let o = home.run(&["start", "--json"]);
+        assert_eq!(o.code, 0, "{}{}", o.stdout, o.stderr);
+        let address = o.json()["address"].as_str().unwrap().to_owned();
+        assert!(!address.is_empty());
+        assert_eq!(address, home.address());
+        assert_eq!(home.run(&["stop"]).code, 0);
+    }
+}

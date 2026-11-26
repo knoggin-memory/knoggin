@@ -526,8 +526,27 @@ pub(crate) async fn run(config: Config, env: &Env) -> anyhow::Result<u8> {
         .ok_or_else(|| anyhow!("no web listener"))?
         .local_addr()?
         .port();
-    // The socket last: a daemon that cannot take its port must not be found on it.
-    let socket = local::bind_socket(&run_dir)?;
+    // The metrics listener and the signal handlers before anything serves, so that neither
+    // can fail once a client has been answered.
+    let metrics = match config.metrics_bind() {
+        Some(addr) => {
+            let handle = metrics_exporter_prometheus::PrometheusBuilder::new()
+                .install_recorder()
+                .context("installing the metrics recorder")?;
+            let l = TcpListener::bind(addr)
+                .await
+                .with_context(|| format!("binding metrics.bind {addr}"))?;
+            Some((addr, l, handle))
+        }
+        None => None,
+    };
+    let signals = {
+        use tokio::signal::unix::{SignalKind, signal};
+        (
+            signal(SignalKind::terminate()).context("installing the stop signal handler")?,
+            signal(SignalKind::interrupt()).context("installing the stop signal handler")?,
+        )
+    };
     let label = local::web_label().map_err(|_| anyhow!("no random bytes for the web label"))?;
     let authority = tokio::task::spawn_blocking(move || local::web_authority(&label, web_port))
         .await
@@ -587,6 +606,35 @@ pub(crate) async fn run(config: Config, env: &Env) -> anyhow::Result<u8> {
         }
     }
 
+    // The socket last: a daemon that cannot take its port must not be found on it. The lock
+    // file is complete before anything serves, so `knoggin start` never reads it empty.
+    let ready = (|| -> anyhow::Result<_> {
+        let socket = local::bind_socket(&run_dir)?;
+        let info = LockInfo {
+            pid: i32::try_from(std::process::id()).unwrap_or(0),
+            address: fixed_addr.to_string(),
+        };
+        (&lock).write_all(&serde_json::to_vec(&info)?)?;
+        lock.sync_all()?;
+        Ok(socket)
+    })();
+    let socket = match ready {
+        Ok(socket) => socket,
+        Err(e) => {
+            let _ = std::fs::remove_file(home.socket());
+            if let Some(t) = retry {
+                t.abort();
+            }
+            if let Some(l) = live.lock().await.take() {
+                for t in &l.tasks {
+                    t.abort();
+                }
+                l.host.shutdown();
+            }
+            return Err(e);
+        }
+    };
+
     let (stop_tx, stop_rx) = watch::channel(false);
     let stopped = move || {
         let mut rx = stop_rx.clone();
@@ -627,13 +675,7 @@ pub(crate) async fn run(config: Config, env: &Env) -> anyhow::Result<u8> {
         )));
     }
     let mut upkeep = None;
-    if let Some(addr) = config.metrics_bind() {
-        let handle = metrics_exporter_prometheus::PrometheusBuilder::new()
-            .install_recorder()
-            .context("installing the metrics recorder")?;
-        let l = TcpListener::bind(addr)
-            .await
-            .with_context(|| format!("binding metrics.bind {addr}"))?;
+    if let Some((addr, l, handle)) = metrics {
         let h = handle.clone();
         upkeep = Some(tokio::spawn(async move {
             let mut every = tokio::time::interval(Duration::from_secs(5));
@@ -651,19 +693,13 @@ pub(crate) async fn run(config: Config, env: &Env) -> anyhow::Result<u8> {
             stopped(),
         )));
     }
-    let info = LockInfo {
-        pid: i32::try_from(std::process::id()).unwrap_or(0),
-        address: fixed_addr.to_string(),
-    };
-    (&lock).write_all(&serde_json::to_vec(&info)?)?;
-    lock.sync_all()?;
     tracing::info!(
         kind = "listening",
         port = fixed_addr.port(),
         "the daemon is ready"
     );
 
-    wait_for_stop().await;
+    wait_for_stop(signals).await;
     tracing::info!(
         kind = "stopping",
         "stop signal: finishing requests in flight"
@@ -725,16 +761,9 @@ async fn shut_down(live: Live) -> u8 {
     code
 }
 
-async fn wait_for_stop() {
-    use tokio::signal::unix::{SignalKind, signal};
-    let (Ok(mut term), Ok(mut int)) = (
-        signal(SignalKind::terminate()),
-        signal(SignalKind::interrupt()),
-    ) else {
-        // Without signal handlers the daemon could never stop cleanly; run until killed.
-        std::future::pending::<()>().await;
-        return;
-    };
+async fn wait_for_stop(
+    (mut term, mut int): (tokio::signal::unix::Signal, tokio::signal::unix::Signal),
+) {
     tokio::select! {
         _ = term.recv() => {}
         _ = int.recv() => {}
