@@ -708,3 +708,52 @@ async fn a_stop_or_park_ends_every_stream_at_once_and_later_ones_get_204() {
     assert!(env.t.host.is_open(ctx.store_id));
     assert_eq!(stream(&env, &ctx).await.status(), StatusCode::NO_CONTENT);
 }
+
+#[tokio::test]
+async fn a_quiet_stream_sends_a_comment_every_fifteen_seconds() {
+    let env = Env::new(true).await;
+    let ctx = env.t.ctx(RO);
+    get(&env, &env.t.ctx(RW), "/v1/namespaces").await;
+    let mut body = stream(&env, &ctx).await.into_body();
+    // Paused from here, so the clock moves only when the test moves it.
+    tokio::time::pause();
+    let mut poll = || futures_util::FutureExt::now_or_never(body.frame());
+    assert!(poll().is_none());
+    tokio::time::advance(Duration::from_secs(14)).await;
+    assert!(poll().is_none(), "a comment before 15 seconds");
+    tokio::time::advance(Duration::from_millis(1100)).await;
+    let frame = poll()
+        .expect("no comment after 15 seconds")
+        .unwrap()
+        .unwrap();
+    assert!(
+        frame.data_ref().unwrap().starts_with(b":"),
+        "{:?}",
+        frame.data_ref()
+    );
+}
+
+#[tokio::test]
+async fn a_stream_outlives_the_request_timeout() {
+    let mut config = knoggin_http::testing::fake_config();
+    config.limits.request_timeout_ms = 200;
+    let env = Env::with_config(config, true).await;
+    let ctx = env.t.ctx(RW);
+    get(&env, &ctx, "/v1/namespaces").await;
+    let r = stream(&env, &ctx).await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let mut body = r.into_body();
+    let mut buf = String::new();
+    tokio::time::sleep(Duration::from_millis(600)).await;
+    post(
+        &env,
+        &ctx,
+        "/v1/memories",
+        json!({ "summary": "after the timeout" }),
+    )
+    .await;
+    let (name, _) = next_event(&mut body, &mut buf, Duration::from_secs(5))
+        .await
+        .expect("the stream was cut off by the request timeout");
+    assert_eq!(name, "store");
+}

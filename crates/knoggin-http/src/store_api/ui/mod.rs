@@ -313,3 +313,54 @@ async fn events(State(host): Host, Ctx(ctx): Ctx, q: QueryMap) -> Answer {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod stream_tests {
+    use http_body_util::BodyExt;
+    use knoggin_core::MemoryId;
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::Permissions;
+    use crate::host::live::forgotten;
+    use crate::testing::{TestHost, fake_config};
+
+    #[tokio::test]
+    async fn a_slow_reader_gets_lagged_with_the_number_it_missed() {
+        let dir = tempfile::tempdir().unwrap();
+        let t = TestHost::new(dir.path(), fake_config(), true, Default::default()).await;
+        let ctx = t.ctx(Permissions::READ);
+        t.host.read_with(&ctx, |_, _, _| Ok(())).await.unwrap();
+        let mut request = http::Request::builder()
+            .uri("/v1/ui/events")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        request.extensions_mut().insert(ctx.clone());
+        let response = crate::store_layer(t.host.clone())
+            .oneshot(request)
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        // 100 more than the channel holds, while nobody reads.
+        t.host
+            .read_with(&ctx, |_, open, at| {
+                let id = MemoryId::from_bytes([7; 16]);
+                open.events()
+                    .publish((0..1124).map(|_| forgotten(id, None, at)).collect());
+                Ok(())
+            })
+            .await
+            .unwrap();
+        let mut body = response.into_body();
+        let mut text = String::new();
+        while !text.contains("\n\n") {
+            let frame = body.frame().await.unwrap().unwrap();
+            text.push_str(std::str::from_utf8(frame.data_ref().unwrap()).unwrap());
+        }
+        let first = text.split("\n\n").next().unwrap();
+        assert_eq!(
+            first,
+            "event: lagged\ndata: {\"kind\":\"lagged\",\"missed\":100}"
+        );
+    }
+}
