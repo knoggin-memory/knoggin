@@ -14,6 +14,7 @@ workspace = true
 async-trait = { workspace = true }
 aws-config = { workspace = true }
 aws-lc-rs = { workspace = true }
+aws-sdk-kms = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 axum = { workspace = true }
 bollard = { workspace = true }
@@ -50,5 +51,7 @@ zeroize = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
 tracing-subscriber = { workspace = true }
 tempfile = { workspace = true }
+testcontainers = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+toml = { workspace = true }
 wiremock = { workspace = true }

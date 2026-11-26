@@ -344,6 +344,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "aws-sdk-kms"
+version = "1.133.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f4b7155f6147d4f78cb4600e142de8cf390818f3b49d12d7a815f08e9cd24577"
+dependencies = [
+ "arc-swap",
+ "aws-credential-types",
+ "aws-runtime",
+ "aws-smithy-async",
+ "aws-smithy-http",
+ "aws-smithy-json",
+ "aws-smithy-observability",
+ "aws-smithy-runtime",
+ "aws-smithy-runtime-api",
+ "aws-smithy-schema",
+ "aws-smithy-types",
+ "aws-types",
+ "fastrand",
+ "regex-lite",
+ "tracing",
+]
+
+[[package]]
 name = "aws-sdk-s3"
 version = "1.161.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2580,6 +2603,7 @@ dependencies = [
  "async-trait",
  "aws-config",
  "aws-lc-rs",
+ "aws-sdk-kms",
  "aws-sdk-s3",
  "axum",
  "base64 0.23.1",
@@ -2603,11 +2627,13 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "testcontainers",
  "thiserror",
  "time",
  "tokio",
  "tokio-rustls",
  "tokio-util",
+ "toml",
  "tower",
  "tower-http",
  "tracing",

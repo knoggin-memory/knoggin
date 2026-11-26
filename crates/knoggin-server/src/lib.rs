@@ -11,6 +11,7 @@ pub mod aws;
 pub mod broker;
 pub mod container;
 mod hex;
+pub mod kms;
 pub mod launcher;
 pub mod launcher_service;
 pub mod lease;
