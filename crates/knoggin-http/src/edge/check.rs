@@ -376,6 +376,16 @@ impl EdgeState {
         e
     }
 
+    /// Step 6's `Knoggin-Key-Expires` value, for an API key that expires within 14 days.
+    fn key_expires(&self, credential: &Credential) -> Option<HeaderValue> {
+        let (k, _) = credential.api_key()?;
+        if k.value.key_expires_ms - self.now() > EXPIRY_WARNING_MS {
+            return None;
+        }
+        let text = Timestamp::from_millis(k.value.key_expires_ms).to_rfc3339()?;
+        HeaderValue::from_str(&text).ok()
+    }
+
     /// Step 12, the bucket per credential.
     fn rate_limit(&self, caller: &Caller) -> Result<(), ApiError> {
         match caller.credential.bucket() {
@@ -505,7 +515,7 @@ fn route(request: &Request) -> String {
 /// The check in front of the control routes and the mode routes.
 pub(crate) async fn control(
     State(edge): State<EdgeState>,
-    mut request: Request,
+    request: Request,
     next: Next,
 ) -> Response {
     let arrival = match arrival(&request) {
@@ -518,6 +528,24 @@ pub(crate) async fn control(
     }
     let p = Presented::read(arrival, request.headers(), edge.inner().config.auth_mode);
     let resolved = edge.resolve(&p, access, true).await;
+    let expires = match &resolved {
+        Ok(Some(caller)) => edge.key_expires(&caller.credential),
+        _ => None,
+    };
+    let mut response = control_steps(&edge, request, next, p, access, resolved).await;
+    add_key_expires(&mut response, expires);
+    response
+}
+
+/// The control check after step 11.
+async fn control_steps(
+    edge: &EdgeState,
+    mut request: Request,
+    next: Next,
+    p: Presented,
+    access: Access,
+    resolved: Result<Option<Caller>, ApiError>,
+) -> Response {
     if access == Access::Session {
         // The session route answers `signedIn: false` where a step would refuse.
         let seen = match resolved {
@@ -569,6 +597,13 @@ pub(crate) async fn control(
     next.run(request).await
 }
 
+/// Puts `Knoggin-Key-Expires` on every answer to a request whose API key expires soon.
+fn add_key_expires(response: &mut Response, expires: Option<HeaderValue>) {
+    if let Some(value) = expires {
+        response.headers_mut().insert("knoggin-key-expires", value);
+    }
+}
+
 /// What the session route learned about the request's credential.
 #[derive(Debug, Clone)]
 pub(crate) enum SessionSeen {
@@ -596,10 +631,17 @@ pub(crate) async fn store(
 ) -> Response {
     let started = std::time::Instant::now();
     let route = route(&request);
-    let response = match prepare(&edge, &mut request, &route).await {
-        Ok(prepared) => return run(&edge, request, next, prepared).await,
+    let mut expires = None;
+    let prepared = prepare(&edge, &mut request, &route, &mut expires).await;
+    let mut response = match prepared {
+        Ok(prepared) => {
+            let mut response = run(&edge, request, next, prepared).await;
+            add_key_expires(&mut response, expires);
+            return response;
+        }
         Err(e) => e.into_response(),
     };
+    add_key_expires(&mut response, expires);
     // The store layer logs and counts the requests it runs; these never reach it.
     let code = response
         .extensions()
@@ -620,17 +662,18 @@ pub(crate) async fn store(
 }
 
 struct Prepared {
-    caller: Caller,
     store: Versioned<StoreRecord>,
     presented: Presented,
     guards: Vec<super::limits::CapGuard>,
     transfer: Option<Cap>,
 }
 
+/// Steps 3 to 12 of a store route; `expires` is set once an API key passed.
 async fn prepare(
     edge: &EdgeState,
     request: &mut Request,
     route: &str,
+    expires: &mut Option<HeaderValue>,
 ) -> Result<Prepared, ApiError> {
     let arrival = arrival(request)?;
     let p = Presented::read(arrival, request.headers(), edge.inner().config.auth_mode);
@@ -639,6 +682,7 @@ async fn prepare(
         Ok(None) => return Err(edge.refused(&p, unauthenticated())),
         Err(e) => return Err(edge.refused(&p, e)),
     };
+    *expires = edge.key_expires(&caller.credential);
     let transfer = match route {
         "/v1/export" => Some(Cap::Export),
         "/v1/import" => Some(Cap::Import),
@@ -678,7 +722,6 @@ async fn prepare(
     edge.bookkeeping(&caller).await;
     request.extensions_mut().insert(ctx);
     Ok(Prepared {
-        caller,
         store,
         presented: p,
         guards,
@@ -717,7 +760,6 @@ fn query_pairs(query: &str) -> Result<Vec<(String, String)>, ApiError> {
 
 async fn run(edge: &EdgeState, mut request: Request, next: Next, prepared: Prepared) -> Response {
     let Prepared {
-        caller,
         store,
         presented,
         guards,
@@ -739,13 +781,6 @@ async fn run(edge: &EdgeState, mut request: Request, next: Next, prepared: Prepa
     }
     let mut response = next.run(request).await;
     let now = edge.now();
-    if let Some((k, _)) = caller.credential.api_key()
-        && k.value.key_expires_ms - now <= EXPIRY_WARNING_MS
-        && let Some(text) = Timestamp::from_millis(k.value.key_expires_ms).to_rfc3339()
-        && let Ok(value) = HeaderValue::from_str(&text)
-    {
-        response.headers_mut().insert("knoggin-key-expires", value);
-    }
     if transfer == Some(Cap::Export) && response.status() == StatusCode::OK {
         let date = Timestamp::from_millis(now).utc_date().unwrap_or_default();
         let name = export_file_name(store.value.name.expose(), &date);

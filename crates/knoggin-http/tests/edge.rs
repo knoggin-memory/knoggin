@@ -274,6 +274,34 @@ async fn key_expiry_and_the_warning_header() {
         .await;
     let header = r.headers["knoggin-key-expires"].to_str().unwrap();
     knoggin_core::Timestamp::parse_rfc3339(header).unwrap();
+    // Every answer to a request with that key carries it: the session route, a control
+    // route that refuses the key, a store route that refuses the request, and MCP.
+    let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" });
+    let personal = env.personal.to_string();
+    for (method, uri, body, extra) in [
+        (Method::GET, "/v1/session", None, None),
+        (Method::GET, "/v1/stores", None, None),
+        (
+            Method::GET,
+            "/v1/memories",
+            None,
+            Some(("knoggin-store", personal.as_str())),
+        ),
+        (Method::POST, "/mcp", Some(ping), None),
+    ] {
+        let auth = format!("Bearer {secret}");
+        let mut headers = vec![("authorization", auth.as_str())];
+        headers.extend(extra);
+        let r = env.call(fixed(), method, uri, body, &headers).await;
+        assert_eq!(
+            r.headers
+                .get("knoggin-key-expires")
+                .map(|v| v.to_str().unwrap()),
+            Some(header),
+            "{uri} {}",
+            r.json
+        );
+    }
     env.clock.advance(14 * MILLIS_PER_DAY);
     let r = env
         .bearer(fixed(), &secret, Method::GET, "/v1/memories", None)
