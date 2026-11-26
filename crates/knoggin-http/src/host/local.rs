@@ -190,7 +190,7 @@ impl super::backend::StoreBackend for LocalBackend {
         let dir = self.store_dir(store);
         let (generation, snapshot) = tokio::task::spawn_blocking(move || pick(&dir, floor, after))
             .await
-            .map_err(|_| BackendError::Unavailable)??;
+            .map_err(|e| joined(&e))??;
         self.remember_open(store, record.user_id, floor);
         Ok(OpenedStore {
             key,
@@ -224,7 +224,7 @@ impl super::backend::StoreBackend for LocalBackend {
             Ok::<(), BackendError>(())
         })
         .await
-        .map_err(|_| BackendError::Unavailable)??;
+        .map_err(|e| joined(&e))??;
         if let Some(t) = self
             .saves
             .lock()
@@ -247,6 +247,17 @@ fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// A blocking task that did not finish: a panic is a bug (`internal`), anything else is
+/// a cancel at shutdown (`unavailable`). The error itself is never printed.
+fn joined(e: &tokio::task::JoinError) -> BackendError {
+    if e.is_panic() {
+        tracing::error!(kind = "panic", "a snapshot file task panicked");
+        BackendError::Internal
+    } else {
+        BackendError::Unavailable
+    }
 }
 
 fn make_dir(dir: &Path) -> io::Result<()> {
@@ -426,6 +437,18 @@ mod tests {
             pick(empty.path(), Some(a), None),
             Err(BackendError::Locked(LockReason::SnapshotUnreadable))
         ));
+    }
+
+    #[tokio::test]
+    async fn a_panic_in_a_file_task_is_internal_and_a_cancel_unavailable() {
+        let panicked = tokio::task::spawn_blocking(|| -> () { panic!("marker") })
+            .await
+            .unwrap_err();
+        assert_eq!(joined(&panicked), BackendError::Internal);
+        let task = tokio::spawn(std::future::pending::<()>());
+        task.abort();
+        let cancelled = task.await.unwrap_err();
+        assert_eq!(joined(&cancelled), BackendError::Unavailable);
     }
 
     #[test]

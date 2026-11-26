@@ -129,6 +129,9 @@ pub enum BackendError {
     /// Try again later.
     #[error("the backend is unavailable")]
     Unavailable,
+    /// A bug: the backend's own work panicked. Answered as `internal`.
+    #[error("the backend failed")]
+    Internal,
 }
 
 impl BackendError {
@@ -141,6 +144,7 @@ impl BackendError {
             Self::OverBudget => "over_budget",
             Self::Locked(_) => "locked",
             Self::Unavailable => "unavailable",
+            Self::Internal => "internal",
         }
     }
 }

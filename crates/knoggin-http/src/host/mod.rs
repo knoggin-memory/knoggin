@@ -737,6 +737,7 @@ impl StoreHost {
                 tracing::warn!(store_id = %id, kind = e.kind(), "opening a store failed");
                 ApiError::unavailable(2)
             }
+            BackendError::Internal => ApiError::internal(),
         })
     }
 
