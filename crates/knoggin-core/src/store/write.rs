@@ -71,8 +71,9 @@ impl Store {
     }
 
     /// Saves one memory (tab "Engine", "Saving a memory"). `vector` is the document
-    /// embedding when the host already has it; one that is not valid for the store's
-    /// model is ignored and the memory waits in the queue.
+    /// embedding when the host already has it. One that is not valid for the store's
+    /// model counts as a failed embedding: the memory is saved `Pending` with one
+    /// failure, as `apply_embedding` treats the same vector.
     pub fn store_memory(
         &mut self,
         req: StoreMemory,
@@ -201,7 +202,11 @@ impl Store {
             .get(&namespace)
             .map(|n| n.policy)
             .ok_or_else(|| EngineError::NotFound("namespace not found".into()))?;
-        let vector = vector.filter(|v| is_valid_vector(v, self.vectors.dimensions()));
+        let (vector, invalid_vector) = match vector {
+            Some(v) if is_valid_vector(&v, self.vectors.dimensions()) => (Some(v), false),
+            Some(_) => (None, true),
+            None => (None, false),
+        };
 
         let near_duplicates = match (&vector, args.check_duplicates) {
             (Some(v), true) => self.duplicate_report(namespace, v, args.supersedes),
@@ -245,6 +250,9 @@ impl Store {
             links.extend(self.add_manual_edge(parent, id, EdgeType::ParentChild, now));
         }
         links.extend(self.add_save_links(id, now));
+        if invalid_vector {
+            self.fail_embedding(id);
+        }
         if vector.is_some() {
             links.extend(self.add_semantic_links(id, now));
         }
@@ -812,7 +820,8 @@ pub(crate) mod tests {
         assert_eq!(report.matches[0].summary, text);
         assert!(report.matches.iter().all(|m| m.id != mid(3)));
         assert!(edge_types(&s, mid(4)).contains(&EdgeType::Associative));
-        // Without the flag there is no report; an invalid vector leaves it pending.
+        // Without the flag there is no report; an invalid vector counts as one failed
+        // embedding and leaves it pending.
         let r = s
             .store_memory(
                 req(json!({ "summary": text })),
@@ -834,6 +843,7 @@ pub(crate) mod tests {
             .unwrap();
         assert!(r.near_duplicates.is_none());
         assert_eq!(r.embedding, EmbeddingState::Pending);
+        assert_eq!(s.memory(mid(6)).unwrap().embed_failures, 1);
         assert_matches_rebuild(&mut s);
     }
 
