@@ -952,6 +952,14 @@ async fn model_command(ctx: &Ctx<'_>, config: &Config, c: ModelCommand) -> anyho
 }
 
 async fn use_previous(ctx: &Ctx<'_>, config: &Config, yes: bool) -> anyhow::Result<u8> {
+    if ctx.json && !yes {
+        // The question cannot be part of JSON output.
+        return Err(Failure {
+            exit: 2,
+            message: "`state use-previous --json` needs `--yes`".into(),
+        }
+        .into());
+    }
     let Some(p) = daemon::previous(config, &ctx.home).await? else {
         bail!("there is no earlier state file to fall back to");
     };

@@ -401,3 +401,12 @@ fn model_fetch_writes_nothing_into_model_dir_when_downloads_are_off() {
     assert!(o.stderr.contains("model.download"), "{}", o.stderr);
     assert!(!home.root().join("models").exists());
 }
+
+#[test]
+fn use_previous_with_json_needs_yes() {
+    let home = Home::new();
+    let o = home.run(&["state", "use-previous", "--json"]);
+    assert_eq!(o.code, 2, "{}{}", o.stdout, o.stderr);
+    assert!(o.stdout.is_empty(), "{}", o.stdout);
+    assert!(o.stderr.contains("--yes"), "{}", o.stderr);
+}
