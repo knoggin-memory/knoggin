@@ -27,7 +27,6 @@
     "bits-ui": "2.21.0",
     "d3-force": "3.0.1",
     "d3-scale": "4.0.3",
-    "d3-shape": "3.2.1",
     "graphology": "0.26.0",
     "idb-keyval": "6.3.0",
     "sigma": "4.0.6"
@@ -40,7 +39,6 @@
     "@sveltejs/vite-plugin-svelte": "7.3.1",
     "@types/d3-force": "3.0.10",
     "@types/d3-scale": "4.0.9",
-    "@types/d3-shape": "3.2.0",
     "@types/node": "26.6.6",
     "eslint": "10.15.0",
     "eslint-plugin-svelte": "3.24.1",
