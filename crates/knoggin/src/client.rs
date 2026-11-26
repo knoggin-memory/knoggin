@@ -16,6 +16,7 @@ use hyper_util::rt::TokioIo;
 use knoggin_core::Sensitive;
 use serde_json::Value;
 use tokio::net::UnixStream;
+use tokio::task::JoinHandle;
 
 use crate::config::Home;
 
@@ -182,17 +183,17 @@ impl Client {
     }
 
     /// Sends one request on a new connection and returns the answer with its body still
-    /// streaming.
+    /// streaming, and the connection's task. The task ends once the body has been read or
+    /// dropped; the caller joins it then.
     pub(crate) async fn send(
         &self,
         mut request: Request<Body>,
-    ) -> Result<http::Response<Incoming>, SendError> {
+    ) -> Result<(http::Response<Incoming>, JoinHandle<()>), SendError> {
         let stream = self.connect().await?;
         let (mut sender, conn) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
             .await
             .map_err(|e| SendError::Io(e.to_string()))?;
-        // The connection task ends when the answer's body has been read or dropped.
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let _ = conn.await;
         });
         let headers = request.headers_mut();
@@ -204,10 +205,13 @@ impl Client {
             v.set_sensitive(true);
             headers.insert(header::AUTHORIZATION, v);
         }
-        sender
-            .send_request(request)
-            .await
-            .map_err(|e| SendError::Io(e.to_string()))
+        match sender.send_request(request).await {
+            Ok(response) => Ok((response, task)),
+            Err(e) => {
+                task.abort();
+                Err(SendError::Io(e.to_string()))
+            }
+        }
     }
 
     /// Sends a request and reads the whole answer.
@@ -228,15 +232,12 @@ impl Client {
         let request = builder
             .body(body.map_or_else(Body::empty, Body::from))
             .map_err(|e| SendError::Io(e.to_string()))?;
-        let response = self.send(request).await?;
+        let (response, conn) = self.send(request).await?;
         let status = response.status();
         let headers = response.headers().clone();
-        let body = response
-            .into_body()
-            .collect()
-            .await
-            .map_err(|e| SendError::Io(e.to_string()))?
-            .to_bytes();
+        let body = response.into_body().collect().await;
+        let _ = conn.await;
+        let body = body.map_err(|e| SendError::Io(e.to_string()))?.to_bytes();
         Ok(Reply {
             status,
             headers,

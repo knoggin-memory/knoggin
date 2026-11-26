@@ -62,13 +62,15 @@ pub(crate) async fn export(
     for (k, v) in store_headers(store)? {
         request = request.header(k, v);
     }
-    let response = client
+    let (response, conn) = client
         .send(request.body(Body::empty())?)
         .await
         .map_err(Failure::from)?;
     let status = response.status();
     if !status.is_success() {
-        let body = response.into_body().collect().await?.to_bytes();
+        let body = response.into_body().collect().await;
+        let _ = conn.await;
+        let body = body?.to_bytes();
         return Err(api_failure(
             &serde_json::from_slice(&body).unwrap_or(Value::Null),
             status,
@@ -78,7 +80,15 @@ pub(crate) async fn export(
     let path = out.to_owned();
     let file = tokio::task::spawn_blocking(move || create_private(&path))
         .await
-        .map_err(|_| anyhow!("internal error"))??;
+        .map_err(|_| anyhow!("internal error"))
+        .and_then(|r| r);
+    let file = match file {
+        Ok(f) => f,
+        Err(e) => {
+            conn.abort();
+            return Err(e);
+        }
+    };
     let mut file = tokio::fs::File::from_std(file);
     let mut body = response.into_body();
     let mut written = 0u64;
@@ -94,6 +104,8 @@ pub(crate) async fn export(
         Ok(())
     }
     .await;
+    drop(body);
+    let _ = conn.await;
     if let Err(e) = result {
         // A cut-off file must not look like an export.
         let _ = tokio::fs::remove_file(out).await;
@@ -125,12 +137,14 @@ async fn post_import(
     for (k, v) in store_headers(store)? {
         request = request.header(k, v);
     }
-    let response = client
+    let (response, conn) = client
         .send(request.body(body)?)
         .await
         .map_err(Failure::from)?;
     let status = response.status();
-    let bytes = response.into_body().collect().await?.to_bytes();
+    let bytes = response.into_body().collect().await;
+    let _ = conn.await;
+    let bytes = bytes?.to_bytes();
     let value: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     if status.is_success() {
         Ok(value)
