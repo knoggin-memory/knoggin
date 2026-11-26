@@ -212,15 +212,16 @@ run "user_task_definition" {
 run "kms" {
   assert {
     condition = [
-      for s in jsondecode(aws_iam_role_policy.router.policy).Statement : s.Condition if contains(flatten([s.Action]), "kms:Decrypt")
+      for s in jsondecode(aws_iam_role_policy.router.policy).Statement : try(s.Condition, {}) if anytrue([for a in flatten([s.Action]) : startswith(a, "kms:")])
     ] == [{ "ForAnyValue:StringEquals" = { "kms:EncryptionContextKeys" = ["knoggin:store"] } }]
     error_message = "The router's KMS statement must carry ForAnyValue:StringEquals on kms:EncryptionContextKeys."
   }
   assert {
     condition = [
-      for s in jsondecode(aws_kms_key.master.policy).Statement : s.Condition if contains(flatten([s.Action]), "kms:Decrypt")
+      for s in jsondecode(aws_kms_key.master.policy).Statement : try(s.Condition, {})
+      if s.Principal.AWS != "arn:aws:iam::111122223333:root" && anytrue([for a in flatten([s.Action]) : startswith(a, "kms:")])
     ] == [{ "ForAnyValue:StringEquals" = { "kms:EncryptionContextKeys" = ["knoggin:store"] } }]
-    error_message = "The key policy's router statement must carry the same condition."
+    error_message = "Every statement of the key policy but the account root's must carry the same condition."
   }
   # No principal but the router's task role may use the key.
   assert {
