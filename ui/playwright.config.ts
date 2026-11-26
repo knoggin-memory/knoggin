@@ -12,7 +12,8 @@ export default defineConfig({
   // The files share one daemon (the restart test runs its own); tests in a file run in order.
   fullyParallel: false,
   workers: 2,
-  retries: process.env.CI ? 1 : 0,
+  // A flaky test fails the run; the tests that create things use unique names, so a manual rerun is safe.
+  retries: 0,
   reporter: [['list']],
   globalSetup: './e2e/support/global-setup.ts',
   use: { ...devices['Desktop Chrome'], viewport: { width: 1440, height: 900 }, trace: 'retain-on-failure' },
