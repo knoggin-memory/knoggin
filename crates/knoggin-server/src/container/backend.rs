@@ -472,8 +472,9 @@ impl StoreBackend for RouterBackend {
         // Sealing happens as the chunks are taken, on a blocking thread; the body takes
         // them from a small channel, so at most two chunks wait in memory.
         let (tx, rx) = tokio::sync::mpsc::channel::<io::Result<Bytes>>(2);
-        // Once the body is dropped the channel closes and the task ends by itself.
-        drop(tokio::task::spawn_blocking(move || {
+        // Once the body is dropped the channel closes and the task ends by itself; it is
+        // joined below.
+        let sealing = tokio::task::spawn_blocking(move || {
             for chunk in chunks {
                 let item = chunk
                     .map(Bytes::from)
@@ -483,11 +484,11 @@ impl StoreBackend for RouterBackend {
                     return;
                 }
             }
-        }));
+        });
         let body: BodyStream = Box::pin(futures_util::stream::unfold(rx, |mut rx| async move {
             rx.recv().await.map(|item| (item, rx))
         }));
-        let sent = self
+        let mut sent = self
             .link
             .send_signed(
                 self.user,
@@ -497,9 +498,16 @@ impl StoreBackend for RouterBackend {
                 Some(idle_limited(body)),
             )
             .await;
-        let (status, answer) = sent?;
-        // Read the rest of the answer so the connection can be used again.
-        let _ = tokio::time::timeout(TRANSFER_IDLE, answer.take(64).count()).await;
+        if let Ok((_, answer)) = sent.as_mut() {
+            // Read the rest of the answer so the connection can be used again.
+            let _ = tokio::time::timeout(TRANSFER_IDLE, answer.take(64).count()).await;
+        }
+        // The body has been sent or dropped by now, so the sealer has ended or ends at its
+        // next chunk; the bound only guards against a body that is still held.
+        if tokio::time::timeout(TRANSFER_IDLE, sealing).await.is_err() {
+            tracing::warn!(store_id = %store, "the sealing task outlived its upload");
+        }
+        let (status, _) = sent?;
         if status == StatusCode::PRECONDITION_FAILED {
             return Err(BackendError::NameTaken);
         }
