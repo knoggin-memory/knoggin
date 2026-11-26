@@ -215,7 +215,7 @@
   {#if first.isPending && !first.data}
     <Loading />
   {:else if first.isError && !first.data}
-    <LoadFailed onretry={() => first.refetch()} />
+    <LoadFailed error={first.error} onretry={() => first.refetch()} />
   {:else if total === 0}
     <div class="empty">
       {#if filtered}
@@ -225,7 +225,7 @@
       {/if}
     </div>
   {:else}
-  <div class="table-card" bind:this={scroller}>
+  <div class="table-wrap" bind:this={scroller}>
     <table>
       <thead>
         <tr>
@@ -240,7 +240,7 @@
       {#if first.isPending}
         <tbody>
           {#each Array(12) as _, i (i)}
-            <tr class="row"><td colspan="6" class="skel-cell"><span class="skeleton bar"></span></td></tr>
+            <tr class="mrow"><td colspan="6" class="skel-cell"><span class="skeleton bar"></span></td></tr>
           {/each}
         </tbody>
       {:else}
@@ -251,10 +251,10 @@
           <!-- One tbody per row so the virtualizer can measure an expanded row. -->
           <tbody data-index={item.index} use:measure>
             <!-- The whole row is a click target; the summary button is the keyboard path. -->
-            <tr class="row" class:selected={open} onclick={() => m && toggle(m.id)}>
+            <tr class="mrow" class:selected={open} onclick={() => m && toggle(m.id)}>
               {#if m}
                 {@const r = m.strength}
-                <td class="first cell-btn">
+                <td class="first cell-summary">
                   <button type="button" data-id={m.id} aria-expanded={open} class:ghost={m.summary === null} onclick={(e) => { e.stopPropagation(); toggle(m.id); }}>{m.summary ?? 'Summary dropped'}</button>
                 </td>
                 <td><span class="phase"><span class="ph ph-{m.phase}"></span>{phaseLabel(m.phase)}</span></td>
@@ -300,7 +300,7 @@
     color: var(--color-text-muted);
     font-weight: var(--weight-regular);
   }
-  .table-card {
+  .table-wrap {
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
@@ -351,7 +351,7 @@
   .w-last {
     width: calc(var(--space-8) * 3);
   }
-  .row {
+  .mrow {
     height: var(--row-h);
     border-bottom: var(--hairline) solid var(--color-divider);
     cursor: pointer;
@@ -368,20 +368,20 @@
   .expanded td {
     padding: 0;
   }
-  .row.selected {
+  .mrow.selected {
     background: var(--color-accent-soft);
   }
   td {
     padding: 0 var(--space-3);
     white-space: nowrap;
   }
-  td.cell-btn {
+  td.cell-summary {
     padding: 0;
     white-space: normal;
     max-width: 0;
     width: 100%;
   }
-  .cell-btn button {
+  .cell-summary button {
     display: block;
     width: 100%;
     padding: var(--space-3) var(--space-4);
@@ -394,10 +394,10 @@
     white-space: nowrap;
   }
   /* An opened row shows its whole summary. */
-  .row.selected .cell-btn button {
+  .mrow.selected .cell-summary button {
     white-space: normal;
   }
-  .cell-btn button.ghost {
+  .cell-summary button.ghost {
     font-style: italic;
     color: var(--color-text-muted);
   }

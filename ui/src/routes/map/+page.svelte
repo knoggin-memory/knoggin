@@ -149,7 +149,7 @@
     title="Memory map"
     meta={graph.data && shown
       ? shown.ids.length === graph.data.ids.length
-        ? `${count(graph.data.ids.length)} memories`
+        ? `${count(graph.data.ids.length)} ${graph.data.ids.length === 1 ? 'memory' : 'memories'}`
         : `${count(shown.ids.length)} of ${count(graph.data.ids.length)} memories`
       : undefined}
   />
@@ -181,18 +181,18 @@
 
   <div class="canvas-card">
     {#if graph.isPending}
-      <div class="state"><Loading /></div>
+      <div class="map-state"><Loading /></div>
     {:else if graph.isError}
-      <div class="state"><LoadFailed onretry={() => graph.refetch()} /></div>
+      <div class="map-state"><LoadFailed error={graph.error} onretry={() => graph.refetch()} /></div>
     {:else if graph.data && graph.data.ids.length === 0}
-      <div class="state">
+      <div class="map-state">
         <div class="empty">
           <p>No memories in this store yet. Agents add them with <span class="mono small">store_memory</span>.</p>
           <a class="btn-secondary" href="/setup">Set up an agent</a>
         </div>
       </div>
     {:else if shown && shown.ids.length === 0}
-      <div class="state">
+      <div class="map-state">
         <div class="empty"><p>No memories match these filters.</p><button type="button" class="link" onclick={() => (windowDays = 0)}>Show all time</button></div>
       </div>
     {:else if shown}
@@ -268,7 +268,7 @@
     border-radius: var(--radius-sm);
     padding: var(--space-1) var(--space-2);
   }
-  .state .link {
+  .map-state .link {
     font: inherit;
     color: var(--color-accent);
     background: none;
@@ -304,7 +304,7 @@
     background: var(--color-canvas);
     overflow: hidden;
   }
-  .state {
+  .map-state {
     position: absolute;
     inset: 0;
     display: flex;

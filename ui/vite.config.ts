@@ -8,8 +8,20 @@ import { defineConfig } from 'vitest/config';
 // open the dev server with that URL's `?t=<code>`.
 const api = process.env.KNOGGIN_DEV_API ?? 'http://127.0.0.1:7690';
 
+// SvelteKit's route announcer is written with an inline style attribute, which
+// the content security policy (style-src 'self') refuses; app.css styles it instead.
+const announcerWithoutInlineStyle = {
+  name: 'knoggin-announcer-without-inline-style',
+  enforce: 'pre' as const,
+  transform(code: string, id: string) {
+    if (!id.endsWith('/runtime/components/root.svelte')) return;
+    return code.replace(/(id="svelte-announcer"[^>]*?)\s+style="[^"]*"/, '$1');
+  },
+};
+
 export default defineConfig({
   plugins: [
+    announcerWithoutInlineStyle,
     sveltekit({
       // A single-page app: Knoggin serves index.html for every path that is not a file or the API.
       adapter: adapter({ pages: 'dist', assets: 'dist', fallback: 'index.html', strict: true }),

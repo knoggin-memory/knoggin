@@ -142,7 +142,7 @@
     {#if data.isPending}
       {#each [0, 1, 2, 3] as i (i)}<div class="skeleton row-skel"></div>{/each}
     {:else if data.isError}
-      <LoadFailed onretry={() => data.refetch()} />
+      <LoadFailed error={data.error} onretry={() => data.refetch()} />
     {:else if !days.length}
       <div class="empty"><p>No activity yet.</p></div>
     {/if}

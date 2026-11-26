@@ -536,3 +536,6 @@ dialog.dialog::backdrop { background: var(--color-scrim); }
 .tile .tv { font: var(--weight-regular) var(--text-tile) / 1.1 var(--font-serif); overflow-wrap: anywhere; }
 .tile .tc { font-size: var(--text-small); color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tile .tc.mono { font-family: var(--font-mono); }
+/* SvelteKit's route announcer carries an inline style, which the content
+   security policy blocks; the same rules from here keep it off screen. */
+#svelte-announcer { position: absolute; left: 0; top: 0; clip-path: inset(50%); overflow: hidden; white-space: nowrap; width: 1px; height: 1px; }

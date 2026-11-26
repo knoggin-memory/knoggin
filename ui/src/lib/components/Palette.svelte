@@ -152,11 +152,11 @@
 
     <div id="palette-results" role="listbox" aria-label="Results" class="results" aria-busy={pending}>
       {#if error}
-        <p class="state">{error}</p>
+        <p class="pal-state">{error}</p>
       {:else if !q.trim()}
-        <p class="state">Search this store’s memories with Knoggin’s hybrid search: vector, text, entities and links.</p>
+        <p class="pal-state">Search this store’s memories with Knoggin’s hybrid search: vector, text, entities and links.</p>
       {:else if result && !ordered.length && !pending}
-        <p class="state">No memories match in this store.</p>
+        <p class="pal-state">No memories match in this store.</p>
       {:else if !result}
         {#each [0, 1, 2] as i (i)}<span class="skeleton skel"></span>{/each}
       {/if}
@@ -274,7 +274,7 @@
   .group ~ .group {
     padding-top: var(--space-3);
   }
-  .state {
+  .pal-state {
     margin: 0;
     padding: var(--space-4) calc(var(--space-2) + var(--space-1) / 2);
     color: var(--color-text-muted);

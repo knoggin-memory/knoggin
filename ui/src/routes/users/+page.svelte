@@ -82,7 +82,7 @@
     {#if users.isPending}
       <Loading />
     {:else if users.isError}
-      <LoadFailed onretry={() => users.refetch()} />
+      <LoadFailed error={users.error} onretry={() => users.refetch()} />
     {:else}
       <div class="card table-card">
         <div class="table-scroll">

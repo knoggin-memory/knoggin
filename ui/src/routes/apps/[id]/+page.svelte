@@ -77,7 +77,7 @@
   {#if stores.isPending}
     <Loading />
   {:else if stores.isError}
-    <LoadFailed onretry={() => stores.refetch()} />
+    <LoadFailed error={stores.error} onretry={() => stores.refetch()} />
   {:else if !app || app.kind !== 'app'}
     <div class="empty"><p>No app with this ID.</p><a class="btn-secondary" href="/apps">Back to Apps</a></div>
   {:else}

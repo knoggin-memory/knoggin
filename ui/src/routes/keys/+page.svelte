@@ -42,7 +42,7 @@
   {#if keys.isPending}
     <Loading />
   {:else if keys.isError}
-    <LoadFailed onretry={() => keys.refetch()} />
+    <LoadFailed error={keys.error} onretry={() => keys.refetch()} />
   {:else}
     {#if soon}
       <Banner warn title="{soon.name} expires in {days(daysUntil(soon.expiresAt))}." text="Rotate it to keep its agent connected. The new key gets 90 days.">

@@ -85,7 +85,7 @@
   <div role="toolbar" aria-label="Filters" class="toolbar"><ScopeChip /></div>
 
   {#if report.isError && !report.data}
-    <LoadFailed onretry={() => report.refetch()} />
+    <LoadFailed error={report.error} onretry={() => report.refetch()} />
   {:else}
   <div class="row">
     <section aria-label="Phases" class="card narrow">
@@ -189,7 +189,7 @@
         {#if s.sweep.nextAt}<span class="caption">Next decay sweep {inFuture(ms(s.sweep.nextAt))}</span>{:else if s.sweep.lastAt}<span class="caption">Last decay sweep {longDate(s.sweep.lastAt)}</span>{/if}
       </div>
     {:else if system.isError}
-      <LoadFailed onretry={() => system.refetch()} />
+      <LoadFailed error={system.error} onretry={() => system.refetch()} />
     {:else}
       <span class="skeleton bar"></span>
     {/if}

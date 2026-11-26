@@ -4,7 +4,7 @@
 <script lang="ts">
   import '../app.css';
   import { QueryClientProvider } from '@tanstack/svelte-query';
-  import { goto, replaceState } from '$app/navigation';
+  import { goto, preloadCode, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import Sidebar from '$lib/components/Sidebar.svelte';
   import Palette from '$lib/components/Palette.svelte';
@@ -40,6 +40,17 @@
       status.start();
       await session.load();
     })();
+  });
+
+  // Load every screen's code once the shell is up: a local page's address dies with its
+  // daemon, and a screen fetched later could not load to say "Knoggin is not running".
+  let preloaded = false;
+  $effect(() => {
+    if (preloaded || session.phase !== 'ready' || !session.value?.signedIn) return;
+    preloaded = true;
+    const preload = preloadCode as (path: string) => Promise<void>;
+    for (const p of ['/map', '/explore', '/timeline', '/health', '/keys', '/apps', '/apps/_', '/setup', '/account', '/users', '/status']) void preload(p);
+    void import('$lib/map/MemoryMap.svelte');
   });
 
   // A store switch: read its status and follow its events.

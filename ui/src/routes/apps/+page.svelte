@@ -38,7 +38,7 @@
   {#if stores.isPending}
     <Loading />
   {:else if stores.isError}
-    <LoadFailed onretry={() => stores.refetch()} />
+    <LoadFailed error={stores.error} onretry={() => stores.refetch()} />
   {:else if !apps.length}
     <div class="empty">
       <p>No apps yet. Create one for a support bot, a coding agent for one repo, or a research pipeline.</p>

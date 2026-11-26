@@ -71,7 +71,7 @@
     {#if status.isPending}
       <Loading />
     {:else if status.isError || !s}
-      <LoadFailed onretry={() => status.refetch()} />
+      <LoadFailed error={status.error} onretry={() => status.refetch()} />
     {:else}
       <section class="card" aria-label="Now">
         <div class="tiles">
@@ -111,7 +111,7 @@
           </div>
           {#if chosenStore}<p class="mono small muted store-id">Store ID {chosenStore}</p>{/if}
           {#if snaps.isError}
-            <LoadFailed onretry={() => snaps.refetch()} />
+            <LoadFailed error={snaps.error} onretry={() => snaps.refetch()} />
           {:else if snaps.data && !snaps.data.length}
             <p class="muted">No snapshots yet.</p>
           {:else if snaps.data}
