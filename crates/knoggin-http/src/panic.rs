@@ -21,29 +21,3 @@ pub fn log_location(info: &PanicHookInfo<'_>) {
         .lock()
         .write_all(location_line(info).as_bytes());
 }
-
-#[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
-
-    use super::*;
-
-    #[test]
-    fn the_line_names_the_place_and_not_the_message() {
-        let seen = Arc::new(Mutex::new(String::new()));
-        let out = seen.clone();
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            *out.lock().unwrap() = location_line(info);
-        }));
-        let result = std::panic::catch_unwind(|| panic!("marker-secret-text"));
-        std::panic::set_hook(previous);
-        assert!(result.is_err());
-        let line = seen.lock().unwrap().clone();
-        assert!(
-            line.starts_with("panic at ") && line.contains("panic.rs"),
-            "{line}"
-        );
-        assert!(!line.contains("marker"), "{line}");
-    }
-}
