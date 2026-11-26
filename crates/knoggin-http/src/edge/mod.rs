@@ -6,7 +6,7 @@
 //!
 //! Built now: sign-in mode `none`, the local socket, local web sessions and API keys.
 //! Mode `oauth` (tokens and cookie sessions) joins in milestone 5 at the marked steps of
-//! [`check`].
+//! `check`.
 
 mod browser;
 mod check;

@@ -7,7 +7,7 @@
 //! - A panic inside a store operation, or a poisoned lock, drops that store from memory
 //!   without saving it; the next request loads its last snapshot.
 //! - Each open store has one task that runs its snapshot timers, its 24-hour sweep and
-//!   its idle close ([`schedule`]). One worker task per process drains the embedding
+//!   its idle close (`schedule`). One worker task per process drains the embedding
 //!   queues of all open stores through the [`Embedder`].
 //!
 //! The operations themselves (what REST and MCP call) are in [`ops`] and [`transfer`].

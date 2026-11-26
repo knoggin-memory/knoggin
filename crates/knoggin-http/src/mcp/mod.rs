@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The MCP endpoint (tab "MCP"): the protocol layer ported from recalld, the streamable
 //! HTTP transport, and the two tool sets at `/mcp` and `/mcp/plugin`. Every tool calls
-//! the same `StoreHost` method as its REST route. The store layer mounts [`routes`].
+//! the same `StoreHost` method as its REST route. The store layer mounts `routes`.
 
 mod args;
 mod http;
