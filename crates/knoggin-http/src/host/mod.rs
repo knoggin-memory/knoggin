@@ -150,6 +150,27 @@ pub fn request_hash<T: Serialize>(op: &str, request: &T) -> Result<[u8; 32], Api
     Ok(out)
 }
 
+/// At most this many client names per open store.
+const MAX_CLIENTS: usize = 32;
+
+/// Notes `client` as seen `at`; a full list drops the name seen longest ago.
+fn note_client(list: &mut Vec<(String, Timestamp)>, client: &str, at: Timestamp) {
+    if let Some(entry) = list.iter_mut().find(|(name, _)| name == client) {
+        entry.1 = at;
+        return;
+    }
+    if list.len() >= MAX_CLIENTS
+        && let Some(oldest) = list
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (_, seen))| *seen)
+            .map(|(i, _)| i)
+    {
+        list.swap_remove(oldest);
+    }
+    list.push((client.to_owned(), at));
+}
+
 /// What a write does to the budget and the upload block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WriteKind {
@@ -204,6 +225,8 @@ pub(crate) struct OpenStore {
     upload_blocked: AtomicBool,
     dropped: AtomicBool,
     last_request: Mutex<Instant>,
+    /// The MCP client names seen, with when each was last seen; in memory only.
+    clients: Mutex<Vec<(String, Timestamp)>>,
     task: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -431,7 +454,21 @@ impl StoreHost {
             .try_acquire_owned()
             .map_err(|_| ApiError::unavailable(1))?;
         *lock(&open.last_request) = Instant::now();
+        if let Some(client) = &ctx.client {
+            note_client(&mut lock(&open.clients), client, now());
+        }
         Ok((open, permit))
+    }
+
+    /// The MCP client names an open store has seen, most recent first, with when each
+    /// was last seen (for the web UI's system status). Empty for a store not open.
+    pub fn clients(&self, id: StoreId) -> Vec<(String, Timestamp)> {
+        let open = lock(&self.entries)
+            .get(&id)
+            .and_then(|e| e.cell.get().cloned());
+        let mut list = open.map(|o| lock(&o.clients).clone()).unwrap_or_default();
+        list.sort_by_key(|(_, seen)| std::cmp::Reverse(*seen));
+        list
     }
 
     async fn open_store(&self, id: StoreId) -> Result<Arc<OpenStore>, ApiError> {
@@ -591,6 +628,7 @@ impl StoreHost {
             upload_blocked: AtomicBool::new(false),
             dropped: AtomicBool::new(false),
             last_request: Mutex::new(Instant::now()),
+            clients: Mutex::new(Vec::new()),
             task: Mutex::new(None),
         });
         if current.bookkeeping != saved.bookkeeping {
@@ -986,4 +1024,25 @@ fn read_snapshot(
             SnapshotError::FormatTooNew(_) => LoadError::FormatTooNew,
             SnapshotError::Corrupt(_) => LoadError::Corrupt,
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_names_keep_the_32_seen_last() {
+        let mut list = Vec::new();
+        for i in 0..32 {
+            note_client(&mut list, &format!("c{i}"), Timestamp::from_millis(i));
+        }
+        note_client(&mut list, "c0", Timestamp::from_millis(100));
+        note_client(&mut list, "new", Timestamp::from_millis(101));
+        assert_eq!(list.len(), MAX_CLIENTS);
+        assert!(
+            !list.iter().any(|(n, _)| n == "c1"),
+            "the one seen longest ago goes"
+        );
+        assert!(list.iter().any(|(n, at)| n == "c0" && at.millis() == 100));
+    }
 }
