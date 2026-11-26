@@ -131,7 +131,7 @@
           <span class="fade-text">{x.name}</span>
           {#if gone}<span class="tag warn">Scheduled for deletion</span>{/if}
           {#if exportErrors[x.id]}<span class="field-error" role="alert">{exportErrors[x.id]}</span>{/if}
-          <span class="mono small muted">{count(x.memoryCount)} memories</span>
+          <span class="mono small muted">{count(x.memoryCount)} {x.memoryCount === 1 ? "memory" : "memories"}</span>
           <button type="button" class="btn-secondary btn-small" disabled={gone} onclick={() => exportStore(x.id, x.name)}>{downloaded[x.id] ? 'Downloaded' : 'Download'}</button>
         </div>
       {/each}

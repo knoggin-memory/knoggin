@@ -53,6 +53,11 @@
   const here = $derived(page.url.pathname + page.url.search);
   const params = $derived(page.url.searchParams);
 
+  const denied = () => {
+    const s = session.value;
+    return session.deniedReason ?? (s?.signedOutReason === 'account_removed' || s?.signedOutReason === 'not_allowed' ? s.signedOutReason : null);
+  };
+
   /** Which standalone page shows, or null for the shell. */
   const standalone = $derived.by((): Page | 'redirect' | null => {
     const s = session.value;
@@ -63,8 +68,8 @@
     const error = params.get('error');
     if (onSignin && s.auth === 'oauth' && error) return { kind: 'signin-failed', error };
     if (!s.signedIn) {
-      const denied = session.deniedReason ?? (s.signedOutReason === 'account_removed' || s.signedOutReason === 'not_allowed' ? s.signedOutReason : null);
-      if (denied) return { kind: 'signin-failed', error: denied };
+      // account_removed or not_allowed: the page of a failed sign-in, at /signin?error=<reason>.
+      if (denied()) return 'redirect';
       if (!s.webSignIn) return { kind: 'open-local' };
       if (!onSignin) return 'redirect';
       const returnTo = params.get('return_to') ?? '/map';
@@ -82,7 +87,10 @@
     if (standalone !== 'redirect') return;
     const s = session.value;
     if (!s) return;
-    if (s.signedIn) {
+    const reason = denied();
+    if (!s.signedIn && reason) {
+      goto(`/signin?error=${reason}`, { replace: true });
+    } else if (s.signedIn) {
       // With sign-in off, or already signed in, /signin goes on to the app.
       goto(params.get('return_to') ?? '/map', { replace: true });
     } else {

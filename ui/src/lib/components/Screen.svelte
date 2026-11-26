@@ -25,7 +25,7 @@
   });
   const limitedFor = $derived(status.rateLimitedUntil ? Math.ceil((status.rateLimitedUntil - now) / 1000) : 0);
   const idleMinutes = $derived(session.value?.idleSeconds ? Math.round(session.value.idleSeconds / 60) : null);
-  const mb = (b: number) => Math.round(b / 1_048_576);
+  const mb = (b: number) => Math.round(b / 1_000_000);
 </script>
 
 <main class="screen" class:loose>
