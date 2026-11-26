@@ -1,0 +1,14 @@
+{
+  "namespaces": 3,
+  "memories": {
+    "full": 8,
+    "summary": 3,
+    "ghost": 1
+  },
+  "forgottenSkipped": 1,
+  "edges": 10,
+  "edgesSkipped": 19,
+  "pendingEmbedding": 11,
+  "renamed": [],
+  "errors": 0
+}

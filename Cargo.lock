@@ -295,6 +295,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc32fast"
+version = "1.5.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b929dd2a135771f40afabd1073f85eed59c800b7c61901e5c254270497dad64"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1089,6 +1098,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "knoggin-import-recalld"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "knoggin-core",
+ "redb",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "knoggin-state"
 version = "0.1.0"
 dependencies = [
@@ -1636,6 +1659,15 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "redb"
+version = "2.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d64e07496d293ad8ed401c4d193d5b9f0f97671fbd5bf21d691a0c7d2c53dc8"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
