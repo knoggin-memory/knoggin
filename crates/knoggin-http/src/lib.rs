@@ -6,6 +6,7 @@
 pub mod ctx;
 pub mod error;
 pub mod host;
+pub mod mcp;
 pub mod panic;
 pub mod settings;
 pub mod store_api;

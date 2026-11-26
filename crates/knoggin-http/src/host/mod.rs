@@ -102,8 +102,10 @@ pub struct HostConfig {
     /// How long after its last request a store with embedding work may stay open past
     /// `idle_close`: 30 minutes in a container, `None` (until the queue is empty) locally.
     pub embed_allowance: Option<Duration>,
-    /// `webUrl` of `GET /v1/context`.
+    /// `webUrl` of `GET /v1/context`, and the address the MCP instructions name.
     pub web_url: Option<String>,
+    /// The MCP endpoint's settings.
+    pub mcp: crate::mcp::McpConfig,
 }
 
 impl HostConfig {
@@ -117,6 +119,7 @@ impl HostConfig {
             idle_close: Some(Duration::from_secs(600)),
             embed_allowance: None,
             web_url: None,
+            mcp: crate::mcp::McpConfig::default(),
         }
     }
 }

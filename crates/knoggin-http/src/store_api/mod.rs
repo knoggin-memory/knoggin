@@ -84,13 +84,19 @@ pub fn store_layer(host: Arc<StoreHost>) -> Router {
     let import = Router::new()
         .route("/v1/import", post(import))
         .layer(DefaultBodyLimit::disable());
+    // `store_memories` can carry 100 memories, so the MCP endpoint takes the batch limit.
+    let mcp = crate::mcp::routes(host.clone())
+        .layer(DefaultBodyLimit::max(limits.body_bytes))
+        .layer(RequestBodyLimitLayer::new(limits.body_bytes))
+        .layer(timeout());
     ordinary
         .merge(batch)
         .merge(export)
         .merge(import)
+        .with_state(host)
+        .merge(mcp)
         .layer(middleware::from_fn(normalize))
         .layer(middleware::from_fn(trace::observe))
-        .with_state(host)
 }
 
 /// Turns the bare answers of library layers into `ApiError`s, puts the request ID in
@@ -99,6 +105,10 @@ async fn normalize(request: Request, next: Next) -> Response {
     let id = trace::request_id(&request);
     let mut response = next.run(request).await;
     if response.extensions().get::<ApiError>().is_none()
+        && response
+            .extensions()
+            .get::<crate::mcp::Answered>()
+            .is_none()
         && let Some(e) = ApiError::from_bare_status(response.status())
     {
         let allow = response.headers().get(header::ALLOW).cloned();
