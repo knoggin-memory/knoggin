@@ -1,8 +1,6 @@
 name: CI
 
-# Tab "Testing, CI, releases", CI. Jobs whose code lands in later milestones
-# are not here yet; each is added with its milestone and to `ci-ok.needs`:
-#   sdk      (milestone 8) ubuntu-24.04, the SDK tier and `uv build`
+# Tab "Testing, CI, releases", CI.
 
 on:
   pull_request:
@@ -338,6 +336,49 @@ jobs:
           path: ui/test-results/
           retention-days: 7
 
+  # The SDK tier: unit tests, and contract tests against a daemon built from this commit
+  # and started in test mode, on the lowest and the highest supported Python; the linters
+  # and type checkers the SDK tab names; and `uv build`. uv comes from its PyPI wheel,
+  # checked against its SHA-256; uv checks the Python builds it downloads itself.
+  sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdk/python
+    env:
+      UV_PYTHON_DOWNLOADS: manual
+      KNOGGIN_BIN: ${{ github.workspace }}/target/debug/knoggin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/uv.whl" https://files.pythonhosted.org/packages/3d/aa/26d64642d808de4a652579ef950d7cd2d37f080a8babf9c67c6b75fc4c3f/uv-0.13.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19  $RUNNER_TEMP/uv.whl" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          unzip -j -o "$RUNNER_TEMP/uv.whl" uv-0.13.9.data/scripts/uv -d "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP/bin/uv"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: uv python install 3.11.18 3.15.2
+      - run: rustup toolchain install
+        working-directory: .
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build -p knoggin --locked
+        working-directory: .
+      - run: uv run --locked --python 3.11.18 pytest
+      - run: uv run --locked --python 3.15.2 pytest
+      - run: uv run --locked ruff check .
+      - run: uv run --locked ruff format --check .
+      - run: uv run --locked pyright
+      - run: uv run --locked mypy
+      - run: uv build
+
   deps:
     # Dependency review needs GitHub Advanced Security on a private repository,
     # so it runs once the repository is public.
@@ -368,7 +409,7 @@ jobs:
   # The one required check. Skipped jobs (deps and dco on a push) count as passed.
   ci-ok:
     if: always()
-    needs: [fmt, clippy, test, stack, budgets, doc, deny, machete, openapi, workflows, web, web-e2e, deploy, deps, dco]
+    needs: [fmt, clippy, test, stack, budgets, doc, deny, machete, openapi, workflows, web, web-e2e, sdk, deploy, deps, dco]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
