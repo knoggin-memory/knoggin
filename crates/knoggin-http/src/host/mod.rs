@@ -518,10 +518,11 @@ impl StoreHost {
             .unwrap_or_else(|| Err(ApiError::unavailable(2)))
     }
 
-    /// A store's lock while it holds: for a minute after the last try.
+    /// A store's lock while it holds: for a minute after the last try, and for good when
+    /// the store does not fit this container (it opens only in a new one, tab "Server").
     fn cached_lock(&self, id: StoreId) -> Option<LockReason> {
         let (reason, at) = lock(&self.locks).get(&id).copied()?;
-        (at.elapsed() < LOCK_RETRY).then_some(reason)
+        (reason == LockReason::OutOfMemory || at.elapsed() < LOCK_RETRY).then_some(reason)
     }
 
     /// The store's entry, starting its load when there is none.

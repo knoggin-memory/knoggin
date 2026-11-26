@@ -458,3 +458,48 @@ async fn a_caller_that_gives_up_does_not_cancel_the_load() {
         "one load"
     );
 }
+
+/// Another host over the same files and records, its backend counted.
+fn second_host(
+    env: &Env,
+    config: HostConfig,
+) -> (
+    std::sync::Arc<knoggin_http::StoreHost>,
+    std::sync::Arc<support::Counting>,
+) {
+    let counting = std::sync::Arc::new(support::Counting::new(env.t.backend.clone()));
+    let (_tx, rx) = tokio::sync::watch::channel(knoggin_http::testing::fake_model_state(
+        knoggin_core::ops::ModelStatus::Loading,
+    ));
+    let embedder = knoggin_http::host::Embedder::new(rx, Default::default(), WAITS);
+    let host = knoggin_http::StoreHost::new(config, counting.clone(), embedder);
+    (host, counting)
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_store_too_large_for_the_budget_stays_locked_in_this_container() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(Permissions::READ_WRITE);
+    save(&env, &ctx, "one").await;
+    assert!(env.t.host.save_all().await.is_empty());
+    env.t.host.shutdown();
+    let mut config = fake_config();
+    config.memory_budget = Some(10);
+    let (host, counting) = second_host(&env, config);
+    let e = host.list_namespaces(&ctx).await.unwrap_err();
+    assert_eq!(
+        (e.code, e.reason),
+        (Code::StoreLocked, Some("out_of_memory"))
+    );
+    let opens = counting.opens.load(Ordering::SeqCst);
+    // Neither a request nor the status route tries it again, even after a minute.
+    sleep(Duration::from_secs(120)).await;
+    assert_eq!(
+        host.store_status(env.t.store).state,
+        StoreState::Locked(LockReason::OutOfMemory)
+    );
+    let e = host.list_namespaces(&ctx).await.unwrap_err();
+    assert_eq!(e.reason, Some("out_of_memory"));
+    sleep(Duration::from_secs(1)).await;
+    assert_eq!(counting.opens.load(Ordering::SeqCst), opens);
+}
