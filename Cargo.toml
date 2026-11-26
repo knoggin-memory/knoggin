@@ -85,7 +85,7 @@ ts-rs = { version = "12.0", features = ["uuid-impl", "serde-json-impl", "no-serd
 # Sign-in, containers, system
 jsonwebtoken = { version = "12.0", default-features = false, features = ["aws_lc_rs", "use_pem"] }
 bollard = "0.21.1"
-rustix = { version = "1.1.6", features = ["process", "fs"] }
+rustix = { version = "1.1.6", features = ["process", "fs", "net"] }
 # Embeddings and web UI
 ort = { version = "=2.0.0-rc.15", default-features = false, features = ["std", "load-dynamic", "tracing"] }
 tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }

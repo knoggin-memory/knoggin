@@ -1,0 +1,5986 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Knoggin",
+    "description": "Memory for AI agents: the REST API under `/v1`.",
+    "license": {
+      "name": "AGPL-3.0-only",
+      "identifier": "AGPL-3.0-only"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "local"
+        ],
+        "operationId": "logout",
+        "responses": {
+          "204": {
+            "description": "The session is forgotten"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "tags": [
+          "status"
+        ],
+        "operationId": "healthz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "status"
+        ],
+        "operationId": "readyz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ready"
+                }
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ready"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/account": {
+      "delete": {
+        "tags": [
+          "account"
+        ],
+        "operationId": "delete_account",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteAccount"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDeleted"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/account/undelete": {
+      "post": {
+        "tags": [
+          "account"
+        ],
+        "operationId": "undelete_account",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/status": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "admin_status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/admin/stores/{id}/snapshots": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "snapshots",
+        "responses": {
+          "404": {
+            "description": "The snapshot list exists on a server only",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/context": {
+      "get": {
+        "tags": [
+          "recall"
+        ],
+        "operationId": "context",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "topic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Context"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/export": {
+      "get": {
+        "tags": [
+          "transfer"
+        ],
+        "operationId": "export",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "store",
+            "in": "query",
+            "description": "The store, from a session only",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The export file, streamed",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/import": {
+      "post": {
+        "tags": [
+          "transfer"
+        ],
+        "operationId": "import",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "onConflict",
+            "in": "query",
+            "description": "`skip` (default) or `error`",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "description": "An export file, streamed",
+          "content": {
+            "application/x-ndjson": {
+              "schema": {
+                "type": "string"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/local/browser-code": {
+      "post": {
+        "tags": [
+          "local"
+        ],
+        "operationId": "browser_code",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BrowserCode"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/local/session": {
+      "post": {
+        "tags": [
+          "local"
+        ],
+        "operationId": "local_session",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LocalSession"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "list_memories",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tag",
+            "in": "query",
+            "description": "Repeatable; all must match",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "phase",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "createdAfter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "createdBefore",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "includeFullText",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_Memory"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "store_memory",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 128 printable ASCII characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreMemory"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoredMemory"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/batch": {
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "store_memories",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 128 printable ASCII characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreMemories"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchResult_StoredMemory"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/forget": {
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "forget_memories",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 128 printable ASCII characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ForgetMemories"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ForgetManyResult"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/move": {
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "move_memories",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 128 printable ASCII characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveMemories"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Moved"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/{id}": {
+      "get": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "get_memory",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "recordAccess",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "includeHistory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Memory"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "forget_memory",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 128 printable ASCII characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Forgotten"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/{id}/reinforce": {
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "reinforce_memory",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 128 printable ASCII characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReinforceMemory"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Reinforced"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/{id}/similar": {
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "find_similar",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FindSimilar"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Items_SimilarHit"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/memories/{id}/supersede": {
+      "post": {
+        "tags": [
+          "memories"
+        ],
+        "operationId": "supersede_memory",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 128 printable ASCII characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SupersedeMemory"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoredMemory"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/namespaces": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "operationId": "list_namespaces",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Items_Namespace"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "namespaces"
+        ],
+        "operationId": "create_namespace",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 128 printable ASCII characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateNamespace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Namespace"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/namespaces/{name}": {
+      "delete": {
+        "tags": [
+          "namespaces"
+        ],
+        "operationId": "delete_namespace",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 128 printable ASCII characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "dryRun",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamespaceDeleted"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/namespaces/{name}/policy": {
+      "put": {
+        "tags": [
+          "namespaces"
+        ],
+        "operationId": "update_policy",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "1 to 128 printable ASCII characters.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "dryRun",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NamespacePolicy"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Namespace"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/namespaces/{name}/stats": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "operationId": "namespace_stats",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NamespaceStats"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/openapi.json": {
+      "get": {
+        "tags": [
+          "session"
+        ],
+        "operationId": "openapi",
+        "responses": {
+          "200": {
+            "description": "The OpenAPI 3.1 document of `/v1`"
+          }
+        }
+      }
+    },
+    "/v1/recall": {
+      "post": {
+        "tags": [
+          "recall"
+        ],
+        "operationId": "recall",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Recall"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecallResponse"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/session": {
+      "get": {
+        "tags": [
+          "session"
+        ],
+        "operationId": "session",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stores": {
+      "get": {
+        "tags": [
+          "stores"
+        ],
+        "operationId": "list_stores",
+        "parameters": [
+          {
+            "name": "includeDeleted",
+            "in": "query",
+            "description": "Default true",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Items_Store"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "stores"
+        ],
+        "operationId": "create_store",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreName"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Store"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stores/{id}": {
+      "get": {
+        "tags": [
+          "stores"
+        ],
+        "operationId": "get_store",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Store"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "stores"
+        ],
+        "operationId": "delete_store",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Store"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "stores"
+        ],
+        "operationId": "rename_store",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StoreName"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Store"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stores/{id}/keys": {
+      "get": {
+        "tags": [
+          "keys"
+        ],
+        "operationId": "list_keys",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Items_ApiKey"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "keys"
+        ],
+        "operationId": "create_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApiKey"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedApiKey"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stores/{id}/keys/{keyId}": {
+      "delete": {
+        "tags": [
+          "keys"
+        ],
+        "operationId": "revoke_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stores/{id}/keys/{keyId}/rotate": {
+      "post": {
+        "tags": [
+          "keys"
+        ],
+        "operationId": "rotate_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "keyId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RotateApiKey"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedApiKey"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stores/{id}/status": {
+      "get": {
+        "tags": [
+          "stores"
+        ],
+        "operationId": "store_status",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StoreStatus"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/stores/{id}/undelete": {
+      "post": {
+        "tags": [
+          "stores"
+        ],
+        "operationId": "undelete_store",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Store"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tags": {
+      "get": {
+        "tags": [
+          "namespaces"
+        ],
+        "operationId": "list_tags",
+        "parameters": [
+          {
+            "name": "Knoggin-Store",
+            "in": "header",
+            "description": "The store, for a session or the local socket; refused with an API key.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "Knoggin-Namespace",
+            "in": "header",
+            "description": "The request's default namespace.",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "prefix",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_TagCount"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "list_users",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Page_User"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/{id}": {
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "remove_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/{id}/stores": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "user_stores",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Items_Store"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/users/{id}/undelete": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "operationId": "restore_user",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AccessEvent": {
+        "type": "object",
+        "description": "One entry of a memory's access history.",
+        "required": [
+          "at",
+          "kind"
+        ],
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "When."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/AccessKind",
+            "description": "How."
+          }
+        }
+      },
+      "AccessKind": {
+        "type": "string",
+        "description": "How a memory was accessed.",
+        "enum": [
+          "direct",
+          "associative",
+          "reinforcement"
+        ]
+      },
+      "AccountDeleted": {
+        "type": "object",
+        "description": "The answer of `DELETE /v1/account`.",
+        "required": [
+          "deletedAt",
+          "deleteAfter"
+        ],
+        "properties": {
+          "deleteAfter": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deletedAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          }
+        }
+      },
+      "AdminStatus": {
+        "type": "object",
+        "description": "`GET /v1/admin/status`. On a local install the server-only parts are `null`.",
+        "required": [
+          "version",
+          "mode",
+          "backends",
+          "users"
+        ],
+        "properties": {
+          "backends": {
+            "$ref": "#/components/schemas/Backends"
+          },
+          "containers": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "`{ claimed, ready, starting }` on a server."
+          },
+          "dataDir": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "imageDigest": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "mode": {
+            "type": "string",
+            "description": "`local` or `server`."
+          },
+          "pool": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "`{ target }` on a server."
+          },
+          "retireBefore": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "rollout": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "`{ claimBuild, desiredBuild }` on a server."
+          },
+          "storage": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "`{ bucket, region }` on a server."
+          },
+          "users": {
+            "$ref": "#/components/schemas/UserCounts"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ApiKey": {
+        "type": "object",
+        "description": "An API key, without its secret.",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "permissions",
+          "createdAt",
+          "expiresAt"
+        ],
+        "properties": {
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "lastUsedOn": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`YYYY-MM-DD`, or `null`."
+          },
+          "name": {
+            "type": "string"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "memory:read",
+              "memory:write"
+            ]
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "revokedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "Backends": {
+        "type": "object",
+        "description": "The backends of this process.",
+        "required": [
+          "stateDb",
+          "objectStorage",
+          "keyProvider",
+          "launcher"
+        ],
+        "properties": {
+          "keyProvider": {
+            "type": "string",
+            "description": "`keychain`, `key_file` or `kms`."
+          },
+          "launcher": {
+            "type": "string",
+            "description": "`none`, `docker` or `ecs`."
+          },
+          "objectStorage": {
+            "type": "string",
+            "description": "`local_dir` or `s3`."
+          },
+          "stateDb": {
+            "type": "string",
+            "description": "`local_file`, `postgres` or `dynamodb`."
+          }
+        }
+      },
+      "BatchItemResult_StoredMemory": {
+        "type": "object",
+        "description": "One entry of a batch result, in request order.",
+        "required": [
+          "index",
+          "status"
+        ],
+        "properties": {
+          "error": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ItemError",
+                "description": "Why it was refused."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Position in the request.",
+            "minimum": 0
+          },
+          "memory": {
+            "type": "object",
+            "description": "The answer of a save. `links` are the edges made for the memory, for the host's live\nevent; they are not serialized.",
+            "required": [
+              "id",
+              "namespace",
+              "phase",
+              "strength",
+              "stability",
+              "createdAt",
+              "embedding"
+            ],
+            "properties": {
+              "createdAt": {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "When it was saved."
+              },
+              "duplicateCheck": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/DuplicateCheck",
+                    "description": "Set by the host when the duplicate check could not run."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "embedding": {
+                "$ref": "#/components/schemas/EmbeddingState",
+                "description": "`pending`, or `ready` when a vector came with the save."
+              },
+              "id": {
+                "$ref": "#/components/schemas/MemoryId",
+                "description": "The new memory."
+              },
+              "namespace": {
+                "type": "string",
+                "description": "Its namespace's name."
+              },
+              "nearDuplicates": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/NearDuplicates",
+                    "description": "Near duplicates, when asked for and found."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "phase": {
+                "$ref": "#/components/schemas/Phase",
+                "description": "`full`."
+              },
+              "stability": {
+                "type": "number",
+                "format": "float",
+                "description": "Days."
+              },
+              "strength": {
+                "type": "number",
+                "format": "float",
+                "description": "Raw strength now: 1.0 unless an earlier `createdAt` was sent."
+              },
+              "supersedes": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/MemoryId",
+                    "description": "On a supersede: the replaced memory."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          },
+          "status": {
+            "$ref": "#/components/schemas/BatchStatus",
+            "description": "`ok` or `error`."
+          }
+        }
+      },
+      "BatchResult_StoredMemory": {
+        "type": "object",
+        "description": "The answer of a batch save.",
+        "required": [
+          "results",
+          "stored",
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items refused.",
+            "minimum": 0
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BatchItemResult_StoredMemory"
+            },
+            "description": "One entry per item, in order."
+          },
+          "stored": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Items saved.",
+            "minimum": 0
+          }
+        }
+      },
+      "BatchStatus": {
+        "type": "string",
+        "description": "`ok` or `error`.",
+        "enum": [
+          "ok",
+          "error"
+        ]
+      },
+      "BrowserCode": {
+        "type": "object",
+        "description": "`POST /v1/local/browser-code`'s answer.",
+        "required": [
+          "url",
+          "expiresAt"
+        ],
+        "properties": {
+          "expiresAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "url": {
+            "type": "string",
+            "description": "`<web origin>/?t=<code>`."
+          }
+        }
+      },
+      "Code": {
+        "type": "string",
+        "description": "The 17 error codes. This list is closed; the SDK mirrors it.",
+        "enum": [
+          "invalid_argument",
+          "unauthenticated",
+          "permission_denied",
+          "not_found",
+          "already_exists",
+          "conflict",
+          "idempotency_conflict",
+          "namespace_not_empty",
+          "store_deleting",
+          "payload_too_large",
+          "store_locked",
+          "rate_limited",
+          "internal",
+          "unavailable",
+          "upgrading",
+          "timeout",
+          "resource_exhausted"
+        ]
+      },
+      "CompactHit": {
+        "type": "object",
+        "description": "One compact recall or context hit.",
+        "required": [
+          "id",
+          "date",
+          "summary"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "description": "UTC date with weekday, for example `Fri 2023-01-20`."
+          },
+          "fullText": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "For the top hits that still have it."
+          },
+          "id": {
+            "$ref": "#/components/schemas/MemoryId",
+            "description": "The memory."
+          },
+          "summary": {
+            "type": "string",
+            "description": "The short text."
+          }
+        }
+      },
+      "CompactRecall": {
+        "type": "object",
+        "description": "The compact recall answer.",
+        "required": [
+          "memories",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many.",
+            "minimum": 0
+          },
+          "degraded": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Degraded",
+                "description": "`model_unavailable` when the query had no vector."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompactHit"
+            },
+            "description": "Hits, best first."
+          }
+        }
+      },
+      "ContainerView": {
+        "type": "object",
+        "description": "`{ state, since }` of a user's container.",
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "since": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "description": "`active` or `parked`."
+          }
+        }
+      },
+      "Context": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ContextResult",
+            "description": "The engine's part."
+          },
+          {
+            "type": "object",
+            "required": [
+              "model"
+            ],
+            "properties": {
+              "model": {
+                "$ref": "#/components/schemas/ModelState",
+                "description": "The model state."
+              },
+              "webUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Where people browse the store, or `null`."
+              }
+            }
+          }
+        ],
+        "description": "The whole answer of `GET /v1/context` (schema `Context`)."
+      },
+      "ContextResult": {
+        "type": "object",
+        "description": "The engine's part of the context answer. The host adds `model` and `webUrl` ([`Context`]).",
+        "required": [
+          "defaultNamespace",
+          "namespaces",
+          "memories",
+          "embedding"
+        ],
+        "properties": {
+          "defaultNamespace": {
+            "type": "string",
+            "description": "The namespace used."
+          },
+          "degraded": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Degraded",
+                "description": "Only when a topic could not be embedded."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "embedding": {
+            "$ref": "#/components/schemas/EmbeddingProgress",
+            "description": "The embedding queue of the store."
+          },
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CompactHit"
+            },
+            "description": "The first 3 carry `fullText`."
+          },
+          "namespaces": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NamespaceCount"
+            },
+            "description": "Every namespace, by name."
+          }
+        }
+      },
+      "CreateApiKey": {
+        "type": "object",
+        "description": "The body of `POST /v1/stores/{id}/keys`.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "expiresInDays": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "30, 90 (the default), 180 or 365.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "permissions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "`[\"memory:read\"]` or both (the default)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreateNamespace": {
+        "type": "object",
+        "description": "`POST /v1/namespaces`.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "decayRateMultiplier": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "`None` means 1.0."
+          },
+          "initialStability": {
+            "type": "number",
+            "format": "float",
+            "description": "Days; default 3.7145."
+          },
+          "name": {
+            "type": "string",
+            "description": "1 to 64 bytes of ASCII letters, digits, `-` and `_`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "CreatedApiKey": {
+        "type": "object",
+        "description": "A new key and its secret, which only this answer carries.",
+        "required": [
+          "key",
+          "secret"
+        ],
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/ApiKey"
+          },
+          "secret": {
+            "type": "string",
+            "description": "`knoggin_live_...`."
+          }
+        }
+      },
+      "Degraded": {
+        "type": "string",
+        "description": "Why a recall has no vector channel.",
+        "enum": [
+          "model_unavailable"
+        ]
+      },
+      "DeleteAccount": {
+        "type": "object",
+        "description": "The body of `DELETE /v1/account`.",
+        "required": [
+          "confirm"
+        ],
+        "properties": {
+          "confirm": {
+            "type": "string",
+            "description": "Exactly `delete my data`."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Detail": {
+        "type": "string",
+        "description": "`compact` or `full`.",
+        "enum": [
+          "compact",
+          "full"
+        ]
+      },
+      "DuplicateCheck": {
+        "type": "string",
+        "description": "Why the duplicate check did not run although it was asked for.",
+        "enum": [
+          "skipped"
+        ]
+      },
+      "EdgeType": {
+        "type": "string",
+        "description": "The type of a directed edge. The numbers match recalld; 3 and 4 do not exist here.",
+        "enum": [
+          "parent_child",
+          "associative",
+          "entity",
+          "temporal",
+          "supersedes"
+        ]
+      },
+      "EmbeddingCounts": {
+        "type": "object",
+        "description": "Memories per embedding state.",
+        "required": [
+          "ready",
+          "pending",
+          "failed",
+          "none"
+        ],
+        "properties": {
+          "failed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Failed.",
+            "minimum": 0
+          },
+          "none": {
+            "type": "integer",
+            "format": "int64",
+            "description": "None (ghosts).",
+            "minimum": 0
+          },
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Pending.",
+            "minimum": 0
+          },
+          "ready": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ready.",
+            "minimum": 0
+          }
+        }
+      },
+      "EmbeddingProgress": {
+        "type": "object",
+        "description": "`{ pending, total }` of the embedding queue.",
+        "required": [
+          "pending",
+          "total"
+        ],
+        "properties": {
+          "pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Not ghosts and still `Pending`.",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Every memory that is not a ghost.",
+            "minimum": 0
+          }
+        }
+      },
+      "EmbeddingState": {
+        "type": "string",
+        "description": "Whether a memory has a vector.",
+        "enum": [
+          "ready",
+          "pending",
+          "failed",
+          "none"
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "description": "Every error answer: `{ \"error\": { ... } }`.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "The fields of an error.",
+        "required": [
+          "code",
+          "message",
+          "requestId"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/Code"
+          },
+          "docsUrl": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Only on `store_locked` from `GET /v1/session` on a locked local install."
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present only when one request field is at fault."
+          },
+          "message": {
+            "type": "string"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A fixed word, where the code has one (`store_locked`, `permission_denied`, `unavailable`)."
+          },
+          "requestId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "ErrorCode": {
+        "type": "string",
+        "description": "The error codes the engine can cause, a subset of the API's closed list.",
+        "enum": [
+          "invalid_argument",
+          "not_found",
+          "already_exists",
+          "conflict",
+          "namespace_not_empty",
+          "idempotency_conflict"
+        ]
+      },
+      "Explanation": {
+        "type": "object",
+        "description": "Why a hit ranked where it did; only for `GET /v1/ui/search`.",
+        "properties": {
+          "activation": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Activation, for a hit the graph found."
+          },
+          "hops": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Hops, for a hit the graph found.",
+            "minimum": 0
+          },
+          "replaced": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MemoryId",
+                "description": "The superseded memory this hit stands in for."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Full-text score as a candidate, or `null`."
+          },
+          "vector": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Cosine as a candidate, or `null`."
+          },
+          "via": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MemoryId",
+                "description": "The memory whose spread into this hit was the largest."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "viaEdgeType": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EdgeType",
+                "description": "That edge's type."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "FindSimilar": {
+        "type": "object",
+        "description": "`POST /v1/memories/{id}/similar`.",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 to 100.",
+            "minimum": 0
+          },
+          "minScore": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "Lowest cosine."
+          },
+          "recordAccess": {
+            "type": "boolean",
+            "description": "The host records the hits as `associative` afterwards."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ForgetItem": {
+        "type": "object",
+        "description": "One entry of a batch forget, in request order.",
+        "required": [
+          "index",
+          "id",
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "description": "Removed (or, on a dry run, exists)."
+          },
+          "id": {
+            "$ref": "#/components/schemas/MemoryId",
+            "description": "The ID."
+          },
+          "index": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Position in the request.",
+            "minimum": 0
+          }
+        }
+      },
+      "ForgetManyResult": {
+        "type": "object",
+        "description": "The answer of a batch forget.",
+        "required": [
+          "results",
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many were removed (or, on a dry run, exist).",
+            "minimum": 0
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ForgetItem"
+            },
+            "description": "One entry per ID."
+          }
+        }
+      },
+      "ForgetMemories": {
+        "type": "object",
+        "description": "`POST /v1/memories/forget`: 1 to 100 IDs.",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "dryRun": {
+            "type": "boolean",
+            "description": "Report which IDs exist and remove nothing."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryId"
+            },
+            "description": "The IDs."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Forgotten": {
+        "type": "object",
+        "description": "The answer of a forget. `deleted` is false when no such memory exists.",
+        "required": [
+          "id",
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "description": "Whether a memory was removed."
+          },
+          "id": {
+            "$ref": "#/components/schemas/MemoryId",
+            "description": "The ID that was asked for."
+          }
+        }
+      },
+      "FullHit": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Memory",
+            "description": "The memory."
+          },
+          {
+            "type": "object",
+            "required": [
+              "score",
+              "related"
+            ],
+            "properties": {
+              "explanation": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Explanation",
+                    "description": "Only when the host asked for it."
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "related": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Related"
+                },
+                "description": "Edges to other hits on the page."
+              },
+              "score": {
+                "type": "number",
+                "format": "float",
+                "description": "The final score."
+              }
+            }
+          }
+        ],
+        "description": "One full recall hit: the memory view plus `score`, `related` and, for the UI, `explanation`."
+      },
+      "FullRecall": {
+        "type": "object",
+        "description": "The full recall answer.",
+        "required": [
+          "memories",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many.",
+            "minimum": 0
+          },
+          "degraded": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Degraded",
+                "description": "`model_unavailable` when the query had no vector."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FullHit"
+            },
+            "description": "Hits, best first."
+          }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "description": "`GET /healthz`.",
+        "required": [
+          "status",
+          "version"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportError": {
+        "type": "object",
+        "description": "One error line of an import.",
+        "required": [
+          "line",
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/Code"
+          },
+          "line": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ImportResult": {
+        "type": "object",
+        "description": "`POST /v1/import`'s answer.",
+        "required": [
+          "imported",
+          "skipped",
+          "errors"
+        ],
+        "properties": {
+          "errors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImportError"
+            }
+          },
+          "imported": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ItemError": {
+        "type": "object",
+        "description": "The error of one batch item.",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/ErrorCode",
+            "description": "The error code."
+          },
+          "field": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The request field at fault."
+          },
+          "message": {
+            "type": "string",
+            "description": "For people."
+          }
+        }
+      },
+      "Items_ApiKey": {
+        "type": "object",
+        "description": "A list that is not paged.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "An API key, without its secret.",
+              "required": [
+                "id",
+                "name",
+                "prefix",
+                "permissions",
+                "createdAt",
+                "expiresAt"
+              ],
+              "properties": {
+                "createdAt": {
+                  "$ref": "#/components/schemas/Timestamp"
+                },
+                "expiresAt": {
+                  "$ref": "#/components/schemas/Timestamp"
+                },
+                "id": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "lastUsedOn": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`YYYY-MM-DD`, or `null`."
+                },
+                "name": {
+                  "type": "string"
+                },
+                "permissions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "example": [
+                    "memory:read",
+                    "memory:write"
+                  ]
+                },
+                "prefix": {
+                  "type": "string"
+                },
+                "revokedAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "The items."
+          }
+        }
+      },
+      "Items_Namespace": {
+        "type": "object",
+        "description": "A list that is not paged.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "A namespace as the API shows it (schema `Namespace`).",
+              "required": [
+                "name",
+                "createdAt",
+                "memoryCount",
+                "policy"
+              ],
+              "properties": {
+                "createdAt": {
+                  "$ref": "#/components/schemas/Timestamp",
+                  "description": "When it was made."
+                },
+                "memoryCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Memories in every phase, ghosts included.",
+                  "minimum": 0
+                },
+                "name": {
+                  "type": "string",
+                  "description": "Name."
+                },
+                "policy": {
+                  "$ref": "#/components/schemas/NamespacePolicy",
+                  "description": "Decay policy."
+                },
+                "wouldChange": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WouldChange",
+                      "description": "On a policy dry run: what the next sweep would move under the new policy."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "The items."
+          }
+        }
+      },
+      "Items_SimilarHit": {
+        "type": "object",
+        "description": "A list that is not paged.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One similar memory (without `fullText`).",
+              "required": [
+                "memory",
+                "score"
+              ],
+              "properties": {
+                "memory": {
+                  "$ref": "#/components/schemas/Memory",
+                  "description": "The memory."
+                },
+                "score": {
+                  "type": "number",
+                  "format": "float",
+                  "description": "Cosine."
+                }
+              }
+            },
+            "description": "The items."
+          }
+        }
+      },
+      "Items_Store": {
+        "type": "object",
+        "description": "A list that is not paged.",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "An account-level store record, not its memories.",
+              "required": [
+                "id",
+                "kind",
+                "name",
+                "createdAt",
+                "memoryCount",
+                "namespaceCount",
+                "status"
+              ],
+              "properties": {
+                "createdAt": {
+                  "$ref": "#/components/schemas/Timestamp"
+                },
+                "deleteAfter": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "deletedAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "id": {
+                  "$ref": "#/components/schemas/StoreId"
+                },
+                "kind": {
+                  "$ref": "#/components/schemas/Kind"
+                },
+                "lastWriteAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "lastWriteClient": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "memoryCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "name": {
+                  "type": "string"
+                },
+                "namespaceCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "status": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            },
+            "description": "The items."
+          }
+        }
+      },
+      "Kind": {
+        "type": "string",
+        "description": "`personal` or `app`.",
+        "enum": [
+          "personal",
+          "app"
+        ]
+      },
+      "LocalSession": {
+        "type": "object",
+        "description": "`POST /v1/local/session`'s answer.",
+        "required": [
+          "sessionToken"
+        ],
+        "properties": {
+          "sessionToken": {
+            "type": "string",
+            "description": "The whole bearer value, `knoggin_session_...`."
+          }
+        }
+      },
+      "LocalSessionRequest": {
+        "type": "object",
+        "description": "`POST /v1/local/session`'s body.",
+        "required": [
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/String_String"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LockReason": {
+        "type": "string",
+        "description": "Why a store cannot be opened: the `reason` of `store_locked`.",
+        "enum": [
+          "master_key_missing",
+          "snapshot_unreadable",
+          "format_too_new",
+          "out_of_memory",
+          "state_unreadable",
+          "state_missing"
+        ]
+      },
+      "Memory": {
+        "type": "object",
+        "description": "The full view of a memory (schema `Memory`). `summary` is absent for a ghost;\n`fullText` is absent when there is none or the route leaves it out.",
+        "required": [
+          "id",
+          "namespace",
+          "createdAt",
+          "tags",
+          "entities",
+          "topics",
+          "emotions",
+          "phase",
+          "strength",
+          "effectiveStrength",
+          "stability",
+          "isPermastore",
+          "accessCount",
+          "edgeCount",
+          "embedding",
+          "savedBy"
+        ],
+        "properties": {
+          "accessCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total recorded accesses.",
+            "minimum": 0
+          },
+          "accessHistory": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AccessEvent"
+            },
+            "description": "Oldest first; only where a route asks for it."
+          },
+          "client": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The MCP client that saved it."
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "When it was saved."
+          },
+          "edgeCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Edges stored for the memory, of every type, whatever is at the other end.",
+            "minimum": 0
+          },
+          "effectiveStrength": {
+            "type": "number",
+            "format": "float",
+            "description": "Strength with the connection bonus."
+          },
+          "embedding": {
+            "$ref": "#/components/schemas/EmbeddingState",
+            "description": "Whether it has a vector."
+          },
+          "emotions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Emotions, as given."
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Entities, as given."
+          },
+          "fullText": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The long text, where the route includes it."
+          },
+          "id": {
+            "$ref": "#/components/schemas/MemoryId",
+            "description": "Identity."
+          },
+          "isPermastore": {
+            "type": "boolean",
+            "description": "Exempt from decay."
+          },
+          "namespace": {
+            "type": "string",
+            "description": "The namespace's name."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/Phase",
+            "description": "How much content is left."
+          },
+          "reinforcedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "Last reinforcement."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "retrievedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "Last recorded access."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "savedBy": {
+            "type": "string",
+            "description": "The credential that saved it."
+          },
+          "stability": {
+            "type": "number",
+            "format": "float",
+            "description": "Days."
+          },
+          "strength": {
+            "type": "number",
+            "format": "float",
+            "description": "Raw strength now."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The short text; absent for a ghost."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Tag"
+            },
+            "description": "Free labels."
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Topics, as given."
+          }
+        }
+      },
+      "MemoryId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Identity of one memory. UUIDv7, so the natural order is creation order."
+      },
+      "ModelState": {
+        "type": "object",
+        "description": "The model state of the process that serves the store (schema `ModelState`).",
+        "required": [
+          "state",
+          "identity",
+          "name"
+        ],
+        "properties": {
+          "bytesDone": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bytes downloaded so far.",
+            "minimum": 0
+          },
+          "bytesTotal": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Bytes to download.",
+            "minimum": 0
+          },
+          "identity": {
+            "type": "string",
+            "description": "The model identity string."
+          },
+          "name": {
+            "type": "string",
+            "description": "The name to show people."
+          },
+          "reason": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelUnavailableReason",
+                "description": "Why it is unavailable."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/ModelStatus",
+            "description": "The state."
+          }
+        }
+      },
+      "ModelStatus": {
+        "type": "string",
+        "description": "The state of the embedding model.",
+        "enum": [
+          "ready",
+          "loading",
+          "downloading",
+          "unavailable"
+        ]
+      },
+      "ModelUnavailableReason": {
+        "type": "string",
+        "description": "Why the model is unavailable.",
+        "enum": [
+          "offline",
+          "files_missing",
+          "hash_mismatch",
+          "disk_full",
+          "load_failed"
+        ]
+      },
+      "MoveMemories": {
+        "type": "object",
+        "description": "`POST /v1/memories/move`: 1 to 100 unique IDs, all or nothing.",
+        "required": [
+          "ids",
+          "destinationNamespace"
+        ],
+        "properties": {
+          "destinationNamespace": {
+            "type": "string",
+            "description": "Where they go."
+          },
+          "ids": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryId"
+            },
+            "description": "The memories."
+          },
+          "sourceNamespace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "A check only: every ID must be in it. Never filled in."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Moved": {
+        "type": "object",
+        "description": "The answer of a move.",
+        "required": [
+          "moved",
+          "destinationNamespace"
+        ],
+        "properties": {
+          "destinationNamespace": {
+            "type": "string",
+            "description": "Where they went."
+          },
+          "moved": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many moved.",
+            "minimum": 0
+          }
+        }
+      },
+      "Namespace": {
+        "type": "object",
+        "description": "A namespace as the API shows it (schema `Namespace`).",
+        "required": [
+          "name",
+          "createdAt",
+          "memoryCount",
+          "policy"
+        ],
+        "properties": {
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "When it was made."
+          },
+          "memoryCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Memories in every phase, ghosts included.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "Name."
+          },
+          "policy": {
+            "$ref": "#/components/schemas/NamespacePolicy",
+            "description": "Decay policy."
+          },
+          "wouldChange": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/WouldChange",
+                "description": "On a policy dry run: what the next sweep would move under the new policy."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "NamespaceCount": {
+        "type": "object",
+        "description": "One namespace with its memory count.",
+        "required": [
+          "name",
+          "memoryCount"
+        ],
+        "properties": {
+          "memoryCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Memories in every phase.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "Name."
+          }
+        }
+      },
+      "NamespaceDeleted": {
+        "type": "object",
+        "description": "The answer of a namespace delete.",
+        "required": [
+          "name",
+          "deleted",
+          "memoriesDeleted",
+          "edgesRemoved"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "description": "False on a dry run."
+          },
+          "edgesRemoved": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Edges removed.",
+            "minimum": 0
+          },
+          "memoriesDeleted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Memories removed.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "The namespace."
+          }
+        }
+      },
+      "NamespacePolicy": {
+        "type": "object",
+        "description": "A namespace's decay policy. Also the `policy` object of the API, where all five\nkeys are required and `decayRateMultiplier` may be `null`.",
+        "required": [
+          "initialStability",
+          "defaultDifficulty",
+          "phaseThresholds",
+          "permastoreThreshold",
+          "decayRateMultiplier"
+        ],
+        "properties": {
+          "decayRateMultiplier": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "At least 0. `None` means 1.0; 0 turns decay off."
+          },
+          "defaultDifficulty": {
+            "type": "number",
+            "format": "float",
+            "description": "Difficulty of a new memory, 1 to 10."
+          },
+          "initialStability": {
+            "type": "number",
+            "format": "float",
+            "description": "Stability of a new memory, 0.01 to 36,500 days."
+          },
+          "permastoreThreshold": {
+            "type": "number",
+            "format": "float",
+            "description": "Stability, in days, from which a memory is permanent. Greater than 0."
+          },
+          "phaseThresholds": {
+            "$ref": "#/components/schemas/PhaseThresholds",
+            "description": "When phases change."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NamespaceStats": {
+        "type": "object",
+        "description": "The statistics of one namespace (schema `NamespaceStats`).",
+        "required": [
+          "name",
+          "memoryCount",
+          "phaseCounts",
+          "permastoreCount",
+          "averageStrength",
+          "edgeCount",
+          "embedding",
+          "textBytes",
+          "policy"
+        ],
+        "properties": {
+          "averageStrength": {
+            "type": "number",
+            "format": "float",
+            "description": "Mean strength now of the memories that are not ghosts; 0 when there are none."
+          },
+          "edgeCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Edges whose two ends are both in the namespace.",
+            "minimum": 0
+          },
+          "embedding": {
+            "$ref": "#/components/schemas/EmbeddingCounts",
+            "description": "Per embedding state."
+          },
+          "memoryCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Every phase, ghosts included.",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string",
+            "description": "Name."
+          },
+          "newestCreatedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "Newest `createdAt`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "oldestCreatedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "Oldest `createdAt`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "permastoreCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Permanent memories.",
+            "minimum": 0
+          },
+          "phaseCounts": {
+            "$ref": "#/components/schemas/PhaseCounts",
+            "description": "Per phase."
+          },
+          "policy": {
+            "$ref": "#/components/schemas/NamespacePolicy",
+            "description": "Decay policy."
+          },
+          "textBytes": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Bytes of every summary and full text.",
+            "minimum": 0
+          }
+        }
+      },
+      "NearDuplicate": {
+        "type": "object",
+        "description": "One existing memory that closely resembles a new one.",
+        "required": [
+          "id",
+          "score",
+          "summary"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/MemoryId",
+            "description": "The existing memory."
+          },
+          "score": {
+            "type": "number",
+            "format": "float",
+            "description": "Cosine, at least the threshold."
+          },
+          "summary": {
+            "type": "string",
+            "description": "Its summary, cut to 240 bytes with `…`."
+          }
+        }
+      },
+      "NearDuplicates": {
+        "type": "object",
+        "description": "The near-duplicate advice of a save. Absent when nothing matches.",
+        "required": [
+          "threshold",
+          "matches"
+        ],
+        "properties": {
+          "matches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NearDuplicate"
+            },
+            "description": "Closest first, at most 3."
+          },
+          "threshold": {
+            "type": "number",
+            "format": "float",
+            "description": "0.85."
+          }
+        }
+      },
+      "Page_Memory": {
+        "type": "object",
+        "description": "A page of a list (`nextCursor` is `null` on the last page).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "The full view of a memory (schema `Memory`). `summary` is absent for a ghost;\n`fullText` is absent when there is none or the route leaves it out.",
+              "required": [
+                "id",
+                "namespace",
+                "createdAt",
+                "tags",
+                "entities",
+                "topics",
+                "emotions",
+                "phase",
+                "strength",
+                "effectiveStrength",
+                "stability",
+                "isPermastore",
+                "accessCount",
+                "edgeCount",
+                "embedding",
+                "savedBy"
+              ],
+              "properties": {
+                "accessCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Total recorded accesses.",
+                  "minimum": 0
+                },
+                "accessHistory": {
+                  "type": [
+                    "array",
+                    "null"
+                  ],
+                  "items": {
+                    "$ref": "#/components/schemas/AccessEvent"
+                  },
+                  "description": "Oldest first; only where a route asks for it."
+                },
+                "client": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The MCP client that saved it."
+                },
+                "createdAt": {
+                  "$ref": "#/components/schemas/Timestamp",
+                  "description": "When it was saved."
+                },
+                "edgeCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Edges stored for the memory, of every type, whatever is at the other end.",
+                  "minimum": 0
+                },
+                "effectiveStrength": {
+                  "type": "number",
+                  "format": "float",
+                  "description": "Strength with the connection bonus."
+                },
+                "embedding": {
+                  "$ref": "#/components/schemas/EmbeddingState",
+                  "description": "Whether it has a vector."
+                },
+                "emotions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Emotions, as given."
+                },
+                "entities": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Entities, as given."
+                },
+                "fullText": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The long text, where the route includes it."
+                },
+                "id": {
+                  "$ref": "#/components/schemas/MemoryId",
+                  "description": "Identity."
+                },
+                "isPermastore": {
+                  "type": "boolean",
+                  "description": "Exempt from decay."
+                },
+                "namespace": {
+                  "type": "string",
+                  "description": "The namespace's name."
+                },
+                "phase": {
+                  "$ref": "#/components/schemas/Phase",
+                  "description": "How much content is left."
+                },
+                "reinforcedAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp",
+                      "description": "Last reinforcement."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "retrievedAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp",
+                      "description": "Last recorded access."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "savedBy": {
+                  "type": "string",
+                  "description": "The credential that saved it."
+                },
+                "stability": {
+                  "type": "number",
+                  "format": "float",
+                  "description": "Days."
+                },
+                "strength": {
+                  "type": "number",
+                  "format": "float",
+                  "description": "Raw strength now."
+                },
+                "summary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "The short text; absent for a ghost."
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Tag"
+                  },
+                  "description": "Free labels."
+                },
+                "topics": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Topics, as given."
+                }
+              }
+            },
+            "description": "The items."
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor of the next page."
+          }
+        }
+      },
+      "Page_TagCount": {
+        "type": "object",
+        "description": "A page of a list (`nextCursor` is `null` on the last page).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One tag with the number of memories that carry it.",
+              "required": [
+                "tag",
+                "count"
+              ],
+              "properties": {
+                "count": {
+                  "type": "integer",
+                  "format": "int64",
+                  "description": "Memories in the namespace that carry it.",
+                  "minimum": 0
+                },
+                "tag": {
+                  "type": "string",
+                  "description": "The tag."
+                }
+              }
+            },
+            "description": "The items."
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor of the next page."
+          }
+        }
+      },
+      "Page_User": {
+        "type": "object",
+        "description": "A page of a list (`nextCursor` is `null` on the last page).",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "description": "One user of `GET /v1/users`.",
+              "required": [
+                "id",
+                "isAdmin",
+                "createdAt",
+                "appCount",
+                "container"
+              ],
+              "properties": {
+                "appCount": {
+                  "type": "integer",
+                  "format": "int64",
+                  "minimum": 0
+                },
+                "container": {
+                  "$ref": "#/components/schemas/ContainerView"
+                },
+                "createdAt": {
+                  "$ref": "#/components/schemas/Timestamp"
+                },
+                "deleteAfter": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "deletedAt": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Timestamp"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "deletedBy": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "description": "`self`, `admin` or `null`."
+                },
+                "email": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "id": {
+                  "$ref": "#/components/schemas/UserId"
+                },
+                "isAdmin": {
+                  "type": "boolean"
+                },
+                "lastActiveOn": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "description": "The items."
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Opaque cursor of the next page."
+          }
+        }
+      },
+      "Phase": {
+        "type": "string",
+        "description": "How much content a memory has left. It only moves down: Full, Summary, Ghost.",
+        "enum": [
+          "full",
+          "summary",
+          "ghost"
+        ]
+      },
+      "PhaseCounts": {
+        "type": "object",
+        "description": "Memories per phase.",
+        "required": [
+          "full",
+          "summary",
+          "ghost"
+        ],
+        "properties": {
+          "full": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Full.",
+            "minimum": 0
+          },
+          "ghost": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ghost.",
+            "minimum": 0
+          },
+          "summary": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Summary.",
+            "minimum": 0
+          }
+        }
+      },
+      "PhaseThresholds": {
+        "type": "object",
+        "description": "The three phase thresholds: `0 < ghost_to_delete < summary_to_ghost < full_to_summary < 1`.",
+        "required": [
+          "fullToSummary",
+          "summaryToGhost",
+          "ghostToDelete"
+        ],
+        "properties": {
+          "fullToSummary": {
+            "type": "number",
+            "format": "float",
+            "description": "Effective strength at or below which the full text fades."
+          },
+          "ghostToDelete": {
+            "type": "number",
+            "format": "float",
+            "description": "Raw strength at or below which a ghost is deleted."
+          },
+          "summaryToGhost": {
+            "type": "number",
+            "format": "float",
+            "description": "Effective strength at or below which the memory becomes a ghost."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Provider": {
+        "type": "object",
+        "description": "The identity provider, when sign-in is on.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "Ready": {
+        "type": "object",
+        "description": "`GET /readyz`.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "Recall": {
+        "type": "object",
+        "description": "`POST /v1/recall` and the `recall_memories` tool.",
+        "required": [
+          "query"
+        ],
+        "properties": {
+          "depth": {
+            "type": "integer",
+            "format": "int32",
+            "description": "0 to 3: the graph expansion profile.",
+            "minimum": 0
+          },
+          "detail": {
+            "$ref": "#/components/schemas/Detail",
+            "description": "`compact` or `full`."
+          },
+          "emotions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All must match."
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All must match (lower-cased whole strings); also feeds scoring and the entity channel."
+          },
+          "fullTextCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "0 to `limit`. Its default depends on `limit`; see [`Recall::full_text_count`].",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 to 100.",
+            "minimum": 0
+          },
+          "minStrength": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "float",
+            "description": "0 to 1, on raw strength."
+          },
+          "namespace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Filled in by the host."
+          },
+          "query": {
+            "type": "string",
+            "description": "Not empty after trimming; at most 4,096 bytes."
+          },
+          "recordAccess": {
+            "type": "boolean",
+            "description": "The host records access afterwards; always false without `memory:write`."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All must match; each a valid tag."
+          },
+          "timeRangeEnd": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimeValue",
+                "description": "Give both bounds or neither."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timeRangeStart": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TimeValue",
+                "description": "Give both bounds or neither. A boost, not a filter."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "All must match."
+          }
+        },
+        "additionalProperties": false
+      },
+      "RecallResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/CompactRecall",
+            "description": "`detail: compact`."
+          },
+          {
+            "$ref": "#/components/schemas/FullRecall",
+            "description": "`detail: full`."
+          }
+        ],
+        "description": "The recall answer in the shape `detail` asked for."
+      },
+      "ReinforceMemory": {
+        "type": "object",
+        "description": "`POST /v1/memories/{id}/reinforce`.",
+        "properties": {
+          "quality": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 (forgot) to 4 (easy).",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Reinforced": {
+        "type": "object",
+        "description": "The answer of a reinforcement.",
+        "required": [
+          "id",
+          "strength",
+          "stability",
+          "phase",
+          "isPermastore"
+        ],
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/MemoryId",
+            "description": "The memory."
+          },
+          "isPermastore": {
+            "type": "boolean",
+            "description": "Set once stability reached the threshold."
+          },
+          "phase": {
+            "$ref": "#/components/schemas/Phase",
+            "description": "Unchanged."
+          },
+          "stability": {
+            "type": "number",
+            "format": "float",
+            "description": "The new stability."
+          },
+          "strength": {
+            "type": "number",
+            "format": "float",
+            "description": "1.0: the anchor moved to now."
+          }
+        }
+      },
+      "Related": {
+        "type": "object",
+        "description": "An edge between a hit and another hit on the same page.",
+        "required": [
+          "id",
+          "edgeType",
+          "weight"
+        ],
+        "properties": {
+          "edgeType": {
+            "$ref": "#/components/schemas/EdgeType",
+            "description": "The edge type's name."
+          },
+          "id": {
+            "$ref": "#/components/schemas/MemoryId",
+            "description": "The other hit."
+          },
+          "weight": {
+            "type": "number",
+            "format": "float",
+            "description": "The edge weight."
+          }
+        }
+      },
+      "RotateApiKey": {
+        "type": "object",
+        "description": "The optional body of a rotation.",
+        "properties": {
+          "expiresInDays": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "Session": {
+        "type": "object",
+        "description": "`GET /v1/session`.",
+        "required": [
+          "mode",
+          "auth",
+          "version",
+          "sourceUrl",
+          "docsUrl",
+          "publicUrl",
+          "mcpUrl",
+          "signedIn",
+          "softDeleteDays",
+          "retentionDays",
+          "webSignIn"
+        ],
+        "properties": {
+          "auth": {
+            "type": "string",
+            "description": "`none` or `oauth`."
+          },
+          "credential": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionCredential"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "docsUrl": {
+            "type": "string"
+          },
+          "idleSeconds": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "mcpUrl": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "description": "`local` or `server`."
+          },
+          "personalStoreId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StoreId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "provider": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "publicUrl": {
+            "type": "string"
+          },
+          "retentionDays": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "signedIn": {
+            "type": "boolean"
+          },
+          "signedOutReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`expired`, `account_removed` or `not_allowed`, when a credential was refused."
+          },
+          "softDeleteDays": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "sourceUrl": {
+            "type": "string"
+          },
+          "user": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SessionUser"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "version": {
+            "type": "string"
+          },
+          "webSignIn": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SessionCredential": {
+        "type": "object",
+        "description": "The credential of a session answer.",
+        "required": [
+          "kind",
+          "permissions"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "`session`, `oauth`, `api_key`, `local` or `none`."
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "storeId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StoreId"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "SessionUser": {
+        "type": "object",
+        "description": "The user of a session answer.",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "deleteAfter": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deletedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/UserId"
+          },
+          "isAdmin": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "SimilarHit": {
+        "type": "object",
+        "description": "One similar memory (without `fullText`).",
+        "required": [
+          "memory",
+          "score"
+        ],
+        "properties": {
+          "memory": {
+            "$ref": "#/components/schemas/Memory",
+            "description": "The memory."
+          },
+          "score": {
+            "type": "number",
+            "format": "float",
+            "description": "Cosine."
+          }
+        }
+      },
+      "Status": {
+        "type": "string",
+        "description": "`active` or `deleted`.",
+        "enum": [
+          "active",
+          "deleted"
+        ]
+      },
+      "Store": {
+        "type": "object",
+        "description": "An account-level store record, not its memories.",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "createdAt",
+          "memoryCount",
+          "namespaceCount",
+          "status"
+        ],
+        "properties": {
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleteAfter": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deletedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/StoreId"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/Kind"
+          },
+          "lastWriteAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lastWriteClient": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "memoryCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "name": {
+            "type": "string"
+          },
+          "namespaceCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/Status"
+          }
+        }
+      },
+      "StoreId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Identity of one store."
+      },
+      "StoreMemories": {
+        "type": "object",
+        "description": "Body of `POST /v1/memories/batch`: 1 to 100 items, each with its own namespace.",
+        "required": [
+          "memories"
+        ],
+        "properties": {
+          "memories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StoreMemoryItem"
+            },
+            "description": "The items, saved in order."
+          }
+        },
+        "additionalProperties": false
+      },
+      "StoreMemory": {
+        "type": "object",
+        "description": "Body of `POST /v1/memories`; the `store_memory` tool converts into it.",
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "checkDuplicates": {
+            "type": "boolean",
+            "description": "Report near duplicates."
+          },
+          "createdAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "An earlier creation time, for imports and the benchmark."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "emotions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 32."
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 32."
+          },
+          "fullText": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "1 to 65,536 bytes."
+          },
+          "namespace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Filled in by the host from the header or `default` before hashing."
+          },
+          "parentId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MemoryId",
+                "description": "A memory in the same namespace that becomes the parent."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "description": "1 to 2,000 bytes."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 64."
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 32."
+          }
+        },
+        "additionalProperties": false
+      },
+      "StoreMemoryItem": {
+        "type": "object",
+        "description": "One item of `POST /v1/memories/batch`: as `StoreMemory` without `checkDuplicates`.",
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "createdAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "An earlier creation time."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "emotions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 32."
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 32."
+          },
+          "fullText": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "1 to 65,536 bytes."
+          },
+          "namespace": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Filled in by the host before hashing."
+          },
+          "parentId": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MemoryId",
+                "description": "A memory in the same namespace that becomes the parent."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "summary": {
+            "type": "string",
+            "description": "1 to 2,000 bytes."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 64."
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 32."
+          }
+        },
+        "additionalProperties": false
+      },
+      "StoreName": {
+        "type": "object",
+        "description": "The body of `POST /v1/stores` and `PATCH /v1/stores/{id}`.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "StoreStateView": {
+        "type": "string",
+        "description": "`parked`, `waking`, `ready` or `locked`.",
+        "enum": [
+          "parked",
+          "waking",
+          "ready",
+          "locked"
+        ]
+      },
+      "StoreStatus": {
+        "type": "object",
+        "description": "`GET /v1/stores/{id}/status`.",
+        "required": [
+          "state",
+          "full"
+        ],
+        "properties": {
+          "embedding": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EmbeddingProgress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "full": {
+            "type": "boolean"
+          },
+          "lockedReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ModelState"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "$ref": "#/components/schemas/StoreStateView"
+          }
+        }
+      },
+      "StoredMemory": {
+        "type": "object",
+        "description": "The answer of a save. `links` are the edges made for the memory, for the host's live\nevent; they are not serialized.",
+        "required": [
+          "id",
+          "namespace",
+          "phase",
+          "strength",
+          "stability",
+          "createdAt",
+          "embedding"
+        ],
+        "properties": {
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp",
+            "description": "When it was saved."
+          },
+          "duplicateCheck": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/DuplicateCheck",
+                "description": "Set by the host when the duplicate check could not run."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "embedding": {
+            "$ref": "#/components/schemas/EmbeddingState",
+            "description": "`pending`, or `ready` when a vector came with the save."
+          },
+          "id": {
+            "$ref": "#/components/schemas/MemoryId",
+            "description": "The new memory."
+          },
+          "namespace": {
+            "type": "string",
+            "description": "Its namespace's name."
+          },
+          "nearDuplicates": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NearDuplicates",
+                "description": "Near duplicates, when asked for and found."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "$ref": "#/components/schemas/Phase",
+            "description": "`full`."
+          },
+          "stability": {
+            "type": "number",
+            "format": "float",
+            "description": "Days."
+          },
+          "strength": {
+            "type": "number",
+            "format": "float",
+            "description": "Raw strength now: 1.0 unless an earlier `createdAt` was sent."
+          },
+          "supersedes": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MemoryId",
+                "description": "On a supersede: the replaced memory."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "String_String": {
+        "type": "string"
+      },
+      "SupersedeMemory": {
+        "type": "object",
+        "description": "`POST /v1/memories/{id}/supersede`: a new memory in the old one's namespace.",
+        "required": [
+          "summary"
+        ],
+        "properties": {
+          "checkDuplicates": {
+            "type": "boolean",
+            "description": "Report near duplicates, leaving the replaced memory out."
+          },
+          "createdAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp",
+                "description": "An earlier creation time."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "emotions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 32."
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 32."
+          },
+          "fullText": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "1 to 65,536 bytes."
+          },
+          "summary": {
+            "type": "string",
+            "description": "1 to 2,000 bytes."
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 64."
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "At most 32."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Tag": {
+        "type": "string",
+        "description": "A tag: lower-cased, 1 to 128 bytes, starting with an ASCII letter or digit,\nand using only `a-z 0-9 / _ . : -`."
+      },
+      "TagCount": {
+        "type": "object",
+        "description": "One tag with the number of memories that carry it.",
+        "required": [
+          "tag",
+          "count"
+        ],
+        "properties": {
+          "count": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Memories in the namespace that carry it.",
+            "minimum": 0
+          },
+          "tag": {
+            "type": "string",
+            "description": "The tag."
+          }
+        }
+      },
+      "TimeValue": {
+        "oneOf": [
+          {
+            "type": "integer",
+            "format": "int64",
+            "description": "Milliseconds since 1970."
+          },
+          {
+            "type": "string",
+            "description": "RFC 3339."
+          }
+        ],
+        "description": "A time-range bound: an RFC 3339 string or whole milliseconds."
+      },
+      "Timestamp": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "User": {
+        "type": "object",
+        "description": "One user of `GET /v1/users`.",
+        "required": [
+          "id",
+          "isAdmin",
+          "createdAt",
+          "appCount",
+          "container"
+        ],
+        "properties": {
+          "appCount": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "container": {
+            "$ref": "#/components/schemas/ContainerView"
+          },
+          "createdAt": {
+            "$ref": "#/components/schemas/Timestamp"
+          },
+          "deleteAfter": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deletedAt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Timestamp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deletedBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`self`, `admin` or `null`."
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "id": {
+            "$ref": "#/components/schemas/UserId"
+          },
+          "isAdmin": {
+            "type": "boolean"
+          },
+          "lastActiveOn": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UserCounts": {
+        "type": "object",
+        "description": "`{ total, deleting }` users.",
+        "required": [
+          "total",
+          "deleting"
+        ],
+        "properties": {
+          "deleting": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "UserId": {
+        "type": "string",
+        "format": "uuid",
+        "description": "Identity of one user."
+      },
+      "WouldChange": {
+        "type": "object",
+        "description": "What the next sweep would move under a new policy.",
+        "required": [
+          "fullToSummary",
+          "summaryToGhost",
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ghosts deleted.",
+            "minimum": 0
+          },
+          "fullToSummary": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Full to Summary.",
+            "minimum": 0
+          },
+          "summaryToGhost": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Summary to Ghost.",
+            "minimum": 0
+          }
+        }
+      }
+    }
+  }
+}

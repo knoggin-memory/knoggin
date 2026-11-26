@@ -4,7 +4,7 @@
 //! layer (or a container's middleware) puts it there. The web UI read models join in
 //! milestone 4.
 
-mod extract;
+pub(crate) mod extract;
 
 use std::sync::Arc;
 use std::time::Duration;

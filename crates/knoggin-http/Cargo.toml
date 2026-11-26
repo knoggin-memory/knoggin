@@ -19,10 +19,14 @@ bytes = { workspace = true }
 futures-util = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
 knoggin-core = { path = "../knoggin-core" }
 knoggin-crypto = { path = "../knoggin-crypto" }
 knoggin-state = { path = "../knoggin-state" }
 metrics = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+rustix = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
