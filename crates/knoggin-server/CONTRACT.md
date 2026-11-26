@@ -161,12 +161,24 @@ serve_tls(listener, tls, router, move |peer| {
 | `lease` | router | lease state machine, claim, Mark gone, wait loop |
 | `pool` | router | launching (`Launcher::launch`, `describe`, `hello`), pool size |
 | `reconcile` | router | leader lock and the 30-second loop, rollout (`BuildInfo::compare`) |
-| `lifecycle` | lifecycle + admin + launchers | `knoggin lifecycle`; the only caller of `ObjectStorage::delete` (I11 wants a unit test for that) |
-| `admin` | lifecycle + admin + launchers | restore, rotate, retire-before, bucket self-test (uses `presign_*` with an earlier `now`, and `MemoryStorage` faults to break each property) |
-| `launcher::docker` (`DockerLauncher`) | lifecycle + admin + launchers | client of the launcher service; `attach` outside the trait |
-| `launcher_service` | lifecycle + admin + launchers | `knoggin launcher` with `LauncherServiceSettings` |
 | `testing` (fake launcher) | the first agent that needs it, once `serve` exists | a `Launcher` that runs the container role in process on `127.0.0.x` |
 | `kms` (`KmsKeyProvider`), `launcher::ecs` (`EcsLauncher`) | milestone 7 | use `aws::sdk_config` and `behavior_version` |
+
+## Lifecycle, admin and launchers (built)
+
+| Module | Offers |
+| --- | --- |
+| `lifecycle` | `Lifecycle { db, postgres, storage, retention }::run_once(now) -> LifecycleReport` (thinning with `snapshot::thin`, `knoggin_state::erase`, old `selftest/` objects, `PostgresDb::delete_expired`); `run(lifecycle, every, clock, stop)`. The only caller of `ObjectStorage::delete`; a unit test scans `src/` for any other |
+| `admin` | `Admin::new(db, fields, storage, clock)` with `restore(store, name, wait) -> RestoreOutcome::{Parked, Waiting}`, `cancel_restore`, `retire_before(RetireBefore::{Now, At, Clear}) -> active leases`, `snapshots(store, retention_days)`; `parse_snapshot` (pads), `snapshot_list` (the admin route's body, shared with `router::status`), `rotate_master_key(db, key_file)`, `bucket_selftest(storage, http, now) -> Result<(), BucketFailure { step: BucketStep, reason }>`, `selftest(db, keys, storage, http, now) -> SelftestReport` |
+| `launcher::docker` | `DockerLauncher::new(url, token)` implements `Launcher`; `attach()` outside the trait |
+| `launcher_service` | `LauncherService::start(docker, own_container, ServiceConfig)`, `router()`, `tidy(now)`; `run(LauncherServiceSettings, test_mode, docker, own, stop)` |
+| `storage::Weakness` | `MemoryStorage::weaken(Some(Overwrites | Unsigned | NoExpiry | StaleListing))`: each bucket check can be seen to fail |
+
+The binary (`crates/knoggin/src/server.rs`) checks every setting of a role before it connects,
+then runs `router::run_router` with `before_rollout` = `bucket_selftest` and then
+`DockerLauncher::attach` (60 s of tries), `container::serve` on `container::runtime()`,
+`lifecycle::run` and `launcher_service::run`. `knoggin_state::thin_targets(db)` lists the stores
+to thin without the field key.
 
 Settings for `knoggin_http::edge` (public URL, auth, per-credential limits) stay in `EdgeConfig`;
 the per-address and per-user rates are read from `RouterLimits` by `run_router` into the edge.
