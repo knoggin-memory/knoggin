@@ -281,8 +281,9 @@ struct Checked {
     slot: CallSlot,
 }
 
-/// The checks of every call: protocol, container token, the per-container limits, and the
-/// lease (it names this container, is `claiming` or `warm`, and has the caller's IP).
+/// The checks of every call: protocol, container token, the lease (it names this
+/// container, is `claiming` or `warm`, and has the caller's IP), then the per-container
+/// limits.
 async fn check(
     broker: &Broker,
     peer: PeerAddr,
@@ -296,10 +297,6 @@ async fn check(
             return Err(BrokerError::lease_lost());
         }
     };
-    let slot = broker
-        .calls
-        .enter(caller.container_id)
-        .ok_or_else(|| BrokerError::api(Code::RateLimited))?;
     let lease = broker
         .config
         .leases
@@ -319,6 +316,12 @@ async fn check(
     {
         return Err(BrokerError::lease_lost());
     }
+    // Only after the lease and the address: a leaked secret used from elsewhere cannot
+    // use up the calls of the container it names.
+    let slot = broker
+        .calls
+        .enter(caller.container_id)
+        .ok_or_else(|| BrokerError::api(Code::RateLimited))?;
     Ok(Checked {
         caller,
         lease,

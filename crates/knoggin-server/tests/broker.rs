@@ -802,6 +802,26 @@ async fn without_one_host_there_is_no_blob_route() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
+/// A leaked launch secret used from another address than the lease's is refused before
+/// it takes one of that container's calls, so it cannot use up the container's quota.
+#[tokio::test]
+async fn calls_from_another_address_take_nothing_of_the_containers_limits() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let id = holder(&rig, a.user, rig.generation()).await;
+    // The container lives at another address; the test, at 127.0.0.1, holds its secret.
+    let mut lease = rig.lease_of(a.user).await;
+    lease.address = Some("10.9.9.9:8443".into());
+    rig.leases.put(a.user, &lease, Cond::Any).await.unwrap();
+    for _ in 0..610 {
+        assert_eq!(open(&rig, id, a, "").await.0, StatusCode::CONFLICT);
+    }
+    // The real container's call (its address now matches) is served, not 429.
+    lease.address = Some("127.0.0.1:8443".into());
+    rig.leases.put(a.user, &lease, Cond::Any).await.unwrap();
+    assert_eq!(open(&rig, id, a, "").await.0, StatusCode::OK);
+}
+
 #[tokio::test]
 async fn parked_runs_mark_gone_and_ends_the_lease() {
     let rig = Rig::start(Options::default()).await;
