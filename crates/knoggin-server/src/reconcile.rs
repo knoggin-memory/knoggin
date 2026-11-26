@@ -88,37 +88,68 @@ impl Drop for Reconciler {
     }
 }
 
-/// Runs the loop until `stop` resolves.
+/// Runs the loop until `stop` resolves. Leadership is renewed every 10 seconds also while
+/// a pass runs; a pass ends at once when a renewal fails (another router may lead from
+/// then on) or when `stop` resolves.
 pub async fn run(fleet: Arc<Fleet>, stop: impl Future<Output = ()>) {
     let mut stop = std::pin::pin!(stop);
     let mut state = Reconciler::default();
     let mut last_pass: Option<Instant> = None;
     let mut tick = tokio::time::interval(RENEW_EVERY);
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
         tokio::select! {
             _ = tick.tick() => {}
             () = &mut stop => return,
         }
-        match fleet.take_leadership().await {
-            Ok(true) => {}
-            Ok(false) => {
-                state = Reconciler::default();
-                last_pass = None;
-                continue;
-            }
-            Err(e) => {
-                tracing::warn!(kind = "leader", error = %e, "leadership could not be checked");
-                continue;
+        if !leads(&fleet).await {
+            state = Reconciler::default();
+            last_pass = None;
+            continue;
+        }
+        if last_pass.is_some_and(|t| t.elapsed() < PASS_EVERY) {
+            continue;
+        }
+        last_pass = Some(Instant::now());
+        let started = std::time::Instant::now();
+        let mut lost = false;
+        {
+            let pass = fleet.pass(&mut state);
+            tokio::pin!(pass);
+            loop {
+                tokio::select! {
+                    result = &mut pass => {
+                        if let Err(e) = result {
+                            tracing::warn!(kind = "reconcile", error = %e, "a reconcile pass stopped early");
+                        }
+                        break;
+                    }
+                    _ = tick.tick() => {
+                        if !leads(&fleet).await {
+                            tracing::warn!(kind = "leader", "leadership was lost during a pass; the pass stops");
+                            lost = true;
+                            break;
+                        }
+                    }
+                    () = &mut stop => return,
+                }
             }
         }
-        if last_pass.is_none_or(|t| t.elapsed() >= PASS_EVERY) {
-            last_pass = Some(Instant::now());
-            let started = std::time::Instant::now();
-            if let Err(e) = fleet.pass(&mut state).await {
-                tracing::warn!(kind = "reconcile", error = %e, "a reconcile pass stopped early");
-            }
-            metrics::histogram!("knoggin_reconcile_seconds")
-                .record(started.elapsed().as_secs_f64());
+        metrics::histogram!("knoggin_reconcile_seconds").record(started.elapsed().as_secs_f64());
+        if lost {
+            state = Reconciler::default();
+            last_pass = None;
+        }
+    }
+}
+
+/// Takes or renews the reconcile lease; a failure to check counts as not leading.
+async fn leads(fleet: &Fleet) -> bool {
+    match fleet.take_leadership().await {
+        Ok(lead) => lead,
+        Err(e) => {
+            tracing::warn!(kind = "leader", error = %e, "leadership could not be checked");
+            false
         }
     }
 }

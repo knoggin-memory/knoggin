@@ -12,7 +12,7 @@
 )]
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -23,7 +23,9 @@ use http_body_util::BodyExt;
 use knoggin_core::{StoreId, UserId};
 use knoggin_http::ctx::{CredentialKind, CredentialRef, Permissions};
 use knoggin_http::{Code, RequestContext};
-use knoggin_server::launcher::{BuildInfo, LogLevel};
+use knoggin_server::launcher::{
+    BuildInfo, ContainerInfo, ContainerSpec, LaunchError, LaunchHandle, Launcher, LogLevel,
+};
 use knoggin_server::lease::{Caller, Fleet, FleetConfig, Marked};
 use knoggin_server::link::api::{ClaimLimits, ClaimSettings};
 use knoggin_server::link::{InternalSecret, ServerIdentity};
@@ -66,6 +68,17 @@ impl World {
     }
 
     fn fleet(&self, build: &str, one_host: bool, f: impl FnOnce(&mut FleetConfig)) -> Arc<Fleet> {
+        self.fleet_on(self.launcher.clone(), build, one_host, f)
+    }
+
+    /// The same, over another launcher.
+    fn fleet_on(
+        &self,
+        launcher: Arc<dyn Launcher>,
+        build: &str,
+        one_host: bool,
+        f: impl FnOnce(&mut FleetConfig),
+    ) -> Arc<Fleet> {
         let pin = ServerIdentity::for_container(Uuid::now_v7()).unwrap().pin();
         let mut config = FleetConfig {
             router_id: Uuid::now_v7(),
@@ -100,7 +113,7 @@ impl World {
             config,
             self.db.clone(),
             Arc::new(test_field_keys()),
-            self.launcher.clone(),
+            launcher,
             self.storage.clone(),
             self.clock.clock(),
         )
@@ -412,6 +425,118 @@ async fn reconcile_resolves_stuck_claims_and_leaves_a_launch_in_progress_alone()
         .unwrap()
         .value;
     assert_eq!(s.state, ContainerState::Gone);
+}
+
+/// A launcher whose `list` takes `delay`; it counts the lists begun and those dropped
+/// before they finished.
+#[derive(Debug)]
+struct SlowList {
+    delay: Duration,
+    begun: AtomicUsize,
+    dropped: Arc<AtomicUsize>,
+}
+
+struct Unfinished(Arc<AtomicUsize>, bool);
+
+impl Drop for Unfinished {
+    fn drop(&mut self) {
+        if !self.1 {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl Launcher for SlowList {
+    async fn launch(&self, _: &ContainerSpec) -> Result<LaunchHandle, LaunchError> {
+        Err(LaunchError::Refused("test"))
+    }
+    async fn describe(&self, _: &[LaunchHandle]) -> Result<Vec<ContainerInfo>, LaunchError> {
+        Ok(vec![])
+    }
+    async fn list(&self) -> Result<Vec<ContainerInfo>, LaunchError> {
+        self.begun.fetch_add(1, Ordering::SeqCst);
+        let mut guard = Unfinished(self.dropped.clone(), false);
+        tokio::time::sleep(self.delay).await;
+        guard.1 = true;
+        Ok(vec![])
+    }
+    async fn stop(&self, _: &LaunchHandle, _: &str) -> Result<(), LaunchError> {
+        Ok(())
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_pass_longer_than_the_leader_record_keeps_it_renewed_and_ends_on_loss_or_stop() {
+    let w = World::new().await;
+    let slow = Arc::new(SlowList {
+        delay: Duration::from_secs(45),
+        begun: AtomicUsize::new(0),
+        dropped: Arc::new(AtomicUsize::new(0)),
+    });
+    let a = w.fleet_on(slow.clone(), BUILD, true, |_| {});
+    let b = w.fleet(BUILD, true, |_| {});
+    let meta = Meta::new(w.db.clone());
+    // The test clock follows Tokio's paused time.
+    let pass_time = |secs: u64| {
+        let clock = w.clock.clone();
+        async move {
+            for _ in 0..secs {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                clock.advance(1_000);
+            }
+        }
+    };
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(knoggin_server::reconcile::run(a.clone(), async {
+        let _ = stopped.await;
+    }));
+    // A pass of 45 seconds outlives the record's 30: it is renewed meanwhile.
+    pass_time(35).await;
+    assert_eq!(
+        slow.begun.load(Ordering::SeqCst),
+        1,
+        "the pass is in its list"
+    );
+    assert!(
+        !b.take_leadership().await.unwrap(),
+        "the record is still held"
+    );
+    let leader = meta.leader().await.unwrap().unwrap().value;
+    assert_eq!(leader.router_id, a.config().router_id.to_string());
+    assert!(leader.until_ms > w.clock.now());
+    // Another router takes the record: the next renewal fails and the pass stops.
+    let other = knoggin_state::record::Leader {
+        router_id: "other".into(),
+        build: "9.0.0".into(),
+        until_ms: w.clock.now() + 600_000,
+    };
+    meta.put_leader(&other, knoggin_state::Cond::Any)
+        .await
+        .unwrap();
+    pass_time(11).await;
+    assert_eq!(
+        slow.dropped.load(Ordering::SeqCst),
+        1,
+        "the pass was given up"
+    );
+    assert!(!task.is_finished());
+    // It leads again once that record has expired, and a stop ends its pass at once.
+    let expired = knoggin_state::record::Leader {
+        until_ms: w.clock.now() - 1,
+        ..other
+    };
+    meta.put_leader(&expired, knoggin_state::Cond::Any)
+        .await
+        .unwrap();
+    pass_time(11).await;
+    assert_eq!(slow.begun.load(Ordering::SeqCst), 2);
+    stop.send(()).unwrap();
+    tokio::time::timeout(Duration::from_millis(100), task)
+        .await
+        .expect("the stop was seen in the middle of the pass")
+        .unwrap();
+    assert_eq!(slow.dropped.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
