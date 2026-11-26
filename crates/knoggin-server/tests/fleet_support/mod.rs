@@ -36,7 +36,7 @@ use knoggin_server::router::forward::Timing;
 use knoggin_server::router::{Backends, Listeners, RouterStart, reserve, run_router};
 use knoggin_server::settings::RouterSettings;
 use knoggin_server::storage::MemoryStorage;
-use knoggin_server::testing::{FakeLauncher, serve_runner};
+use knoggin_server::testing::{FakeLauncher, FlakyDb, serve_runner};
 use knoggin_state::record::{Container, ContainerState, Leader, Lease};
 use knoggin_state::{
     Clock, Cond, Containers, Leases, LocalFileDb, Meta, StateDb, Stores, Users, system_clock,
@@ -58,6 +58,8 @@ pub fn timings() -> ServeTimings {
 pub struct Deployment {
     pub clock: Clock,
     pub db: Arc<dyn StateDb>,
+    /// The same database, whose writes a test can make fail.
+    pub flaky: Arc<FlakyDb>,
     pub keys: Arc<dyn KeyProvider>,
     pub storage: Arc<MemoryStorage>,
     pub launcher: Arc<FakeLauncher>,
@@ -120,7 +122,8 @@ impl Deployment {
     /// The same, whose launcher starts containers of `build`.
     pub async fn with_build(oauth: bool, build: &str) -> Self {
         let clock = system_clock();
-        let db: Arc<dyn StateDb> = Arc::new(LocalFileDb::in_memory(clock.clone()));
+        let flaky = FlakyDb::new(Arc::new(LocalFileDb::in_memory(clock.clone())));
+        let db: Arc<dyn StateDb> = flaky.clone();
         let storage = Arc::new(MemoryStorage::start(clock.clone()).await.unwrap());
         let launcher = FakeLauncher::new(serve_runner(build, true, timings()), clock.clone());
         let (cert, key) = new_internal_cert(Timestamp::from_millis(clock())).unwrap();
@@ -134,6 +137,7 @@ impl Deployment {
         Self {
             clock,
             db,
+            flaky,
             keys: Arc::new(test_provider()),
             storage,
             launcher,

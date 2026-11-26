@@ -18,14 +18,15 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
-use fleet_support::{Deployment, eventually, local_user, peer, save, summaries};
+use fleet_support::{Deployment, eventually, json, local_user, peer, save, summaries};
+use futures_util::StreamExt;
 use knoggin_core::UserId;
 use knoggin_server::lease::{Caller, Marked};
 use knoggin_server::reconcile::Reconciler;
 use knoggin_server::router::run_router;
 use knoggin_server::testing::{StubControl, serve_runner, stub_runner};
 use knoggin_state::Meta;
-use knoggin_state::record::{ContainerState, LeaseState, ParkReason, StopReason};
+use knoggin_state::record::{BuildSpec, ContainerState, LeaseState, ParkReason, StopReason};
 use uuid::Uuid;
 
 const LIMIT: Duration = Duration::from_secs(20);
@@ -448,4 +449,198 @@ async fn a_stop_asks_hung_containers_at_once_and_leaves_no_task_behind() {
     );
     assert_eq!(left, 0, "tasks outlived run_router");
     fleet.shutdown().await;
+}
+
+#[tokio::test]
+async fn three_crashes_through_requests_pause_the_user() {
+    let d = Deployment::new(false).await;
+    let r = d.router("0.1.0").await;
+    let (user, _) = local_user(&d).await;
+    assert_eq!(save(&r, None, "x").await.0, 201);
+    // Each crash is found by the next request, which a new container serves.
+    for _ in 0..2 {
+        let id = d.lease(user).await.container_id.unwrap();
+        d.launcher.kill(&d.launcher.handle_of(id).unwrap(), false);
+        assert_eq!(summaries(&r, None).await.0, 200);
+    }
+    let id = d.lease(user).await.container_id.unwrap();
+    d.launcher.kill(&d.launcher.handle_of(id).unwrap(), false);
+    // The third: the user is paused, this request and the next.
+    for _ in 0..2 {
+        let answer = r
+            .req(reqwest::Method::GET, "/v1/memories")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(answer.headers()["retry-after"], "60");
+        let (status, v) = json(answer).await;
+        assert_eq!(
+            (
+                status,
+                v["error"]["code"].as_str(),
+                v["error"]["reason"].as_str()
+            ),
+            (503, Some("unavailable"), Some("crashed"))
+        );
+    }
+    assert_eq!(
+        d.lease(user).await.abnormal_ends(d.clock.as_ref()()).len(),
+        3
+    );
+}
+
+#[tokio::test]
+async fn a_long_import_through_the_router_is_not_cut_by_the_request_timeout() {
+    // The spec's case is a 40-second import; this test runs a 10-second one against a
+    // request timeout of 3 seconds and the fleet's 2 seconds of silence before `status`.
+    let d = Deployment::new(false).await;
+    let r = d
+        .router_with("0.1.0", |t| t.edge.limits.request_timeout_ms = 3_000)
+        .await
+        .unwrap();
+    assert_eq!(save(&r, None, "exported").await.0, 201);
+    let text = r
+        .req(reqwest::Method::GET, "/v1/export")
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let lines: Vec<String> = text.lines().map(|l| format!("{l}\n")).collect();
+    assert!(lines.len() >= 2, "{text}");
+    // The header at once, then one line a second for 10 seconds.
+    let body = futures_util::stream::iter(0..11).then(move |i| {
+        let line = if i == 0 {
+            lines[0].clone()
+        } else {
+            lines[1 + (i - 1) % (lines.len() - 1)].clone()
+        };
+        async move {
+            if i > 0 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Ok::<_, std::io::Error>(line)
+        }
+    });
+    let started = Instant::now();
+    let answer = r
+        .req(reqwest::Method::POST, "/v1/import")
+        .header("content-type", "application/x-ndjson")
+        .body(reqwest::Body::wrap_stream(body))
+        .send()
+        .await
+        .unwrap();
+    assert!(started.elapsed() >= Duration::from_secs(10));
+    let (status, v) = json(answer).await;
+    assert_eq!(status, 200, "{v}");
+    assert_eq!(v["errors"], serde_json::json!([]), "{v}");
+    let (user, _) = local_user(&d).await;
+    let lease = d.lease(user).await;
+    assert_eq!(
+        lease.state,
+        LeaseState::Warm,
+        "the container was not marked gone"
+    );
+    assert!(lease.abnormal_ends(d.clock.as_ref()()).is_empty());
+}
+
+#[tokio::test]
+async fn a_container_whose_hello_names_the_other_test_mode_is_stopped() {
+    let d = Deployment::new(false).await;
+    let r = d.router("0.1.0").await;
+    d.launcher
+        .set_runner(serve_runner("0.1.0", false, fleet_support::timings()));
+    let fleet = d
+        .fleet("0.1.0", true, &format!("https://{}", r.internal))
+        .await;
+    assert!(
+        fleet
+            .launch(BuildSpec {
+                build: "0.1.0".into(),
+                spec: String::new(),
+            })
+            .await
+            .unwrap()
+    );
+    assert!(
+        eventually(LIMIT, || async {
+            d.records().await.iter().any(|c| {
+                c.state == ContainerState::Gone && c.stop_reason() == Some(StopReason::LaunchFailed)
+            })
+        })
+        .await
+    );
+    assert!(eventually(LIMIT, || async { d.launcher.running() == 0 }).await);
+    assert_eq!(d.count(ContainerState::Ready).await, 0);
+}
+
+#[tokio::test]
+async fn a_container_whose_parked_call_fails_still_exits_and_the_loop_frees_its_lease() {
+    let d = Deployment::new(false).await;
+    let r = d.router("0.1.0").await;
+    let (user, _) = local_user(&d).await;
+    assert_eq!(save(&r, None, "kept").await.0, 201);
+    let id = d.lease(user).await.container_id.unwrap();
+    let fleet = d
+        .fleet("9.0.0", true, &format!("https://{}", r.internal))
+        .await;
+    // The snapshot goes through; the router cannot record the container's end.
+    *d.flaky.fail.lock().unwrap() = Some("containers");
+    let c = d.containers().get(id).await.unwrap().unwrap().value;
+    assert!(fleet.park(id, peer(&c), ParkReason::Restore).await);
+    assert!(
+        eventually(LIMIT, || async { d.launcher.running() == 0 }).await,
+        "the container exited after its tries"
+    );
+    assert_eq!(d.lease(user).await.state, LeaseState::Warm);
+    *d.flaky.fail.lock().unwrap() = None;
+    d.lead(&fleet).await;
+    fleet.pass(&mut Reconciler::default()).await.unwrap();
+    let l = d.lease(user).await;
+    assert_eq!(l.state, LeaseState::Parked);
+    assert!(
+        l.abnormal_ends(d.clock.as_ref()()).is_empty(),
+        "it ended cleanly"
+    );
+    assert_eq!(summaries(&r, None).await.1, vec!["kept".to_owned()]);
+}
+
+#[tokio::test]
+async fn a_container_that_lost_its_lease_exits_and_its_late_upload_hides_nothing() {
+    let d = Deployment::new(false).await;
+    let r = d.router("0.1.0").await;
+    let (user, _) = local_user(&d).await;
+    // The first container holds an acknowledged write it has not saved.
+    assert_eq!(save(&r, None, "old").await.0, 201);
+    let first = d.lease(user).await.container_id.unwrap();
+    let old = d.containers().get(first).await.unwrap().unwrap().value;
+    // The launcher loses sight of it, so the lease passes on while it still runs.
+    d.launcher.forget(&d.launcher.handle_of(first).unwrap());
+    let fleet = d
+        .fleet("9.0.0", true, &format!("https://{}", r.internal))
+        .await;
+    assert_eq!(
+        fleet.mark_gone(first, None, Caller::Request).await.unwrap(),
+        Marked::Gone
+    );
+    // A second container takes the user, writes and saves.
+    assert_eq!(save(&r, None, "newer").await.0, 201);
+    let second = d.lease(user).await.container_id.unwrap();
+    assert_ne!(second, first);
+    let c = d.containers().get(second).await.unwrap().unwrap().value;
+    assert!(fleet.park(second, peer(&c), ParkReason::Restore).await);
+    assert!(
+        eventually(LIMIT, || async {
+            d.lease(user).await.state == LeaseState::Parked
+        })
+        .await
+    );
+    // Now the first one tries to save: it gets lease_lost and exits.
+    assert!(fleet.park(first, peer(&old), ParkReason::Restore).await);
+    assert!(
+        eventually(LIMIT, || async { d.launcher.running() == 0 }).await,
+        "the first container exited"
+    );
+    assert_eq!(summaries(&r, None).await.1, vec!["newer".to_owned()]);
 }
