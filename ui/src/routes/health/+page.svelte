@@ -7,14 +7,13 @@
   import LoadFailed from '$lib/components/LoadFailed.svelte';
   import { scope } from '$lib/scope.svelte';
   import { get, sget } from '$lib/api/client';
-  import { memoryPage, reinforce } from '$lib/api/memories';
+  import { reinforce } from '$lib/api/memories';
   import type { AdminStatus, HealthReport, SystemStatus } from '$lib/api/shapes';
   import { ago, bytes, count, duration, inFuture, longDate, ms, phaseLabel } from '$lib/format';
   import { storeKey } from '$lib/queries';
   import { session } from '$lib/session.svelte';
   import { status } from '$lib/status.svelte';
   import { store } from '$lib/store.svelte';
-  import { DAY_MS } from '$lib/fsrs';
 
   // No timers: store routes are refreshed after the user acts and when the tab regains focus.
   const client = useQueryClient();
@@ -29,11 +28,8 @@
     queryFn: () => get<AdminStatus>('/v1/admin/status'),
     enabled: !!session.local,
   }));
-  // Fading soon: the memories whose next change comes first, as the ported screen asks for them.
-  const fading = createQuery(() => ({
-    queryKey: storeKey('fading', scope.current),
-    queryFn: () => memoryPage({ namespace: scope.current, phases: ['full', 'summary'], tags: [], entities: [], clients: [], sort: 'nextChange', desc: false }, 0, 5),
-  }));
+  // Fading soon: the report's memories at risk, the first five as the prototype draws them.
+  const fading = $derived(report.data?.atRisk.slice(0, 5) ?? []);
 
   const o = $derived(report.data?.overview);
   const f = $derived(report.data?.decayForecast);
@@ -130,15 +126,15 @@
     <section aria-label="Fading soon" class="card wide fading">
       <div class="head"><h2 class="card-title">Fading soon</h2><a href="/explore?sort=nextChange">See all in Explore</a></div>
       {#if error}<p class="field-error" role="alert">{error}</p>{/if}
-      {#each fading.data?.rows ?? [] as m (m.id)}
+      {#each fading as m (m.id)}
         {@const isDone = done.has(m.id)}
         <div class="fade-row">
           <span class="fade-text" class:ghost={m.summary === null}>{m.summary ?? 'Summary dropped'}</span>
-          <span class="caption nowrap">{isDone ? 'Reinforced' : m.nextChange ? `${phaseLabel(m.nextChange.to)} ${ms(m.nextChange.at) <= Date.now() ? 'at the next sweep' : `in ${duration((ms(m.nextChange.at) - Date.now()) / DAY_MS)}`}` : '—'}</span>
+          <span class="caption nowrap">{isDone ? 'Reinforced' : `${phaseLabel(m.to)} ${m.daysUntilChange <= 0 ? 'at the next sweep' : `in ${duration(m.daysUntilChange)}`}`}</span>
           <button type="button" class="btn-secondary btn-small" disabled={reinforcing === m.id || isDone} onclick={() => doReinforce(m.id)}>{isDone ? 'Reinforced' : 'Reinforce'}</button>
         </div>
       {:else}
-        {#if fading.isPending}{#each [0, 1, 2] as i (i)}<span class="skeleton bar"></span>{/each}{:else}<p class="muted">Nothing is fading.</p>{/if}
+        {#if report.isPending}{#each [0, 1, 2] as i (i)}<span class="skeleton bar"></span>{/each}{:else}<p class="muted">Nothing is fading.</p>{/if}
       {/each}
     </section>
 

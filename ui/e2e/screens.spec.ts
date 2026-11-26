@@ -49,7 +49,12 @@ test('the Timeline shows stored, recalled and reinforced rows', async ({ page })
 });
 
 test('Health shows the phases, storage and system', async ({ page }) => {
+  // "Fading soon" comes from the report's atRisk, with no request of its own.
+  const rowReads: string[] = [];
+  page.on('request', (r) => r.url().includes('/v1/ui/memories') && rowReads.push(r.url()));
   await open(page, '/health');
+  await expect(page.getByRole('region', { name: 'Fading soon' }).getByRole('button', { name: 'Reinforce' })).toHaveCount(5);
+  expect(rowReads).toEqual([]);
   const phases = page.getByRole('region', { name: 'Phases' });
   await expect(phases.locator('.display')).toHaveText('6');
   await expect(page.getByRole('region', { name: 'Storage' }).getByText('Vectors')).toBeVisible();
