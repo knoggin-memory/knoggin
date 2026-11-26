@@ -254,6 +254,11 @@ impl LauncherService {
 
     /// The running router container of this project.
     async fn router_container(&self) -> Result<String, ApiError> {
+        self.find_router(false).await
+    }
+
+    /// The router container of this project; with `stopped`, also one that is not running.
+    async fn find_router(&self, stopped: bool) -> Result<String, ApiError> {
         let filters = HashMap::from([(
             "label".to_owned(),
             vec![
@@ -262,6 +267,7 @@ impl LauncherService {
             ],
         )]);
         let found = timed(self.docker.list_containers(Some(ListContainersOptions {
+            all: stopped,
             filters: Some(filters),
             ..Default::default()
         })))
@@ -678,19 +684,41 @@ impl LauncherService {
     }
 
     async fn remove_network(&self, name: &str) {
-        if let Ok(router) = self.router_container().await {
-            let _ = timed(self.docker.disconnect_network(
+        // A stopped router too: Docker removes a network that only a stopped container
+        // names, and that container then cannot start again ("network not found").
+        if let Ok(router) = self.find_router(true).await {
+            let disconnected = timed(self.docker.disconnect_network(
                 name,
                 NetworkDisconnectRequest {
-                    container: router,
+                    container: router.clone(),
                     force: Some(true),
                 },
             ))
             .await;
+            if disconnected.is_err() && self.joined(&router, name).await != Some(false) {
+                tracing::warn!(
+                    kind = "docker",
+                    "the router could not leave a network; it is kept"
+                );
+                return;
+            }
         }
         if timed(self.docker.remove_network(name)).await.is_err() {
             tracing::warn!(kind = "docker", "a network could not be removed");
         }
+    }
+
+    /// Whether `container` is on the network `name`; `None` when Docker cannot say.
+    async fn joined(&self, container: &str, name: &str) -> Option<bool> {
+        let inspect = timed(self.docker.inspect_container(container, None))
+            .await
+            .ok()?;
+        Some(
+            inspect
+                .network_settings
+                .and_then(|n| n.networks)
+                .is_some_and(|n| n.contains_key(name)),
+        )
     }
 
     /// Stops the stops in progress (at shutdown).

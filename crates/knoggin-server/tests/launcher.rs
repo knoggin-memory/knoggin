@@ -339,9 +339,15 @@ async fn docker(
             let Some(net) = f.find_net(net) else {
                 return status(StatusCode::NOT_FOUND, "no such network");
             };
-            if !f.networks[&net].members.is_empty() {
+            // As Docker: only a running container's endpoint keeps a network.
+            if f.networks[&net]
+                .members
+                .keys()
+                .any(|c| f.containers.get(c).is_some_and(|c| c.status == "running"))
+            {
                 return status(StatusCode::FORBIDDEN, "network has active endpoints");
             }
+            // A stopped container keeps naming it, as on Docker.
             f.networks.remove(&net);
             StatusCode::NO_CONTENT.into_response()
         }
@@ -795,4 +801,41 @@ async fn docker_launcher_drives_the_service() {
     let gone = DockerLauncher::new("http://127.0.0.1:9", SecretText::new(TOKEN)).unwrap();
     assert_eq!(gone.list().await, Err(LaunchError::Unavailable));
     r.foreign_untouched();
+}
+
+#[tokio::test]
+async fn a_tidy_while_the_router_is_stopped_takes_it_off_the_network_first() {
+    let r = rig().await;
+    let (_, created) = r
+        .call(
+            Method::POST,
+            "/v1/containers",
+            TOKEN,
+            Some(create_body(Uuid::now_v7())),
+        )
+        .await;
+    let handle = created["handle"].as_str().unwrap().to_owned();
+    let net = {
+        let mut f = r.fake.lock().unwrap();
+        let net = f.containers[&handle]
+            .networks
+            .keys()
+            .next()
+            .unwrap()
+            .clone();
+        assert!(f.containers["router-ctr"].networks.contains_key(&net));
+        // The router stops (an upgrade), and its parked container exits cleanly.
+        f.containers.get_mut("router-ctr").unwrap().status = "exited";
+        f.containers.get_mut(&handle).unwrap().status = "exited";
+        net
+    };
+    r.service
+        .tidy(Timestamp::from_millis(1_800_000_000_000))
+        .await;
+    let f = r.fake.lock().unwrap();
+    assert!(!f.networks.contains_key(&net), "the network is removed");
+    assert!(
+        !f.containers["router-ctr"].networks.contains_key(&net),
+        "the stopped router still names the removed network, so it cannot start again"
+    );
 }
