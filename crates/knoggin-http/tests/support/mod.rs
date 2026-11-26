@@ -10,6 +10,8 @@
     unreachable_pub
 )]
 
+pub mod edge;
+
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
