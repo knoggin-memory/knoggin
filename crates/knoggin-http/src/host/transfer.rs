@@ -250,6 +250,8 @@ enum Line {
 struct Lines {
     body: Body,
     buf: BytesMut,
+    /// How much of `buf` is known to hold no newline, so each byte is looked at once.
+    scanned: usize,
     number: u64,
     skipping: bool,
     done: bool,
@@ -260,6 +262,7 @@ impl Lines {
         Self {
             body,
             buf: BytesMut::new(),
+            scanned: 0,
             number: 0,
             skipping: false,
             done: false,
@@ -268,8 +271,12 @@ impl Lines {
 
     async fn next(&mut self) -> Result<Option<Line>, ApiError> {
         loop {
-            if let Some(at) = self.buf.iter().position(|b| *b == b'\n') {
+            let from = self.scanned;
+            self.scanned = self.buf.len();
+            if let Some(found) = self.buf[from..].iter().position(|b| *b == b'\n') {
+                let at = from + found;
                 let mut line = self.buf.split_to(at + 1);
+                self.scanned = 0;
                 line.truncate(at);
                 self.number += 1;
                 if std::mem::take(&mut self.skipping) || line.len() > IMPORT_LINE_BYTES {
@@ -280,6 +287,7 @@ impl Lines {
             if self.buf.len() > IMPORT_LINE_BYTES {
                 // Keep no more of an overlong line than it takes to see that it is one.
                 self.buf.clear();
+                self.scanned = 0;
                 self.skipping = true;
             }
             if self.done {
@@ -325,6 +333,24 @@ enum Parsed {
     Error(u64, String),
 }
 
+/// Parses one batch of lines (`None`: longer than 4 MiB), on a blocking thread.
+async fn parse(batch: Vec<(u64, Option<Bytes>)>) -> Result<Vec<Parsed>, ApiError> {
+    tokio::task::spawn_blocking(move || {
+        batch
+            .into_iter()
+            .map(|(number, text)| match text {
+                None => Parsed::Error(number, format!("line {number} is longer than 4 MiB")),
+                Some(text) => match serde_json::from_slice::<TransferRecord>(&text) {
+                    Ok(record) => Parsed::Record(number, record),
+                    Err(e) => Parsed::Error(number, format!("line {number}: {e}")),
+                },
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| ApiError::from_join(&e))
+}
+
 impl StoreHost {
     /// `GET /v1/export`: a stream of JSON Lines. The edge layer names the file.
     pub async fn export(&self, ctx: &RequestContext) -> Result<ExportStream, ApiError> {
@@ -354,9 +380,13 @@ impl StoreHost {
                 _ => break None,
             }
         };
-        let header_ok = header
-            .and_then(|text| serde_json::from_slice::<TransferRecord>(&text).ok())
-            .is_some_and(|r| matches!(r, TransferRecord::Header(h) if h.check().is_ok()));
+        let header_ok = match header {
+            Some(text) => matches!(
+                parse(vec![(0, Some(text))]).await?.pop(),
+                Some(Parsed::Record(_, TransferRecord::Header(h))) if h.check().is_ok()
+            ),
+            None => false,
+        };
         if !header_ok {
             return Err(ApiError::invalid_argument(
                 "header",
@@ -373,21 +403,16 @@ impl StoreHost {
                 Some(Line::Text(_, text)) if is_blank(&text) => {}
                 Some(Line::Text(number, text)) => {
                     batch_bytes += text.len();
-                    batch.push(match serde_json::from_slice::<TransferRecord>(&text) {
-                        Ok(record) => Parsed::Record(number, record),
-                        Err(e) => Parsed::Error(number, format!("line {number}: {e}")),
-                    });
+                    batch.push((number, Some(text)));
                 }
-                Some(Line::TooLong(number)) => batch.push(Parsed::Error(
-                    number,
-                    format!("line {number} is longer than 4 MiB"),
-                )),
+                Some(Line::TooLong(number)) => batch.push((number, None)),
                 None => {}
             }
             if !batch.is_empty()
                 && (end || batch.len() >= IMPORT_BATCH_LINES || batch_bytes >= IMPORT_BATCH_BYTES)
             {
-                self.apply_batch(&open, on_conflict, std::mem::take(&mut batch), &mut result)
+                let parsed = parse(std::mem::take(&mut batch)).await?;
+                self.apply_batch(&open, on_conflict, parsed, &mut result)
                     .await?;
                 batch_bytes = 0;
             }
@@ -474,6 +499,32 @@ impl StoreHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_long_line_sent_in_small_chunks_is_split_in_linear_time() {
+        // 1 MiB in 16-byte chunks: looking at the whole buffer again after every chunk
+        // would read about 32 GiB.
+        let long = vec![b'x'; 1024 * 1024];
+        let mut body = long.clone();
+        body.extend_from_slice(b"\nshort\n");
+        let chunks: Vec<Result<Bytes, std::io::Error>> = body
+            .chunks(16)
+            .map(|c| Ok(Bytes::copy_from_slice(c)))
+            .collect();
+        let mut lines = Lines::new(Body::from_stream(futures_util::stream::iter(chunks)));
+        let started = std::time::Instant::now();
+        match lines.next().await.unwrap() {
+            Some(Line::Text(1, text)) => assert_eq!(text, long),
+            _ => panic!("not the long line"),
+        }
+        match lines.next().await.unwrap() {
+            Some(Line::Text(2, text)) => assert_eq!(&text[..], b"short"),
+            _ => panic!("not the short line"),
+        }
+        assert!(lines.next().await.unwrap().is_none());
+        let took = started.elapsed();
+        assert!(took < Duration::from_secs(5), "{took:?}");
+    }
 
     #[tokio::test(start_paused = true)]
     async fn a_client_that_takes_nothing_is_cut_off_after_a_window() {
