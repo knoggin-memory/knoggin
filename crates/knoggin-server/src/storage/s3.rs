@@ -10,6 +10,7 @@ use std::time::{Duration, UNIX_EPOCH};
 use async_trait::async_trait;
 use aws_config::SdkConfig;
 use aws_sdk_s3::Client;
+use aws_sdk_s3::config::timeout::TimeoutConfig;
 use aws_sdk_s3::config::{RequestChecksumCalculation, ResponseChecksumValidation};
 use aws_sdk_s3::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_s3::presigning::{PresignedRequest, PresigningConfig};
@@ -21,6 +22,10 @@ use crate::settings::StorageSettings;
 
 /// S3's limit on keys per delete call.
 const DELETE_BATCH: usize = 1000;
+/// Bounds of every SDK call: one try may wait this long for bytes...
+const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
+/// ...and one call, with its retries, this long. A listing makes one call per page.
+const OPERATION_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// The snapshot bucket on S3 or an S3-compatible service.
 #[derive(Debug, Clone)]
@@ -48,8 +53,15 @@ impl S3Storage {
 
     /// The S3 client config for these settings.
     pub fn s3_config(sdk: &SdkConfig, settings: &StorageSettings) -> aws_sdk_s3::Config {
+        let timeouts = TimeoutConfig::builder()
+            .connect_timeout(crate::link::CONNECT_TIMEOUT)
+            .read_timeout(ATTEMPT_TIMEOUT)
+            .operation_attempt_timeout(ATTEMPT_TIMEOUT)
+            .operation_timeout(OPERATION_TIMEOUT)
+            .build();
         let mut conf = aws_sdk_s3::config::Builder::from(sdk)
             .behavior_version(crate::aws::behavior_version())
+            .timeout_config(timeouts)
             .force_path_style(settings.force_path_style);
         if let Some(endpoint) = &settings.endpoint_url {
             conf = conf
@@ -416,6 +428,36 @@ mod tests {
             st.list("stores/").await.unwrap_err(),
             StorageError::Unavailable
         );
+    }
+
+    /// A bucket that accepts connections and never answers: every call still ends, as
+    /// `unavailable`, within the operation timeout.
+    #[tokio::test(start_paused = true)]
+    async fn a_stalling_bucket_cannot_hold_a_call() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let held = tokio::spawn(async move {
+            let mut open = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                open.push(stream);
+            }
+        });
+        let st = storage(&settings(Some(&format!("http://{addr}")), true));
+        let started = tokio::time::Instant::now();
+        assert_eq!(
+            st.list("stores/").await.unwrap_err(),
+            StorageError::Unavailable
+        );
+        assert_eq!(
+            st.delete(&["stores/a".into()]).await.unwrap_err(),
+            StorageError::Unavailable
+        );
+        assert!(
+            started.elapsed() <= 2 * OPERATION_TIMEOUT,
+            "{:?}",
+            started.elapsed()
+        );
+        held.abort();
     }
 
     #[test]
