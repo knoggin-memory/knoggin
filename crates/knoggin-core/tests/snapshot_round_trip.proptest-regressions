@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 839f3cd58a660f05a4ed11bde674783f367d2426367f0fd47bb465dd1ed46c6c # shrinks to ops = [(Idempotent { key: 0, hash: 0, slot: 0, content: Content { summary: [0], full: None, tags: [], entities: [], created_days_ago: None } }, 0), (Save { slot: 1, ns: 0, content: Content { summary: [0], full: None, tags: [], entities: [], created_days_ago: None }, parent: None, vector: false, check: false }, 0), (AdoptModel, 0), (Apply(2), 0)]
