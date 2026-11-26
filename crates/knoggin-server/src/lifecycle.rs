@@ -193,7 +193,14 @@ pub async fn run(
                 expired_rows = r.expired_rows,
                 "a lifecycle pass ended"
             ),
-            Err(e) => tracing::error!(kind = "lifecycle", error = %e, "a lifecycle pass failed"),
+            // Only which part failed: a state error's text can quote a database message.
+            Err(e) => {
+                let failed = match e {
+                    LifecycleError::State(_) => "state",
+                    LifecycleError::Storage(_) => "bucket",
+                };
+                tracing::error!(kind = "lifecycle", failed, "a lifecycle pass failed");
+            }
         }
         let Some(every) = every else {
             return i32::from(result.is_err());
