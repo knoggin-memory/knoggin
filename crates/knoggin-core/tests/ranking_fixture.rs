@@ -274,24 +274,14 @@ fn compare(store: &Store, q: &FixtureQuery) -> Result<Vec<(usize, f32)>, String>
             i += 1;
             continue;
         }
-        let last = i + 1 == got.len();
-        if !last && got[i] == want[i + 1] && got[i + 1] == want[i] {
+        // The two allowances of the spec: adjacent hits in Knoggin's own result whose
+        // scores are closer than the tolerance may come in either order.
+        if i + 1 < got.len() && got[i] == want[i + 1] && got[i + 1] == want[i] {
             let gap = (hits[i].score - hits[i + 1].score).abs();
             if gap < tolerance {
                 swaps.push((i, gap));
                 i += 2;
                 continue;
-            }
-        } else if last && q.request.limit < 100 {
-            // The last place: recalld's hit may be Knoggin's next one.
-            let more = run(store, q, q.request.limit + 1);
-            if more.get(i + 1).map(|h| h.memory.id) == Some(want[i]) {
-                let gap = (hits[i].score - more[i + 1].score).abs();
-                if gap < tolerance {
-                    swaps.push((i, gap));
-                    i += 1;
-                    continue;
-                }
             }
         }
         return Err(describe(i));
