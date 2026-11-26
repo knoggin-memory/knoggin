@@ -118,9 +118,15 @@ class Status {
       }
       this.onError(o.error, o.store, o.scoped, o.write);
     });
+    // Polling stops while the tab is hidden and starts again when it is back.
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) clearTimeout(this.pollTimer);
-      else this.poll();
+      if (document.hidden) {
+        clearTimeout(this.pollTimer);
+        clearTimeout(this.reachTimer);
+      } else {
+        this.poll();
+        if (this.notRunning) this.markNotRunning();
+      }
     });
   }
 
@@ -167,6 +173,7 @@ class Status {
     clearTimeout(this.reachTimer);
     // Ask the session route again every 60 seconds; the banner goes when it answers.
     const again = () => {
+      if (document.hidden) return;
       this.reachTimer = setTimeout(async () => {
         try {
           await get('/v1/session');

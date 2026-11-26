@@ -35,6 +35,16 @@ class SessionState {
         void this.load();
       }
     });
+    // Polling stops while the tab is hidden and starts again when it is back.
+    if (typeof document !== 'undefined')
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden) clearTimeout(this.timer);
+        else if (this.phase === 'locked' || this.phase === 'unreachable') void this.load();
+      });
+  }
+
+  private again() {
+    if (!document.hidden) this.timer = setTimeout(() => this.load(), LOCK_POLL_MS);
   }
 
   /** Exchanges the one-time code of `knoggin open` (`/?t=<code>`) for a session token. */
@@ -63,10 +73,10 @@ class SessionState {
         this.phase = 'locked';
         this.lockReason = e.reason;
         this.lockDocsUrl = e.docsUrl;
-        this.timer = setTimeout(() => this.load(), LOCK_POLL_MS);
+        this.again();
       } else if (!this.value) {
         this.phase = 'unreachable';
-        this.timer = setTimeout(() => this.load(), LOCK_POLL_MS);
+        this.again();
       }
     }
   }
