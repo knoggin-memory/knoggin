@@ -28,7 +28,6 @@ One line for every place where the build departed from the tech spec, with the r
 - nextest: the override that puts `stack_*` binaries in the one-thread test group is commented out until the first stack test exists (milestone 6), because nextest refuses a `binary()` filter that matches no binary.
 - Repository name: the spec's placeholder `knoggin/knoggin` is written `knoggin-memory/knoggin`, the organization's real name, everywhere, including the workspace `repository` field.
 - Crypto, signatures: `LocalKeyProvider::wrap`, `token::new_api_key` and `token::random_token` return `Result<_, KeyError>`, because the system random source can fail and nothing on a request path may panic.
-- Crypto, container: `Header::expect` takes `(store, generation, sequence)` as plain values, because `knoggin_core::snapshot::SnapshotName` does not exist yet; a wrapper that takes the name can be added beside it.
 - Crypto, container: `seal` returns the concrete iterator `Sealer` (with a `Debug` that prints counts), not `impl Iterator`. Added `read_header_from` (reads one header from a stream, for the server's streamed download) and `Header::check_content_format(min, max)`, because the content format range is a constant of `knoggin-core::snapshot`, not of the container.
 - Crypto, container: `open` returns `TooLarge` only after the first chunk has verified the header, so an `out_of_memory` lock is never decided on an unverified `content_len`.
 - Crypto, key set: parsing refuses unknown fields and a key whose ID is not the SHA-256 rule applied to its bytes.

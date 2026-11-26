@@ -8,6 +8,7 @@ use std::io::{self, Read};
 use aws_lc_rs::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKey};
 use aws_lc_rs::hkdf::{HKDF_SHA256, Salt};
 use knoggin_core::StoreId;
+use knoggin_core::snapshot::SnapshotName;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::key::{DataKey, WrappedKey, fill_random};
@@ -143,17 +144,12 @@ impl Header {
     }
 
     /// Checks that this is the snapshot the caller asked for. Recovery tools skip it.
-    pub fn expect(
-        &self,
-        store: StoreId,
-        generation: u64,
-        sequence: u64,
-    ) -> Result<(), ContainerError> {
+    pub fn expect(&self, store: StoreId, name: SnapshotName) -> Result<(), ContainerError> {
         let field = if self.store_id != store {
             "store_id"
-        } else if self.generation != generation {
+        } else if self.generation != name.generation() {
             "generation"
-        } else if self.sequence != sequence {
+        } else if self.sequence != name.sequence() {
             "sequence"
         } else {
             return Ok(());
@@ -562,7 +558,7 @@ mod tests {
             let (read, n) = read_header(&bytes).unwrap();
             assert_eq!(n, h.header_len());
             assert_eq!(read.content_len, len as u64);
-            read.expect(store(7), 3, 9).unwrap();
+            read.expect(store(7), name(3, 9)).unwrap();
             assert_eq!(open(&read, &key(), &bytes[n..], NO_LIMIT).unwrap(), data);
         }
     }
@@ -700,17 +696,21 @@ mod tests {
         assert_eq!(open_all(&good, &key()).unwrap(), data);
     }
 
+    fn name(generation: u64, sequence: u64) -> SnapshotName {
+        SnapshotName::new(generation, sequence).unwrap()
+    }
+
     #[test]
     fn expect_checks_store_generation_and_sequence() {
         let h = std_header();
         let (read, _) = read_header(&sealed(&h, &key(), b"x")).unwrap();
-        read.expect(store(7), 3, 9).unwrap();
+        read.expect(store(7), name(3, 9)).unwrap();
         for (s, g, q, field) in [
             (store(8), 3, 9, "store_id"),
             (store(7), 4, 9, "generation"),
             (store(7), 3, 10, "sequence"),
         ] {
-            match read.expect(s, g, q) {
+            match read.expect(s, name(g, q)) {
                 Err(ContainerError::Unexpected { field: f }) => assert_eq!(f, field),
                 r => panic!("{r:?}"),
             }

@@ -86,7 +86,12 @@ mod tests {
         let store = StoreId::from_bytes([3; 16]);
         let bytes = seal_snapshot(store, 1, 2, 1_700_000_000_000, 1, b"content".to_vec());
         let (header, content) = open_snapshot(&bytes).unwrap();
-        header.expect(store, 1, 2).unwrap();
+        header
+            .expect(
+                store,
+                knoggin_core::snapshot::SnapshotName::new(1, 2).unwrap(),
+            )
+            .unwrap();
         assert_eq!(header.kek_id, test_key_set().current_kek_id());
         assert_eq!(content, b"content");
         let mut bad = bytes.clone();
