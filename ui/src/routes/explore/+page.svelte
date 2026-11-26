@@ -31,6 +31,11 @@
     { key: 'summary', label: 'Memory', desc: false },
   ];
   const params = $derived(page.url.searchParams);
+  // /explore?id=<id> (a search hit): that memory opens, above the list when the loaded rows do not hold it.
+  $effect(() => {
+    const id = params.get('id');
+    if (id) untrack(() => selection.select(id));
+  });
   const ALL: Phase[] = ['full', 'summary', 'ghost'];
   const phases = $derived(params.has('phase') ? ALL.filter((p) => params.getAll('phase').includes(p)) : ALL);
   const tagSel = $derived(params.getAll('tag'));
