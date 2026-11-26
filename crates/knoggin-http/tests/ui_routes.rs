@@ -245,6 +245,13 @@ async fn the_answers_use_names_and_times_except_the_graph_columns() {
     )
     .await;
     assert_eq!(both["merged"], true, "{both}");
+    let top = get(
+        &env,
+        &ctx,
+        "/v1/ui/search?q=Maya%20plan%20Friday%20Lisbon&limit=1",
+    )
+    .await;
+    assert_eq!(top["merged"], false, "merged counts the hits kept: {top}");
     let one = get(&env, &ctx, "/v1/ui/search?q=plan&namespace=work").await;
     assert_eq!(one["merged"], false);
 

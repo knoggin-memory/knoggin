@@ -473,10 +473,10 @@ pub(crate) fn search(
             hits.extend(full.memories.into_iter().map(|h| search_hit(s, h)));
         }
     }
-    let spaces: HashSet<&str> = hits.iter().map(|h| h.namespace.as_str()).collect();
-    let merged = spaces.len() > 1;
     hits.sort_by(|a, b| b.score.total_cmp(&a.score).then(a.id.cmp(&b.id)));
     hits.truncate(limit as usize);
+    let spaces: HashSet<&str> = hits.iter().map(|h| h.namespace.as_str()).collect();
+    let merged = spaces.len() > 1;
     Ok(UiSearch {
         merged,
         results: hits,
