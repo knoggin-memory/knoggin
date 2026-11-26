@@ -13,12 +13,13 @@
     "/auth/logout": {
       "post": {
         "tags": [
-          "local"
+          "session"
         ],
+        "summary": "Ends a browser session or a local web session.",
         "operationId": "logout",
         "responses": {
           "204": {
-            "description": "The session is forgotten"
+            "description": "The session is ended"
           },
           "default": {
             "content": {

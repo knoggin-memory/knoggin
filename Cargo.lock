@@ -1459,11 +1459,13 @@ dependencies = [
  "http",
  "http-body-util",
  "hyper-util",
+ "jsonwebtoken",
  "knoggin-core",
  "knoggin-crypto",
  "knoggin-state",
  "metrics",
  "metrics-exporter-prometheus",
+ "reqwest",
  "rmcp",
  "rust-embed",
  "rustix",
@@ -1479,6 +1481,7 @@ dependencies = [
  "ts-rs",
  "utoipa",
  "uuid",
+ "zeroize",
 ]
 
 [[package]]

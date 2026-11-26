@@ -30,7 +30,7 @@ use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::edge::shapes::StoreStatusView;
-use crate::edge::{Arrival, Caller, Credential};
+use crate::edge::{Arrival, Caller};
 use crate::error::{ApiError, Code, LockReason};
 use crate::host::{LocalBackend, StoreHost};
 use crate::store_api::extract::JsonBody;
@@ -161,7 +161,7 @@ impl std::fmt::Debug for LocalState {
 }
 
 /// The daemon's mode routes: the store status, the admin status and the snapshot list
-/// stub, and the local web session routes.
+/// stub, and the local web session routes (`POST /auth/logout` is the edge's own).
 pub fn mode_routes(state: LocalState) -> Router {
     Router::new()
         .route("/v1/stores/{id}/status", get(store_status))
@@ -169,7 +169,6 @@ pub fn mode_routes(state: LocalState) -> Router {
         .route("/v1/admin/stores/{id}/snapshots", get(snapshots))
         .route("/v1/local/browser-code", post(browser_code))
         .route("/v1/local/session", post(local_session))
-        .route("/auth/logout", post(logout))
         .with_state(state)
 }
 
@@ -357,27 +356,6 @@ pub(crate) async fn local_session(
             Code::Unauthenticated,
             "The code is unknown, used or expired; run knoggin open again",
         )),
-    }
-}
-
-#[utoipa::path(post, path = "/auth/logout", tag = "local",
-    responses((status = 204, description = "The session is forgotten"), (status = "default", body = crate::edge::openapi::ErrorEnvelope)))]
-pub(crate) async fn logout(
-    State(s): State<LocalState>,
-    Extension(arrival): Extension<Arrival>,
-    Extension(c): Extension<Caller>,
-) -> Answer {
-    if !matches!(arrival, Arrival::Web { .. }) {
-        return Err(ApiError::not_found("No such route"));
-    }
-    match c.credential {
-        Credential::LocalSession(hash) => {
-            s.sessions.forget(&hash);
-            Ok(StatusCode::NO_CONTENT.into_response())
-        }
-        Credential::Local | Credential::ApiKey(..) | Credential::None => Err(
-            ApiError::permission_denied("Logout ends a local web session only"),
-        ),
     }
 }
 

@@ -151,6 +151,10 @@ pub(crate) enum CredentialKey {
     Key(Uuid),
     /// A local web session, by the SHA-256 of its token.
     LocalSession([u8; 32]),
+    /// An OAuth access token, by its SHA-256.
+    Token([u8; 32]),
+    /// A browser session, by the SHA-256 of its cookie value.
+    Cookie([u8; 32]),
     /// The one user of a server with sign-in off.
     None,
 }

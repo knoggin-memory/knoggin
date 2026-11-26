@@ -362,7 +362,7 @@ struct Idempotency {
         crate::local::snapshots,
         crate::local::browser_code,
         crate::local::local_session,
-        crate::local::logout,
+        super::signin::logout,
     ),
     components(schemas(ErrorEnvelope, ErrorBody, Code, LockReason))
 )]

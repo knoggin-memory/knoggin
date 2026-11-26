@@ -9,7 +9,7 @@ use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
-use http::{HeaderValue, StatusCode, header};
+use http::{HeaderMap, HeaderValue, StatusCode, header};
 use knoggin_core::ops::{Items, Page};
 use knoggin_core::time::Timestamp;
 use knoggin_core::{Sensitive, StoreId, UserId};
@@ -25,10 +25,10 @@ use uuid::Uuid;
 use super::check::{Caller, Credential, SessionSeen, state_error};
 use super::shapes::{
     AccountDeleted, ContainerView, CreateKey, CreatedKey, DeleteAccount, Health, KeyView, NameBody,
-    Ready, RotateKey, SessionCredential, SessionUser, SessionView, StoreView, UserView,
+    Provider, Ready, RotateKey, SessionCredential, SessionUser, SessionView, StoreView, UserView,
     delete_after,
 };
-use super::{EdgeState, Role};
+use super::{Arrival, EdgeState, Role};
 use crate::error::{ApiError, Code};
 use crate::store_api::extract::{JsonBody, QueryMap};
 
@@ -102,6 +102,18 @@ fn path_id(text: &str) -> Result<Uuid, ApiError> {
     Uuid::parse_str(text).map_err(|_| ApiError::invalid_argument("id", "the ID must be a UUID"))
 }
 
+/// On a local install, keys, store deletion and data deletion belong to the owner of the
+/// machine: a cookie session from the public address may not do them, so that an
+/// identity later taken off the allow-list leaves no key behind.
+fn owner_only(edge: &EdgeState, c: &Caller) -> Result<(), ApiError> {
+    if edge.inner().config.role == Role::Local && matches!(c.credential, Credential::Cookie(..)) {
+        return Err(ApiError::permission_denied(
+            "Keys are managed on the machine that runs Knoggin. Run knoggin open there.",
+        ));
+    }
+    Ok(())
+}
+
 fn not_found_store() -> ApiError {
     ApiError::not_found("No such store")
 }
@@ -151,7 +163,14 @@ impl EdgeState {
 
     /// Sets the user's deletion mark (keeping an earlier one), writes that time into every
     /// store that has none, ends the sessions, and asks a running container to park.
-    async fn mark_user_deleted(&self, user: UserId, by: DeletedBy) -> Result<i64, ApiError> {
+    /// `keep` is the cookie session that asked for its own account's deletion, which stays
+    /// valid so that the owner can undo.
+    async fn mark_user_deleted(
+        &self,
+        user: UserId,
+        by: DeletedBy,
+        keep: Option<&[u8; 32]>,
+    ) -> Result<i64, ApiError> {
         let inner = self.inner();
         let now = self.now();
         let (at, _) = inner
@@ -178,10 +197,9 @@ impl EdgeState {
             }
             self.drop_open(store.value.id);
         }
-        // Milestone 5: an account deletion keeps the current cookie session.
         inner
             .sessions
-            .delete_all(user, None)
+            .delete_all(user, keep)
             .await
             .map_err(state_error)?;
         if let Some(lease) = inner.leases.get(user).await.map_err(state_error)?
@@ -237,7 +255,7 @@ impl EdgeState {
     }
 
     /// The session object for what the credential check saw.
-    pub(crate) fn session_view(&self, seen: &SessionSeen) -> SessionView {
+    pub(crate) fn session_view(&self, seen: &SessionSeen, web_sign_in: bool) -> SessionView {
         let c = &self.inner().config;
         let public = c.public_url.clone().unwrap_or_else(|| c.own_url.clone());
         let mut view = SessionView {
@@ -253,16 +271,16 @@ impl EdgeState {
             public_url: public,
             signed_in: false,
             signed_out_reason: None,
-            // Milestone 5: `{ name: auth.provider_name }` in mode `oauth`.
-            provider: None,
+            provider: self.inner().oauth.as_ref().map(|o| Provider {
+                name: o.config.provider_name.clone(),
+            }),
             user: None,
             credential: None,
             personal_store_id: None,
             soft_delete_days: c.soft_delete_days,
             retention_days: c.retention_days,
             idle_seconds: c.idle_seconds,
-            // Milestone 5: true at the public address with sign-in on.
-            web_sign_in: false,
+            web_sign_in,
         };
         match seen {
             SessionSeen::Nobody => {}
@@ -284,9 +302,10 @@ impl EdgeState {
                         Some(k.value.store_id),
                     ),
                     Credential::Local => ("local", vec!["memory:read", "memory:write"], None),
-                    Credential::LocalSession(_) => {
+                    Credential::LocalSession(_) | Credential::Cookie(..) => {
                         ("session", vec!["memory:read", "memory:write"], None)
                     }
+                    Credential::Oauth(_) => ("oauth", vec!["memory:read", "memory:write"], None),
                     Credential::None => ("none", vec!["memory:read", "memory:write"], None),
                 };
                 view.credential = Some(SessionCredential {
@@ -305,21 +324,17 @@ impl EdgeState {
                     }
                 } else {
                     view.personal_store_id = Some(u.personal_store_id);
-                    // The one local user has no name and no email; milestone 5 reports those
-                    // of the identity behind a cookie session.
-                    let local = u.issuer == LOCAL_IDENTITY;
+                    // The one local user has no name and no email: a cookie session there
+                    // reports those of the identity that signed in.
+                    let (name, email) = match (&caller.credential, u.issuer == LOCAL_IDENTITY) {
+                        (Credential::Cookie(_, s), true) => (&s.value.name, &s.value.email),
+                        (_, true) => (&None, &None),
+                        (_, false) => (&u.name, &u.email),
+                    };
                     SessionUser {
                         id: u.id,
-                        name: Some(if local {
-                            None
-                        } else {
-                            u.name.as_ref().map(|n| n.expose().clone())
-                        }),
-                        email: Some(if local {
-                            None
-                        } else {
-                            u.email.as_ref().map(|e| e.expose().clone())
-                        }),
+                        name: Some(name.as_ref().map(|n| n.expose().clone())),
+                        email: Some(email.as_ref().map(|e| e.expose().clone())),
                         is_admin: Some(caller.is_admin),
                         deleted_at: Some(u.deleted_at_ms.map(Timestamp::from_millis)),
                         delete_after: Some(
@@ -361,8 +376,13 @@ pub(crate) async fn readyz(State(edge): Edge) -> Answer {
 
 #[utoipa::path(get, path = "/v1/session", tag = "session",
     responses((status = 200, body = SessionView), (status = "default", body = crate::edge::openapi::ErrorEnvelope)))]
-pub(crate) async fn session(State(edge): Edge, Extension(seen): Extension<SessionSeen>) -> Answer {
-    ok(&edge.session_view(&seen))
+pub(crate) async fn session(
+    State(edge): Edge,
+    Extension(seen): Extension<SessionSeen>,
+    Extension(arrival): Extension<Arrival>,
+    headers: HeaderMap,
+) -> Answer {
+    ok(&edge.session_view(&seen, edge.web_sign_in(&arrival, &headers)))
 }
 
 #[utoipa::path(get, path = "/v1/openapi.json", tag = "session",
@@ -494,6 +514,7 @@ pub(crate) async fn delete_store(
     q: QueryMap,
 ) -> Answer {
     q.finish()?;
+    owner_only(&edge, &c)?;
     let store = edge.own_store(c.user.value.id, &id).await?;
     if store.value.kind == StoreKind::Personal {
         return Err(ApiError::invalid_argument(
@@ -626,6 +647,7 @@ pub(crate) async fn create_key(
     JsonBody(body): JsonBody<CreateKey>,
 ) -> Answer {
     q.finish()?;
+    owner_only(&edge, &c)?;
     let store = edge.own_store(c.user.value.id, &id).await?;
     let name = checked_name("name", &body.name)?;
     let permissions = match body.permissions.as_deref() {
@@ -682,6 +704,7 @@ pub(crate) async fn rotate_key(
     JsonBody(body): JsonBody<RotateKey>,
 ) -> Answer {
     q.finish()?;
+    owner_only(&edge, &c)?;
     let store = edge.own_store(c.user.value.id, &id).await?;
     let key_id = path_id(&key_id)?;
     let days = lifetime_days(body.expires_in_days)?;
@@ -732,6 +755,7 @@ pub(crate) async fn revoke_key(
     q: QueryMap,
 ) -> Answer {
     q.finish()?;
+    owner_only(&edge, &c)?;
     let store = edge.own_store(c.user.value.id, &id).await?;
     let key_id = path_id(&key_id)?;
     edge.inner()
@@ -757,13 +781,22 @@ pub(crate) async fn delete_account(
             "confirm must be exactly \"delete my data\"",
         ));
     }
+    owner_only(&edge, &c)?;
+    let cookie = match &c.credential {
+        Credential::Cookie(h, _) => Some(h),
+        _ => None,
+    };
     let at = edge
-        .mark_user_deleted(c.user.value.id, DeletedBy::Owner)
+        .mark_user_deleted(c.user.value.id, DeletedBy::Owner, cookie)
         .await?;
     if let Some(local) = &edge.inner().local {
         let keep = match &c.credential {
             Credential::LocalSession(h) => Some(*h),
-            Credential::Local | Credential::ApiKey(..) | Credential::None => None,
+            Credential::Local
+            | Credential::ApiKey(..)
+            | Credential::Oauth(_)
+            | Credential::Cookie(..)
+            | Credential::None => None,
         };
         local.forget_all_but(keep);
     }
@@ -778,12 +811,15 @@ pub(crate) async fn delete_account(
 pub(crate) async fn undelete_account(
     State(edge): Edge,
     Extension(c): Extension<Caller>,
+    Extension(arrival): Extension<Arrival>,
+    headers: HeaderMap,
     q: QueryMap,
 ) -> Answer {
     q.finish()?;
     let user = edge.unmark_user(&c.user).await?;
     let caller = Caller { user, ..c };
-    ok(&edge.session_view(&SessionSeen::Caller(Box::new(caller))))
+    let web = edge.web_sign_in(&arrival, &headers);
+    ok(&edge.session_view(&SessionSeen::Caller(Box::new(caller)), web))
 }
 
 impl EdgeState {
@@ -815,8 +851,7 @@ impl EdgeState {
             id: user.id,
             name: user.name.as_ref().map(|n| n.expose().clone()),
             email: user.email.as_ref().map(|e| e.expose().clone()),
-            // Milestone 5: decided from `auth.admin_*` on a server with sign-in on.
-            is_admin: user.issuer == LOCAL_IDENTITY,
+            is_admin: self.is_admin(user),
             created_at: Timestamp::from_millis(user.created_ms),
             last_active_on: user.last_active_day.clone(),
             app_count,
@@ -920,7 +955,7 @@ pub(crate) async fn remove_user(
             "You cannot remove yourself",
         ));
     }
-    edge.mark_user_deleted(user.value.id, DeletedBy::Admin)
+    edge.mark_user_deleted(user.value.id, DeletedBy::Admin, None)
         .await?;
     let user = edge.other_user(&id).await?;
     ok(&edge.user_view(&user.value).await?)

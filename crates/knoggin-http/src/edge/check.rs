@@ -14,14 +14,15 @@ use futures_util::StreamExt;
 use futures_util::future::BoxFuture;
 use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use knoggin_core::time::{MILLIS_PER_DAY, Timestamp};
-use knoggin_core::{Sensitive, StoreId};
+use knoggin_core::{Sensitive, StoreId, UserId};
 use knoggin_crypto::token::{API_KEY_PREFIX, hash_secret};
-use knoggin_state::record::{ApiKey, DeletedBy, Permission, StoreRecord, User};
+use knoggin_state::record::{ApiKey, DeletedBy, Permission, Session, StoreRecord, User};
 use knoggin_state::users::LOCAL_IDENTITY;
-use knoggin_state::{NewStore, StateError, Versioned};
+use knoggin_state::{NewStore, NewUser, StateError, Versioned};
 use uuid::Uuid;
 
 use super::limits::{Cap, CredentialKey};
+use super::oauth::{Identity, Provider, Refusal, email_matches};
 use super::{Arrival, AuthMode, EdgeState, Role};
 use crate::ctx::{
     CredentialKind, CredentialRef, Permissions, RequestContext, headers, namespace_header,
@@ -36,6 +37,8 @@ const RECHECK_EVERY: Duration = Duration::from_secs(60);
 /// A key that expires within this many milliseconds gets `Knoggin-Key-Expires`.
 const EXPIRY_WARNING_MS: i64 = 14 * MILLIS_PER_DAY;
 
+const HOUR_MS: i64 = 3_600_000;
+
 /// The credential a request was resolved by.
 #[derive(Clone)]
 pub enum Credential {
@@ -45,6 +48,11 @@ pub enum Credential {
     LocalSession([u8; 32]),
     /// An API key, with the SHA-256 of its whole string.
     ApiKey(Box<Versioned<ApiKey>>, [u8; 32]),
+    /// An OAuth access token, by its SHA-256.
+    Oauth([u8; 32]),
+    /// A browser session made by web sign-in, by the SHA-256 of the cookie value, with
+    /// its record.
+    Cookie([u8; 32], Box<Versioned<Session>>),
     /// A server with sign-in off and no credential.
     None,
 }
@@ -55,6 +63,8 @@ impl std::fmt::Debug for Credential {
             Self::Local => "local",
             Self::LocalSession(_) => "local_session",
             Self::ApiKey(..) => "api_key",
+            Self::Oauth(_) => "oauth",
+            Self::Cookie(..) => "cookie",
             Self::None => "none",
         };
         f.write_str(kind)
@@ -77,6 +87,14 @@ impl Credential {
                 kind: CredentialKind::ApiKey,
                 id: Some(k.value.id),
             },
+            Self::Oauth(_) => CredentialRef {
+                kind: CredentialKind::Oauth,
+                id: Some(user.uuid()),
+            },
+            Self::Cookie(..) => CredentialRef {
+                kind: CredentialKind::Session,
+                id: Some(user.uuid()),
+            },
             Self::None => CredentialRef {
                 kind: CredentialKind::None,
                 id: None,
@@ -87,8 +105,8 @@ impl Credential {
     /// Whether this credential reaches the control routes: the socket, a session, or none.
     pub fn is_control(&self) -> bool {
         match self {
-            Self::Local | Self::LocalSession(_) | Self::None => true,
-            Self::ApiKey(..) => false,
+            Self::Local | Self::LocalSession(_) | Self::Cookie(..) | Self::None => true,
+            Self::ApiKey(..) | Self::Oauth(_) => false,
         }
     }
 
@@ -96,7 +114,11 @@ impl Credential {
     fn api_key(&self) -> Option<(&Versioned<ApiKey>, &[u8; 32])> {
         match self {
             Self::ApiKey(k, hash) => Some((k, hash)),
-            Self::Local | Self::LocalSession(_) | Self::None => None,
+            Self::Local
+            | Self::LocalSession(_)
+            | Self::Oauth(_)
+            | Self::Cookie(..)
+            | Self::None => None,
         }
     }
 
@@ -105,6 +127,8 @@ impl Credential {
             Self::Local => None,
             Self::LocalSession(h) => Some(CredentialKey::LocalSession(*h)),
             Self::ApiKey(k, _) => Some(CredentialKey::Key(k.value.id)),
+            Self::Oauth(h) => Some(CredentialKey::Token(*h)),
+            Self::Cookie(h, _) => Some(CredentialKey::Cookie(*h)),
             Self::None => Some(CredentialKey::None),
         }
     }
@@ -141,10 +165,50 @@ struct Presented {
     malformed: bool,
     /// See [`sends_credential`].
     sent: bool,
+    /// The session cookie (step 8): mode `oauth`, no `Authorization` header, on the
+    /// fixed or the public listener.
+    cookie: Option<Sensitive<String>>,
+    /// A request that is not `GET` or `HEAD` and lacks `X-Knoggin-UI: 1`.
+    bare_write: bool,
+}
+
+/// The value of the cookie `name`, from every `Cookie` header.
+pub(crate) fn cookie_value(map: &HeaderMap, name: &str) -> Option<String> {
+    map.get_all(header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| v.trim().to_owned())
 }
 
 impl Presented {
-    fn read(arrival: Arrival, map: &HeaderMap, mode: AuthMode) -> Self {
+    fn read(arrival: Arrival, request: &Request, session_cookie: Option<&str>) -> Self {
+        let map = request.headers();
+        let method = request.method();
+        let mut p = Self::headers(arrival, map, session_cookie.is_some());
+        if p.bearer.is_none()
+            && !p.malformed
+            && matches!(p.arrival, Arrival::Fixed { .. } | Arrival::Public)
+            && let Some(name) = session_cookie
+        {
+            p.cookie = cookie_value(map, name)
+                .filter(|v| !v.is_empty())
+                .map(Sensitive::new);
+        }
+        p.bare_write = method != Method::GET
+            && method != Method::HEAD
+            && map.get("x-knoggin-ui").is_none_or(|v| v != "1");
+        p
+    }
+
+    fn headers(arrival: Arrival, map: &HeaderMap, oauth: bool) -> Self {
+        let mode = if oauth {
+            AuthMode::Oauth
+        } else {
+            AuthMode::None
+        };
         let mut values = map.get_all(header::AUTHORIZATION).iter();
         let (bearer, malformed) = match (values.next(), values.next()) {
             (None, _) => (None, false),
@@ -166,6 +230,8 @@ impl Presented {
             bearer,
             malformed,
             sent: sends_credential(map, mode),
+            cookie: None,
+            bare_write: false,
         }
     }
 }
@@ -187,13 +253,57 @@ enum Access {
 
 fn access(method: &Method, path: &str) -> Access {
     match (method, path) {
-        (&Method::GET, "/healthz" | "/readyz" | "/v1/openapi.json")
+        (
+            &Method::GET,
+            "/healthz"
+            | "/readyz"
+            | "/v1/openapi.json"
+            | "/auth/login"
+            | "/auth/callback"
+            | "/.well-known/oauth-protected-resource"
+            | "/.well-known/oauth-protected-resource/mcp"
+            | "/.well-known/oauth-protected-resource/mcp/plugin",
+        )
         | (&Method::POST, "/v1/local/session") => Access::Open,
         (&Method::GET, "/v1/session") => Access::Session,
         (&Method::POST, "/v1/account/undelete" | "/auth/logout" | "/v1/local/browser-code")
         | (&Method::DELETE, "/v1/account") => Access::WhileDeleted,
         _ if path.starts_with("/v1/users") || path.starts_with("/v1/admin/") => Access::Admin,
         _ => Access::Control,
+    }
+}
+
+/// The user's stored email, when it is verified.
+pub(crate) fn stored_verified(u: &User) -> Option<&str> {
+    u.email
+        .as_ref()
+        .filter(|_| u.email_verified)
+        .map(|e| e.expose().as_str())
+}
+
+/// `permission_denied` with the reason `not_allowed`: the allow-list refuses the email.
+pub(crate) fn not_allowed() -> ApiError {
+    ApiError::permission_denied("This account is not allowed to use Knoggin here")
+        .with_reason("not_allowed")
+}
+
+/// An access token that failed a check (its kind is logged, never the token), or a
+/// provider that cannot be used now.
+fn token_refused(r: Refusal) -> ApiError {
+    match r {
+        Refusal::Invalid(kind) => {
+            tracing::info!(
+                kind = "token_refused",
+                reason = kind,
+                "an access token was refused"
+            );
+            unauthenticated()
+        }
+        Refusal::Unavailable => ApiError::new(
+            Code::Unavailable,
+            "The identity provider cannot be reached; try again shortly",
+        )
+        .with_retry_after(60),
     }
 }
 
@@ -221,8 +331,8 @@ pub(crate) fn state_error(e: StateError) -> ApiError {
 
 impl EdgeState {
     /// Steps 3 to 11 for one request. `Ok(None)` is a request without any credential.
-    /// `touch` is false for the re-check of an open transfer, which must not keep a local
-    /// web session alive.
+    /// `touch` is false for the re-check of an open transfer, which must not keep a
+    /// session alive.
     async fn resolve(
         &self,
         p: &Presented,
@@ -231,6 +341,10 @@ impl EdgeState {
     ) -> Result<Option<Caller>, ApiError> {
         let inner = self.inner();
         let now = self.now();
+        let oauth = inner.oauth.as_deref();
+        let local_role = inner.config.role == Role::Local;
+        // An access token's identity, for the user and the allow-list.
+        let mut token: Option<Identity> = None;
         // Steps 3 to 9.
         let credential = if p.malformed {
             return Err(unauthenticated());
@@ -266,30 +380,66 @@ impl EdgeState {
                 Credential::ApiKey(Box::new(key), hash)
             } else {
                 // Step 7. Mode `none` has nothing to check such a value against.
-                // Milestone 5: in mode `oauth`, check it as a JWT here.
-                return Err(unauthenticated());
+                let o = oauth.ok_or_else(unauthenticated)?;
+                token = Some(o.check_access(value).await.map_err(token_refused)?);
+                Credential::Oauth(hash_secret(value))
             }
         } else if p.arrival == Arrival::Socket {
             // Step 4.
             Credential::Local
+        } else if let Some(cookie) = &p.cookie {
+            // Step 8. A cookie is read in mode `oauth` only.
+            let hash = hash_secret(cookie.expose());
+            let session = self.cookie_session(&hash, now, touch).await?;
+            if p.bare_write {
+                return Err(ApiError::permission_denied(
+                    "A write from a browser session needs the header X-Knoggin-UI: 1",
+                ));
+            }
+            Credential::Cookie(hash, Box::new(session))
         } else if inner.config.role == Role::Server && inner.config.auth_mode == AuthMode::None {
-            // Step 9. (Step 8, the session cookie, exists in mode `oauth` only: milestone 5.)
+            // Step 9.
             Credential::None
         } else {
             return Ok(None);
         };
-        let user_id = match &credential {
-            Credential::ApiKey(k, _) => k.value.user_id,
-            Credential::Local | Credential::LocalSession(_) | Credential::None => {
-                inner.local_user.ok_or_else(ApiError::internal)?
+        // On a local install each identity is checked by its own verified email: the
+        // token's, or the one the session stored at sign-in.
+        if local_role && let Some(o) = oauth {
+            let email = match &credential {
+                Credential::Oauth(_) => Some(token.as_ref().and_then(Identity::verified_email)),
+                Credential::Cookie(_, s) => {
+                    Some(s.value.email.as_ref().map(|e| e.expose().as_str()))
+                }
+                _ => None,
+            };
+            if let Some(email) = email
+                && !email.is_some_and(|e| o.config.allowed(e))
+            {
+                return Err(not_allowed());
+            }
+        }
+        let mut user = match (&credential, &token, oauth) {
+            (Credential::Oauth(_), Some(id), Some(o)) if !local_role => {
+                self.token_user(o, id).await?
+            }
+            _ => {
+                let user_id = match &credential {
+                    Credential::ApiKey(k, _) => k.value.user_id,
+                    Credential::Cookie(_, s) => s.value.user_id,
+                    Credential::Local
+                    | Credential::LocalSession(_)
+                    | Credential::Oauth(_)
+                    | Credential::None => inner.local_user.ok_or_else(ApiError::internal)?,
+                };
+                inner
+                    .users
+                    .get(user_id)
+                    .await
+                    .map_err(state_error)?
+                    .ok_or_else(unauthenticated)?
             }
         };
-        let mut user = inner
-            .users
-            .get(user_id)
-            .await
-            .map_err(state_error)?
-            .ok_or_else(unauthenticated)?;
         if user.value.issuer == LOCAL_IDENTITY {
             user = self.keep_personal_store(user).await?;
         }
@@ -308,11 +458,21 @@ impl EdgeState {
                 _ => {}
             }
         }
+        // On a server, the allow-list on the stored verified email, which a token with a
+        // verified email has just refreshed.
+        if !local_role
+            && let Some(o) = oauth
+            && user.value.issuer != LOCAL_IDENTITY
+            && o.config.allow_list_set()
+            && !stored_verified(&user.value).is_some_and(|e| o.config.allowed(e))
+        {
+            return Err(not_allowed());
+        }
         // Step 11 for an API key: its store must be live.
         if let Some((k, _)) = credential.api_key() {
             let store = inner
                 .stores
-                .get_of(user_id, k.value.store_id)
+                .get_of(user.value.id, k.value.store_id)
                 .await
                 .map_err(state_error)?
                 .ok_or_else(unauthenticated)?;
@@ -320,14 +480,134 @@ impl EdgeState {
                 return Err(ApiError::store_deleting());
             }
         }
-        // On a local install, and on a server with sign-in off, the one user is an admin.
-        // Milestone 5: on a server with sign-in on, decide from `auth.admin_*` here.
-        let is_admin = user.value.issuer == LOCAL_IDENTITY;
+        let is_admin = self.is_admin(&user.value);
         Ok(Some(Caller {
             user,
             credential,
             is_admin,
         }))
+    }
+
+    /// Step 8 up to the UI header: the session of a cookie value's hash, unless it is
+    /// missing, past `auth.session_max_days` or idle past `auth.session_idle_hours`.
+    async fn cookie_session(
+        &self,
+        hash: &[u8; 32],
+        now: i64,
+        touch: bool,
+    ) -> Result<Versioned<Session>, ApiError> {
+        let inner = self.inner();
+        let o = inner.oauth.as_ref().ok_or_else(unauthenticated)?;
+        let session = inner
+            .sessions
+            .get(hash)
+            .await
+            .map_err(state_error)?
+            .ok_or_else(unauthenticated)?;
+        let max = i64::from(o.config.session_max_days).saturating_mul(MILLIS_PER_DAY);
+        let idle = i64::from(o.config.session_idle_hours).saturating_mul(HOUR_MS);
+        if now.saturating_sub(session.value.created_ms) > max
+            || now.saturating_sub(session.value.last_seen_ms) > idle
+        {
+            return Err(unauthenticated());
+        }
+        if touch && inner.sessions.touch(hash, &session, now).await.is_err() {
+            tracing::debug!(kind = "bookkeeping", "last_seen_ms not written");
+        }
+        Ok(session)
+    }
+
+    /// The server's user of an access token, created on first sight when the token
+    /// carries a verified email that the allow-list admits. A newer verified email is
+    /// the one checked now; the stored copy follows with a bookkeeping write.
+    async fn token_user(&self, o: &Provider, id: &Identity) -> Result<Versioned<User>, ApiError> {
+        let users = &self.inner().users;
+        let verified = id.verified_email();
+        if let Some(mut user) = users
+            .find(&o.config.issuer, id.subject.expose())
+            .await
+            .map_err(state_error)?
+        {
+            if let Some(email) = verified
+                && stored_verified(&user.value) != Some(email)
+            {
+                if users.note_email(&user, email).await.is_err() {
+                    tracing::debug!(kind = "bookkeeping", "a newer email was not written");
+                }
+                user.value.email = Some(Sensitive::new(email.to_owned()));
+                user.value.email_verified = true;
+            }
+            return Ok(user);
+        }
+        let refused = || {
+            ApiError::permission_denied(format!(
+                "Sign in at {} once, then connect again",
+                o.public_url
+            ))
+        };
+        let email = verified.ok_or_else(refused)?;
+        if !o.config.allowed(email) {
+            return Err(refused());
+        }
+        self.create_user(&o.config.issuer, id).await
+    }
+
+    /// Creates the user of a sign-in identity with its personal store, in one write; two
+    /// requests for a new person at once create one user.
+    pub(crate) async fn create_user(
+        &self,
+        issuer: &str,
+        id: &Identity,
+    ) -> Result<Versioned<User>, ApiError> {
+        let inner = self.inner();
+        let store = StoreId::from_uuid(Uuid::now_v7());
+        let (_, wrapped) = inner.keys.generate(store).await.map_err(|_| {
+            tracing::error!(kind = "key", "could not make a data key");
+            ApiError::internal()
+        })?;
+        let (user, _) = inner
+            .users
+            .create(
+                NewUser {
+                    id: UserId::from_uuid(Uuid::now_v7()),
+                    issuer: issuer.to_owned(),
+                    subject: id.subject.clone(),
+                    email: id.email.clone(),
+                    email_verified: id.email_verified,
+                    name: id.name.clone(),
+                },
+                NewStore {
+                    id: store,
+                    name: Sensitive::new("Personal".into()),
+                    wrapped,
+                },
+                self.now(),
+            )
+            .await
+            .map_err(state_error)?;
+        Ok(user)
+    }
+
+    /// Whether `user` is an admin, decided from the config now: the one local user, a
+    /// subject in `auth.admin_subjects`, or a stored verified email in `auth.admin_emails`.
+    pub(crate) fn is_admin(&self, user: &User) -> bool {
+        if user.issuer == LOCAL_IDENTITY {
+            return true;
+        }
+        let Some(o) = &self.inner().oauth else {
+            return false;
+        };
+        (user.issuer == o.config.issuer
+            && o.config
+                .admin_subjects
+                .iter()
+                .any(|s| s == user.subject.expose()))
+            || stored_verified(user).is_some_and(|e| email_matches(e, &o.config.admin_emails, &[]))
+    }
+
+    /// The name of the session cookie, in mode `oauth`.
+    fn session_cookie(&self) -> Option<&'static str> {
+        self.inner().oauth.as_ref().map(|o| o.cookies().session)
     }
 
     /// The daemon's erase step removes a personal store whose user deleted their data; the
@@ -453,19 +733,34 @@ impl EdgeState {
                 }
                 (None, None) => k.value.store_id,
             },
-            Credential::Local | Credential::LocalSession(_) | Credential::None => {
-                match (header, store_param) {
-                    (Some(_), Some(_)) => {
-                        return Err(ApiError::invalid_argument(
-                            "store",
-                            "send the store parameter or the Knoggin-Store header, not both",
-                        ));
-                    }
-                    (Some(text), None) => parse_store(&text, "Knoggin-Store")?,
-                    (None, Some(text)) => parse_store(text, "store")?,
-                    (None, None) => caller.user.value.personal_store_id,
+            Credential::Oauth(_) => match (header, store_param) {
+                (Some(_), _) => {
+                    return Err(ApiError::invalid_argument(
+                        "Knoggin-Store",
+                        "an access token reaches the personal store only; do not send Knoggin-Store",
+                    ));
                 }
-            }
+                (None, Some(_)) => {
+                    return Err(ApiError::permission_denied(
+                        "the store parameter is accepted only from a session",
+                    ));
+                }
+                (None, None) => caller.user.value.personal_store_id,
+            },
+            Credential::Local
+            | Credential::LocalSession(_)
+            | Credential::Cookie(..)
+            | Credential::None => match (header, store_param) {
+                (Some(_), Some(_)) => {
+                    return Err(ApiError::invalid_argument(
+                        "store",
+                        "send the store parameter or the Knoggin-Store header, not both",
+                    ));
+                }
+                (Some(text), None) => parse_store(&text, "Knoggin-Store")?,
+                (None, Some(text)) => parse_store(text, "store")?,
+                (None, None) => caller.user.value.personal_store_id,
+            },
         };
         let store = inner
             .stores
@@ -533,7 +828,7 @@ pub(crate) async fn control(
     if access == Access::Open {
         return next.run(request).await;
     }
-    let p = Presented::read(arrival, request.headers(), edge.inner().config.auth_mode);
+    let p = Presented::read(arrival, &request, edge.session_cookie());
     let resolved = edge.resolve(&p, access, true).await;
     let expires = match &resolved {
         Ok(Some(caller)) => edge.key_expires(&caller.credential),
@@ -683,7 +978,7 @@ async fn prepare(
     expires: &mut Option<HeaderValue>,
 ) -> Result<Prepared, ApiError> {
     let arrival = arrival(request)?;
-    let p = Presented::read(arrival, request.headers(), edge.inner().config.auth_mode);
+    let p = Presented::read(arrival, request, edge.session_cookie());
     let caller = match edge.resolve(&p, Access::Control, true).await {
         Ok(Some(c)) => c,
         Ok(None) => return Err(edge.refused(&p, unauthenticated())),
@@ -716,6 +1011,8 @@ async fn prepare(
         Credential::ApiKey(..)
         | Credential::Local
         | Credential::LocalSession(_)
+        | Credential::Oauth(_)
+        | Credential::Cookie(..)
         | Credential::None => Permissions::READ_WRITE,
     };
     let ctx = RequestContext {
@@ -757,7 +1054,7 @@ fn export_store_param(query: Option<&str>) -> Result<Option<String>, ApiError> {
     }
 }
 
-fn query_pairs(query: &str) -> Result<Vec<(String, String)>, ApiError> {
+pub(crate) fn query_pairs(query: &str) -> Result<Vec<(String, String)>, ApiError> {
     let uri: http::Uri = format!("/?{query}")
         .parse()
         .map_err(|_| ApiError::invalid_argument("query", "the query string is malformed"))?;
@@ -872,28 +1169,28 @@ mod tests {
     fn authorization_forms() {
         let mut map = HeaderMap::new();
         map.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic abc"));
-        assert!(Presented::read(Arrival::Public, &map, AuthMode::None).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
         map.insert(
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer abc"),
         );
-        let p = Presented::read(Arrival::Public, &map, AuthMode::None);
+        let p = Presented::headers(Arrival::Public, &map, false);
         assert_eq!(p.bearer.unwrap().expose(), "abc");
         for scheme in ["bearer", "BEARER", "bEaReR"] {
             let value = HeaderValue::from_str(&format!("{scheme} abc")).unwrap();
             map.insert(header::AUTHORIZATION, value);
-            let p = Presented::read(Arrival::Public, &map, AuthMode::None);
+            let p = Presented::headers(Arrival::Public, &map, false);
             assert_eq!(p.bearer.unwrap().expose(), "abc", "{scheme}");
         }
         map.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer "));
-        assert!(Presented::read(Arrival::Public, &map, AuthMode::None).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
         map.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearerabc"));
-        assert!(Presented::read(Arrival::Public, &map, AuthMode::None).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
         map.append(
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer def"),
         );
-        assert!(Presented::read(Arrival::Public, &map, AuthMode::None).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
     }
 
     #[tokio::test(start_paused = true)]
@@ -969,7 +1266,7 @@ mod tests {
         let web = Arrival::Web {
             authority: "127.0.0.1:1".into(),
         };
-        let p = Presented::read(web, &map, AuthMode::None);
+        let p = Presented::headers(web, &map, false);
         clock.advance(23 * MILLIS_PER_DAY / 24);
         assert!(edge.recheck(&p, personal).await.is_ok());
         clock.advance(2 * MILLIS_PER_DAY / 24);

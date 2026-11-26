@@ -88,6 +88,11 @@ impl Origin {
         if self.scheme == "https" { 443 } else { 80 }
     }
 
+    /// Whether a `Host` value names this origin's host and port.
+    pub(crate) fn is_host(&self, host: &str) -> bool {
+        HostPort::parse(host).is_some_and(|h| self.host.matches(&h, self.default_port()))
+    }
+
     fn same(&self, other: &Self) -> bool {
         self.scheme == other.scheme && self.host.matches(&other.host, self.default_port())
     }

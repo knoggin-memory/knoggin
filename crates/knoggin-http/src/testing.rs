@@ -10,6 +10,8 @@
     unreachable_pub
 )]
 
+pub mod issuer;
+
 use std::path::Path;
 use std::sync::Arc;
 

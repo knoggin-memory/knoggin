@@ -4,17 +4,19 @@
 //! the browser checks, and serves the control routes. The store layer behind it reads only
 //! the `RequestContext` the edge puts in the request extensions.
 //!
-//! Built now: sign-in mode `none`, the local socket, local web sessions and API keys.
-//! Mode `oauth` (tokens and cookie sessions) joins in milestone 5 at the marked steps of
-//! `check`.
+//! Both sign-in modes: the local socket, local web sessions, API keys, and with `oauth`
+//! access tokens, web sign-in and cookie sessions (`oauth`, `signin`).
 
 mod browser;
 mod check;
 mod control;
+pub mod guard;
 pub mod limits;
 pub mod listen;
+pub mod oauth;
 pub mod openapi;
 pub(crate) mod shapes;
+mod signin;
 pub(crate) mod ui;
 
 use std::sync::Arc;
@@ -40,6 +42,8 @@ pub(crate) use self::check::state_error;
 pub use self::check::{Caller, Credential};
 pub use self::limits::Rate;
 use self::limits::{Buckets, Caps, CredentialKey};
+use self::oauth::Provider;
+pub use self::oauth::{DiscoveryError, OauthConfig};
 use crate::ctx::headers;
 use crate::error::{ApiError, shape_answer};
 use crate::host::StoreHost;
@@ -80,7 +84,7 @@ pub enum Role {
 pub enum AuthMode {
     /// Sign-in off.
     None,
-    /// Sign-in with an identity provider (milestone 5).
+    /// Sign-in with an identity provider.
     Oauth,
 }
 
@@ -121,6 +125,10 @@ pub struct EdgeConfig {
     pub unauthenticated: Rate,
     /// The request timeout of the control routes.
     pub limits: StoreLimits,
+    /// `KNOGGIN_TEST_MODE=1`: an `http` issuer and redirects from it are accepted.
+    pub test_mode: bool,
+    /// The `auth.*` settings; required with mode `oauth`.
+    pub oauth: Option<OauthConfig>,
 }
 
 impl EdgeConfig {
@@ -145,6 +153,8 @@ impl EdgeConfig {
                 burst: 20.0,
             },
             limits: StoreLimits::default(),
+            test_mode: false,
+            oauth: None,
         }
     }
 }
@@ -162,6 +172,8 @@ pub(crate) struct Inner {
     pub(crate) sessions: Sessions,
     pub(crate) leases: Leases,
     pub(crate) keys: Arc<dyn KeyProvider>,
+    pub(crate) fields: Arc<FieldKeys>,
+    pub(crate) oauth: Option<Arc<Provider>>,
     pub(crate) clock: Clock,
     pub(crate) host: Option<Arc<StoreHost>>,
     pub(crate) local: Option<Arc<LocalSessions>>,
@@ -225,7 +237,26 @@ impl EdgeState {
             .public_url
             .as_deref()
             .and_then(browser::Origin::parse);
+        let oauth = match (config.auth_mode, &config.oauth, &config.public_url) {
+            (AuthMode::None, _, _) => None,
+            (AuthMode::Oauth, Some(o), Some(url)) => Some(Arc::new(
+                Provider::new(
+                    o.clone(),
+                    url.clone(),
+                    config.test_mode,
+                    parts.clock.clone(),
+                )
+                .map_err(|_| StateError::Invalid("the identity provider's client"))?,
+            )),
+            (AuthMode::Oauth, _, _) => {
+                return Err(StateError::Invalid(
+                    "auth.mode oauth needs the auth settings and server.public_url",
+                ));
+            }
+        };
         Ok(Self(Arc::new(Inner {
+            fields: parts.field_keys.clone(),
+            oauth,
             public,
             stores: Stores::new(parts.db.clone(), parts.field_keys.clone()),
             api_keys: ApiKeys::new(parts.db.clone(), parts.field_keys.clone()),
@@ -243,6 +274,23 @@ impl EdgeState {
             ready: AtomicBool::new(true),
             config,
         })))
+    }
+
+    /// One discovery attempt at the identity provider (mode `oauth`; nothing otherwise).
+    /// Until one works, the sign-in routes and access tokens answer `unavailable`.
+    pub async fn discover(&self) -> Result<(), DiscoveryError> {
+        match &self.0.oauth {
+            Some(o) => o.discover().await,
+            None => Ok(()),
+        }
+    }
+
+    /// Whether discovery has worked (always true without sign-in).
+    pub fn discovered(&self) -> bool {
+        self.0
+            .oauth
+            .as_ref()
+            .is_none_or(|o| o.discovery().is_some())
     }
 
     /// Sets what `/readyz` answers.
@@ -266,6 +314,7 @@ impl EdgeState {
 pub fn edge_layer(edge: EdgeState, store_routes: Router, mode_routes: Router) -> Router {
     let limits = edge.0.config.limits.clone();
     let control = control::routes(edge.clone())
+        .merge(signin::routes(edge.clone()))
         .merge(mode_routes)
         .layer(DefaultBodyLimit::max(DEFAULT_BODY_BYTES))
         .layer(RequestBodyLimitLayer::new(DEFAULT_BODY_BYTES))
@@ -301,6 +350,7 @@ async fn entry(State(edge): State<EdgeState>, mut request: Request, next: Next) 
         request.extensions_mut().insert(RequestId::new(value));
     }
     let arrival = request.extensions().get::<Arrival>().cloned();
+    let challenge = edge.challenge(&request);
     let response = match arrival {
         None => {
             tracing::error!(
@@ -328,7 +378,42 @@ async fn entry(State(edge): State<EdgeState>, mut request: Request, next: Next) 
             }
         }
     };
-    finish(response, id)
+    let mut response = finish(response, id);
+    if let Some(value) = challenge
+        && response.status() == StatusCode::UNAUTHORIZED
+    {
+        response
+            .headers_mut()
+            .insert(header::WWW_AUTHENTICATE, value);
+    }
+    response
+}
+
+impl EdgeState {
+    /// With mode `oauth`, the `WWW-Authenticate` value that an `unauthenticated` answer on
+    /// `/mcp` and `/v1` carries: where the protected-resource metadata is, and
+    /// `invalid_token` when a token was sent.
+    fn challenge(&self, request: &Request) -> Option<HeaderValue> {
+        let o = self.0.oauth.as_ref()?;
+        let path = request.uri().path();
+        let resource = if path == "/mcp/plugin" || path.starts_with("/mcp/plugin/") {
+            "/mcp/plugin"
+        } else if path == "/mcp" || path.starts_with("/mcp/") || path.starts_with("/v1/") {
+            "/mcp"
+        } else {
+            return None;
+        };
+        let error = if request.headers().contains_key(header::AUTHORIZATION) {
+            "error=\"invalid_token\", "
+        } else {
+            ""
+        };
+        HeaderValue::from_str(&format!(
+            "Bearer {error}resource_metadata=\"{}/.well-known/oauth-protected-resource{resource}\"",
+            o.public_url
+        ))
+        .ok()
+    }
 }
 
 /// The browser checks without a configured public address, for the locked router.
