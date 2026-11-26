@@ -560,18 +560,42 @@ async fn a_token_reaches_memories_and_the_session_route_only() {
             let r = s.token(&t, m.clone(), &p, body).await;
             assert_eq!(r.error(), Code::PermissionDenied, "{role:?} {m} {p}");
         }
-        // The store is never named with a token.
+        // The store is never named with a token: not the personal store, not an app of
+        // the same user, not another user's store, to read or to write.
         let auth = format!("Bearer {t}");
-        let personal = s.e.personal.to_string();
-        let r = s
-            .call(
-                Method::GET,
-                "/v1/namespaces",
-                None,
-                &[("authorization", &auth), ("knoggin-store", &personal)],
+        let cookie = s.sign_in("alice").await.unwrap();
+        let personal = s
+            .cookie(&cookie, Method::GET, "/v1/session", None)
+            .await
+            .json["personalStoreId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let app = s
+            .cookie(
+                &cookie,
+                Method::POST,
+                "/v1/stores",
+                Some(json!({ "name": "notes" })),
             )
             .await;
-        assert_eq!(r.error(), Code::InvalidArgument, "{role:?}");
+        assert_eq!(app.status, StatusCode::CREATED, "{role:?}: {}", app.json);
+        let app = app.json["id"].as_str().unwrap().to_owned();
+        let (_, theirs) = s.e.other_user("bob").await;
+        for store in [personal.clone(), app, theirs.to_string()] {
+            let named = [("authorization", auth.as_str()), ("knoggin-store", &store)];
+            let r = s.call(Method::GET, "/v1/namespaces", None, &named).await;
+            assert_eq!(r.error(), Code::InvalidArgument, "{role:?} read {store}");
+            let r = s
+                .call(
+                    Method::POST,
+                    "/v1/memories",
+                    Some(json!({ "summary": "elsewhere" })),
+                    &named,
+                )
+                .await;
+            assert_eq!(r.error(), Code::InvalidArgument, "{role:?} write {store}");
+        }
         let r = s
             .token(
                 &t,
