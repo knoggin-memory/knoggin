@@ -4,6 +4,7 @@
 //! API's is the UI's: a file that exists is served as it is, any other path gets
 //! `index.html`, and the app routes on the client.
 
+use std::borrow::Cow;
 use std::sync::LazyLock;
 
 use aws_lc_rs::digest;
@@ -89,18 +90,20 @@ fn inline_scripts(html: &[u8]) -> Vec<String> {
     out
 }
 
-/// One file: its bytes and its media type.
+/// One file: its bytes (borrowed from the binary in a release build) and its media type.
 struct File {
-    data: Vec<u8>,
+    data: Cow<'static, [u8]>,
     mime: String,
 }
 
-/// Serves one UI path from the embedded files.
+/// Serves one UI path from the embedded files. A release build copies nothing: the body
+/// borrows the embedded bytes. A debug build reads `ui/dist` from disk here, on a runtime
+/// thread; that is accepted for development builds only.
 pub(crate) fn serve(request: &Request) -> Response {
     let files = |path: &str| {
         Assets::get(path).map(|f| File {
             mime: f.metadata.mimetype().to_owned(),
-            data: f.data.into_owned(),
+            data: f.data,
         })
     };
     answer(request, &files, &CSP)
@@ -170,7 +173,7 @@ mod tests {
             _ => return None,
         };
         Some(File {
-            data: data.as_bytes().to_vec(),
+            data: data.as_bytes().into(),
             mime: mime.into(),
         })
     }
