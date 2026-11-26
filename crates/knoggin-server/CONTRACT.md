@@ -83,12 +83,12 @@ ServeConfig, stop) -> ServeEnd` on `container::runtime()`; `main` exits with `en
 
 | Module | Offers |
 | --- | --- |
-| `lease` | `Fleet::new(FleetConfig, db, field_keys, launcher, storage, clock)`; `acquire(user, wait)`, `mark_gone(id, Option<StopReason>, Caller)`, `finish_parked(id)`, `request_park(user, reason)`, `status`, `park`, `limits()` (the internal listener's `PeerLimits`), `shutdown()` |
+| `lease` | `Fleet::new(FleetConfig, db, field_keys, launcher, storage, clock)`; `acquire(user, wait)`, `mark_gone(id, Option<StopReason>, Caller)`, `finish_parked(id)`, `request_park(user, reason)`, `status`, `park`, `limits()` (the internal listener's `PeerLimits`), `shutdown().await` (ends and joins its tasks) |
 | `pool` | `Fleet::launch(BuildSpec)` (record `starting` first, the rest as an owned task) |
 | `reconcile` | `run(fleet, stop)`, `Fleet::take_leadership`, `Fleet::pass(&mut Reconciler)` |
 | `rollout` | `at_start(meta, own, allow_downgrade)` |
-| `router` | `run_router`, `RouterStart`, `Backends`, `guards`, `broker(fleet, keys, settings, one_host)`, `internal_admit`, `public_router`, `guarded`, `client_address`, `run(RouterRole, Listeners, stop)`; `router::forward::{forwarder, STORE_ROUTES, Timing}`; `router::status::{mode_routes, StatusInfo}` |
-| `testing` | `FakeLauncher::new(Runner, clock)` with `forget`, `drain`, `kill`, `unreachable`, `refuse`, `fail_stop`, `fixed_address`, `stop_grace`, `set_runner`; `serve_runner(build, test_mode, ServeTimings)` (the real role); `stub_runner(build, test_mode, StubControl)` |
+| `router` | `run_router`, `RouterStart`, `Backends`, `guards`, `broker(fleet, keys, settings, one_host)`, `internal_admit`, `public_router`, `guarded`, `client_address`, `run(RouterRole, Listeners, stop)`, `reserve(addr)` (a bound socket that listens only in `run`); `router::forward::{forwarder, STORE_ROUTES, Timing}` (`Timing` also holds `discovery` 60 s and `shutdown_wait` 110 s); `router::status::{mode_routes, StatusInfo}` |
+| `testing` | `FakeLauncher::new(Runner, clock)` with `forget`, `drain`, `kill`, `unreachable`, `refuse`, `fail_stop`, `fixed_address`, `stop_grace`, `set_runner`; `serve_runner(build, test_mode, ServeTimings)` (the real role); `stub_runner(build, test_mode, StubControl)` (`Behaviour::{BigStatus, DripStatus}`, `hang_park`); `FlakyDb::new(db)` (`fail` a partition prefix's writes, count `queries`) |
 
 - **One set of per-address bounds**: the broker's `PeerLimits`, held by the fleet
   (`fleet.limits()`), is the internal listener's `admit` (`router::internal_admit`, with the
