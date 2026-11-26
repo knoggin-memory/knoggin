@@ -97,10 +97,13 @@ async fn every_read_model_answers_and_none_records_access() {
     let env = Env::new(true).await;
     let ctx = env.t.ctx(RW);
     let (a, b, c) = seed(&env, &ctx).await;
-    // A read-only credential may read them all; the namespace header is not read.
+    // A read-write credential, which could record access, and a read-only one may read
+    // them all; the namespace header is not read.
+    let mut rw = env.t.ctx(RW);
+    rw.default_namespace = Some("work".into());
     let mut ro = env.t.ctx(RO);
     ro.default_namespace = Some("work".into());
-    for uri in [
+    let uris = [
         "/v1/ui/graph".to_owned(),
         "/v1/ui/graph?namespace=work&edgeOffset=0".into(),
         "/v1/ui/memories?sort=strength&desc=true&limit=10&offset=0".into(),
@@ -114,8 +117,11 @@ async fn every_read_model_answers_and_none_records_access() {
         "/v1/ui/health".into(),
         "/v1/ui/health?namespace=default".into(),
         "/v1/ui/system".into(),
-    ] {
-        get(&env, &ro, &uri).await;
+    ];
+    for reader in [&rw, &ro] {
+        for uri in &uris {
+            get(&env, reader, uri).await;
+        }
     }
     let all = get(&env, &ro, "/v1/ui/memories").await;
     assert_eq!(all["total"], 3, "no namespace means every namespace: {all}");
