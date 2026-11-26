@@ -1,0 +1,36 @@
+[package]
+name = "knoggin-http"
+description = "Knoggin's HTTP layers: the store layer host and its REST routes, and the shared request context and errors"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+aws-lc-rs = { workspace = true }
+axum = { workspace = true }
+bytes = { workspace = true }
+futures-util = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+knoggin-core = { path = "../knoggin-core" }
+knoggin-crypto = { path = "../knoggin-crypto" }
+knoggin-state = { path = "../knoggin-state" }
+metrics = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
