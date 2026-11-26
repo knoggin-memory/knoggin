@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Test helpers: a fixed master key set.
+//! Test helpers: a fixed master key set, and helpers that seal and open whole snapshot files.
 //!
 //! The frozen fixtures under `tests/fixtures/snapshots/v1/` are sealed with this key set, so
 //! its key must never change.
@@ -12,6 +12,12 @@
     unreachable_pub
 )]
 
+use std::error::Error;
+
+use knoggin_core::StoreId;
+
+use crate::container::{self, Header};
+use crate::key::DataKey;
 use crate::local::{LocalKeyProvider, MasterKeySet};
 
 /// The one key of the test key set. Public on purpose: it protects nothing.
@@ -27,6 +33,45 @@ pub fn test_provider() -> LocalKeyProvider {
     LocalKeyProvider::new(test_key_set())
 }
 
+/// Seals `content` under `key` and returns the whole file.
+pub fn seal_to_vec(header: Header, key: DataKey, content: Vec<u8>) -> Vec<u8> {
+    container::seal(header, key, content)
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .concat()
+}
+
+/// Makes a new data key for `store` under the test key set and seals `content` with it,
+/// as a store's snapshot. Returns the whole file.
+pub fn seal_snapshot(
+    store: StoreId,
+    generation: u64,
+    sequence: u64,
+    created_ms: u64,
+    content_format: u32,
+    content: Vec<u8>,
+) -> Vec<u8> {
+    let (key, wrapped) = test_provider().generate_key(store).unwrap();
+    let header = Header::new(
+        store,
+        generation,
+        sequence,
+        created_ms,
+        content_format,
+        wrapped,
+    );
+    seal_to_vec(header, key, content)
+}
+
+/// Opens a whole file as the recovery tools do: unwrap the header's data key with the test
+/// key set, decrypt, and return the header with the content. Checks no expected name.
+pub fn open_snapshot(bytes: &[u8]) -> Result<(Header, Vec<u8>), Box<dyn Error>> {
+    let (header, n) = container::read_header(bytes)?;
+    let key = test_provider().unwrap_key(header.store_id, &header.wrapped_key())?;
+    let content = container::open(&header, &key, &bytes[n..], u64::MAX)?;
+    Ok((header, content))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -34,5 +79,18 @@ mod tests {
     #[test]
     fn the_test_key_never_changes() {
         assert_eq!(test_key_set().current_kek_id(), "local:dd369de2a0cd2406");
+    }
+
+    #[test]
+    fn seal_and_open_a_snapshot() {
+        let store = StoreId::from_bytes([3; 16]);
+        let bytes = seal_snapshot(store, 1, 2, 1_700_000_000_000, 1, b"content".to_vec());
+        let (header, content) = open_snapshot(&bytes).unwrap();
+        header.expect(store, 1, 2).unwrap();
+        assert_eq!(header.kek_id, test_key_set().current_kek_id());
+        assert_eq!(content, b"content");
+        let mut bad = bytes.clone();
+        *bad.last_mut().unwrap() ^= 1;
+        assert!(open_snapshot(&bad).is_err());
     }
 }
