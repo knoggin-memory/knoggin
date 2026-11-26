@@ -840,6 +840,14 @@ async fn retire_before_parks_in_batches_of_a_tenth() {
     let mut next = r.value.clone();
     next.retire_before_ms = Some(w.clock.now() + 1);
     meta.put_rollout(&next, r.cond()).await.unwrap();
+    // Ten more leases whose containers started after that time.
+    w.clock.advance(10_000);
+    let mut newer = Vec::new();
+    for _ in 0..10 {
+        let u = user();
+        warm(&f, u).await;
+        newer.push(u);
+    }
     w.control.exit_on_park.store(false, Ordering::Relaxed);
     let mut rec = Reconciler::default();
     assert!(f.take_leadership().await.unwrap());
@@ -850,7 +858,10 @@ async fn retire_before_parks_in_batches_of_a_tenth() {
             asked += 1;
         }
     }
-    assert_eq!(asked, 1, "12 leases: a tenth, at least one");
+    assert_eq!(asked, 1, "12 old leases: a tenth of them, at least one");
+    for u in &newer {
+        assert_eq!(w.lease(*u).await.park_requested(), None);
+    }
 }
 
 // ---- Forwarding -----------------------------------------------------------------------

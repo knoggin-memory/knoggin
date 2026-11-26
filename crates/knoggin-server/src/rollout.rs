@@ -81,27 +81,31 @@ impl Fleet {
     ) -> Result<RolloutView, StateError> {
         let own = BuildInfo::new(self.config.build.version.clone());
         let record = self.meta.rollout().await?;
-        // Urgent upgrade: park in batches the leases whose containers started before
-        // `retire_before_ms`.
+        // Urgent upgrade: park in batches of a tenth the leases whose containers started
+        // before `retire_before_ms`.
         if let Some(t) = record.as_ref().and_then(|r| r.value.retire_before_ms) {
-            let mut budget = batch(pass.active.len());
-            for (user, lease) in &pass.active {
+            let old: Vec<_> = pass
+                .active
+                .iter()
+                .filter(|(_, lease)| {
+                    lease
+                        .value
+                        .container_id
+                        .and_then(|id| pass.record(id))
+                        .is_some_and(|c| c.value.started_ms < t)
+                })
+                .collect();
+            let mut budget = batch(old.len());
+            for (user, lease) in old {
                 if budget == 0 {
                     break;
                 }
                 if lease.value.park_requested().is_some() {
                     continue;
                 }
-                let started = lease
-                    .value
-                    .container_id
-                    .and_then(|id| pass.record(id))
-                    .map(|c| c.value.started_ms);
-                if started.is_some_and(|s| s < t) {
-                    match self.request_park(*user, ParkReason::Upgrade).await {
-                        Ok(()) => budget -= 1,
-                        Err(e) => crate::reconcile::step_failed("rollout", &e),
-                    }
+                match self.request_park(*user, ParkReason::Upgrade).await {
+                    Ok(()) => budget -= 1,
+                    Err(e) => crate::reconcile::step_failed("rollout", &e),
                 }
             }
         }
