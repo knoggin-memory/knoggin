@@ -10,6 +10,10 @@ repository.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Opens the record decoder to fuzz/. The binary never enables it.
+fuzzing = []
+
 [dependencies]
 crc32fast = { workspace = true }
 knoggin-core = { path = "../knoggin-core" }

@@ -4,6 +4,9 @@
 //! the same `StoreHost` method as its REST route. The store layer mounts `routes`.
 
 mod args;
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub mod fuzzing;
 mod http;
 mod protocol;
 mod server;

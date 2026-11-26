@@ -1,0 +1,65 @@
+# The fuzz targets of tab "Security", Fuzzing: a workspace of its own, built with the
+# nightly that rust-toolchain.toml pins. Run inside fuzz/:
+#
+#   cargo fuzz run <target> -- -max_total_time=300
+#
+# A crash found here becomes a regression test in the crate that owns the code.
+
+[package]
+name = "knoggin-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+members = ["."]
+
+[dependencies]
+knoggin-core = { path = "../crates/knoggin-core" }
+knoggin-crypto = { path = "../crates/knoggin-crypto" }
+knoggin-http = { path = "../crates/knoggin-http", features = ["fuzzing"] }
+knoggin-import-recalld = { path = "../crates/knoggin-import-recalld", features = ["fuzzing"] }
+libfuzzer-sys = "0.4"
+serde_json = "1"
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "snapshot_container"
+path = "fuzz_targets/snapshot_container.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "snapshot_content"
+path = "fuzz_targets/snapshot_content.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mcp_request"
+path = "fuzz_targets/mcp_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "export_line"
+path = "fuzz_targets/export_line.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "recalld_record"
+path = "fuzz_targets/recalld_record.rs"
+test = false
+doc = false
+bench = false
