@@ -2,14 +2,16 @@
 global-min-publish-age = "7 days"
 
 # No test may reach AWS (tab "Testing, CI, releases"). Every process cargo starts, tests
-# included, gets dummy keys and no shared config or credentials file, so that no AWS SDK
-# default chain can pick up an account's real ones; the stack tests point their clients
-# at moto explicitly.
+# included, gets no shared config or credentials file and no instance metadata, so that no
+# AWS SDK default chain can pick up an account's real ones; the moto stack tests set their
+# own dummy keys and moto's address explicitly. The dummy keys below are defaults only
+# (no `force`): a deliberate run against a deployed stack (`KNOGGIN_STACK_URL`, tab
+# "Security") can bring test credentials in the environment.
 [env]
 AWS_CONFIG_FILE = { value = "/dev/null", force = true }
 AWS_SHARED_CREDENTIALS_FILE = { value = "/dev/null", force = true }
 AWS_EC2_METADATA_DISABLED = { value = "true", force = true }
-AWS_ACCESS_KEY_ID = { value = "testing", force = true }
-AWS_SECRET_ACCESS_KEY = { value = "testing", force = true }
-AWS_SESSION_TOKEN = { value = "testing", force = true }
-AWS_PROFILE = { value = "default", force = true }
+AWS_ACCESS_KEY_ID = "testing"
+AWS_SECRET_ACCESS_KEY = "testing"
+AWS_SESSION_TOKEN = "testing"
+AWS_PROFILE = "default"
