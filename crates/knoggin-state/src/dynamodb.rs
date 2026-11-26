@@ -398,12 +398,15 @@ fn decode(attrs: &HashMap<String, AttributeValue>, now: i64) -> Result<Option<It
     }))
 }
 
-/// A failed condition is `Conflict`; anything else is `Unavailable` with the service's error
-/// code only, since a message can quote values.
+/// A failed condition, or a write that met a transaction on the same item, is `Conflict`:
+/// nothing was written and the caller reads again. Anything else is `Unavailable` with the
+/// service's error code only, since a message can quote values.
 fn sdk_err<E: ProvideErrorMetadata, R>(e: &SdkError<E, R>) -> StateError {
     match e {
         SdkError::ServiceError(s) => match s.err().code() {
-            Some("ConditionalCheckFailedException") => StateError::Conflict,
+            Some("ConditionalCheckFailedException" | "TransactionConflictException") => {
+                StateError::Conflict
+            }
             code => StateError::Unavailable(format!(
                 "DynamoDB error {}",
                 code.unwrap_or("without a code")
@@ -416,12 +419,16 @@ fn sdk_err<E: ProvideErrorMetadata, R>(e: &SdkError<E, R>) -> StateError {
     }
 }
 
-/// A cancelled transaction is `Conflict` when one of its reasons is a failed condition.
+/// A cancelled transaction is `Conflict` when one of its reasons is a failed condition or
+/// another transaction on the same item: either way nothing was written.
 fn transact_err<R>(e: &SdkError<TransactWriteItemsError, R>) -> StateError {
     if let Some(TransactWriteItemsError::TransactionCanceledException(t)) = e.as_service_error()
-        && t.cancellation_reasons()
-            .iter()
-            .any(|r| r.code() == Some("ConditionalCheckFailed"))
+        && t.cancellation_reasons().iter().any(|r| {
+            matches!(
+                r.code(),
+                Some("ConditionalCheckFailed" | "TransactionConflict")
+            )
+        })
     {
         return StateError::Conflict;
     }
@@ -840,6 +847,18 @@ mod tests {
                     reasons(&["None", "ConditionalCheckFailed"]),
                 ),
             ),
+            // Another transaction held an item: nothing was written, so read again.
+            (
+                "DynamoDB_20120810.UpdateItem",
+                err("TransactionConflictException", json!({})),
+            ),
+            (
+                "DynamoDB_20120810.TransactWriteItems",
+                err(
+                    "TransactionCanceledException",
+                    reasons(&["None", "TransactionConflict"]),
+                ),
+            ),
         ];
         for (target, response) in cases {
             server.reset().await;
@@ -865,7 +884,7 @@ mod tests {
         let outages = [
             err(
                 "TransactionCanceledException",
-                reasons(&["None", "TransactionConflict"]),
+                reasons(&["None", "ThrottlingError"]),
             ),
             err("ValidationException", json!({})),
             err("ProvisionedThroughputExceededException", json!({})),
