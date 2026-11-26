@@ -5,7 +5,7 @@
 //! bounded by 120 seconds. After a refused launch a router launches at most once a minute.
 
 use std::net::{SocketAddr, SocketAddrV4};
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -50,7 +50,7 @@ impl Fleet {
     pub async fn launch(self: &Arc<Self>, build: BuildSpec) -> Result<bool, StateError> {
         let now = self.now();
         {
-            let gate = self.gate.lock().unwrap_or_else(PoisonError::into_inner);
+            let gate = crate::lock(&self.gate);
             if gate.refused_ms.is_some_and(|t| now - t < 60_000) {
                 return Ok(false);
             }
@@ -80,7 +80,7 @@ impl Fleet {
     ) -> Result<bool, StateError> {
         let now = self.now();
         {
-            let mut gate = self.gate.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut gate = crate::lock(&self.gate);
             if gate.slow_ms.is_some_and(|t| now - t < 60_000) {
                 return Ok(false);
             }
@@ -91,10 +91,7 @@ impl Fleet {
 
     /// Whether the last checked `hello` reported another build than the one launched.
     pub(crate) fn launches_mismatch(&self) -> bool {
-        self.gate
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .mismatch
+        crate::lock(&self.gate).mismatch
     }
 
     /// The start time plus `containers.max_lifetime_hours`, less a random 0 to 4 hours.
@@ -150,10 +147,7 @@ impl Fleet {
             Err(e) => {
                 tracing::warn!(kind = "launch_refused", error = %e, "the launcher refused a launch");
                 metrics::counter!("knoggin_launches_total", "outcome" => "refused").increment(1);
-                self.gate
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner)
-                    .refused_ms = Some(self.now());
+                crate::lock(&self.gate).refused_ms = Some(self.now());
                 let now = self.now();
                 self.update(id, |c| {
                     c.state = ContainerState::Gone;
@@ -201,10 +195,7 @@ impl Fleet {
             .ok()
             .flatten()
             .map(|c| c.value.build);
-        self.gate
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .mismatch = expected.is_some_and(|b| b != answer.build);
+        crate::lock(&self.gate).mismatch = expected.is_some_and(|b| b != answer.build);
         if answer.test_mode != self.config.test_mode || shared_protocol(&answer.protocols).is_none()
         {
             tracing::warn!(kind = "launch_failed", container_id = %id, "a container's hello names another test mode or no shared protocol");

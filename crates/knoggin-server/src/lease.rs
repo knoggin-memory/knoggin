@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddrV4;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::body::Body;
@@ -293,17 +293,14 @@ impl Fleet {
     /// Runs `task` as one of the router's own tasks, which outlive the request that
     /// started them and end at shutdown.
     pub(crate) fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) {
-        let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut tasks = crate::lock(&self.tasks);
         while tasks.try_join_next().is_some() {}
         tasks.spawn(task);
     }
 
     /// Stops every task the fleet runs (launches, claims).
     pub fn shutdown(&self) {
-        self.tasks
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .abort_all();
+        crate::lock(&self.tasks).abort_all();
     }
 
     /// The build claims use, and `retire_before_ms`: on one host the router's own build;

@@ -7,7 +7,7 @@
 //! container's `status`; a dead container is marked gone and the request sent once more
 //! where that is safe.
 
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Router;
@@ -538,10 +538,7 @@ struct BufferGuard {
 
 impl BufferGuard {
     fn take(fleet: &Arc<Fleet>, user: UserId, bytes: u64) -> Option<Self> {
-        let mut b = fleet
-            .buffered
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut b = crate::lock(&fleet.buffered);
         let mine = b.1.get(&user).copied().unwrap_or(0);
         if b.0 + bytes > BUFFER_ALL || mine + bytes > BUFFER_USER {
             return None;
@@ -558,11 +555,7 @@ impl BufferGuard {
 
 impl Drop for BufferGuard {
     fn drop(&mut self) {
-        let mut b = self
-            .fleet
-            .buffered
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut b = crate::lock(&self.fleet.buffered);
         b.0 = b.0.saturating_sub(self.bytes);
         if let Some(n) = b.1.get_mut(&self.user) {
             *n = n.saturating_sub(self.bytes);

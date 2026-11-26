@@ -466,12 +466,7 @@ fn model() -> ModelState {
 }
 
 fn json(status: StatusCode, value: &impl serde::Serialize) -> Response {
-    let mut r = (status, serde_json::to_vec(value).unwrap()).into_response();
-    r.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/json"),
-    );
-    r
+    (status, crate::json(value)).into_response()
 }
 
 #[derive(serde::Deserialize)]
