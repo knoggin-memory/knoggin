@@ -1273,12 +1273,12 @@ async fn use_previous(ctx: &Ctx<'_>, config: &Config, yes: bool) -> anyhow::Resu
 
 async fn healthcheck(ctx: &Ctx<'_>, url: Option<String>) -> anyhow::Result<u8> {
     let ready = match url {
+        // The address as given, such as `http://127.0.0.1:8080/readyz` (tab "Deployment").
         Some(url) => {
-            let base = url.trim_end_matches('/');
             let http = reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
                 .build()?;
-            http.get(format!("{base}/readyz"))
+            http.get(url)
                 .send()
                 .await
                 .is_ok_and(|r| r.status().is_success())

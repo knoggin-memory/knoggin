@@ -135,6 +135,15 @@ fn apps_keys_export_import_and_reembed() {
     let r = home.json(&["reembed", "--app", "notes"]);
     assert_eq!(r["embedding"]["pending"], 0, "{r}");
     assert_eq!(home.run(&["healthcheck"]).code, 0);
+    // `--url` calls the address as given, as the Compose health check does.
+    let base = match home.address() {
+        a if a.starts_with("http") => a,
+        a => format!("http://{a}"),
+    };
+    let ready = format!("{base}/readyz");
+    assert_eq!(home.run(&["healthcheck", "--url", &ready]).code, 0);
+    let missing = format!("{base}/readyz/readyz");
+    assert_eq!(home.run(&["healthcheck", "--url", &missing]).code, 1);
     assert_eq!(
         home.json(&["status"])["stores"].as_array().unwrap().len(),
         2
