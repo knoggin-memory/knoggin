@@ -11,7 +11,6 @@ use std::net::{IpAddr, Ipv6Addr};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
-use std::time::Duration;
 
 use axum::extract::{Path as UrlPath, Request, State};
 use axum::middleware::{self, Next};
@@ -19,7 +18,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
 use http::{HeaderValue, StatusCode, header};
-use knoggin_core::time::Timestamp;
+use knoggin_core::time::{MILLIS_PER_DAY, Timestamp};
 use knoggin_core::{Sensitive, StoreId, UserId};
 use knoggin_crypto::KeyProvider;
 use knoggin_crypto::token::{hash_secret, random_token};
@@ -27,7 +26,6 @@ use knoggin_state::users::LOCAL_IDENTITY;
 use knoggin_state::{Clock, EraseReport, NewStore, NewUser, StateDb, StateError, Stores, Users};
 use serde::{Deserialize, Serialize};
 use tokio::net::{TcpListener, UnixListener};
-use tokio::time::Instant;
 use utoipa::ToSchema;
 use uuid::Uuid;
 
@@ -40,17 +38,18 @@ use crate::store_api::extract::JsonBody;
 /// What every local web session token starts with.
 pub const SESSION_PREFIX: &str = "knoggin_session_";
 
-/// A one-time browser code works this long, once.
-const CODE_TTL: Duration = Duration::from_secs(60);
+/// A one-time browser code works this many milliseconds, once.
+const CODE_TTL_MS: i64 = 60_000;
 
-/// A local web session ends after this long without a request.
-const SESSION_IDLE: Duration = Duration::from_secs(24 * 60 * 60);
+/// A local web session ends after this many milliseconds without a request.
+const SESSION_IDLE_MS: i64 = MILLIS_PER_DAY;
 
 /// The longest socket path the daemon accepts; the system's limit is about 104 bytes.
 pub const MAX_SOCKET_PATH: usize = 100;
 
 /// The one-time codes of `knoggin open` and the local web sessions, in memory only: a
-/// restart ends every session.
+/// restart ends every session. Times are the edge's wall clock in milliseconds since 1970,
+/// which, unlike a monotonic clock on macOS, keeps counting while the machine sleeps.
 #[derive(Debug)]
 pub struct LocalSessions {
     origin: String,
@@ -60,9 +59,9 @@ pub struct LocalSessions {
 #[derive(Debug, Default)]
 struct Held {
     /// SHA-256 of a code, and when it expires.
-    codes: HashMap<[u8; 32], Instant>,
+    codes: HashMap<[u8; 32], i64>,
     /// SHA-256 of a session token, and its last request.
-    sessions: HashMap<[u8; 32], Instant>,
+    sessions: HashMap<[u8; 32], i64>,
 }
 
 impl LocalSessions {
@@ -83,19 +82,19 @@ impl LocalSessions {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// A new one-time code, valid 60 seconds.
-    pub fn new_code(&self) -> Result<String, ApiError> {
+    /// A new one-time code at `now`, valid 60 seconds.
+    pub fn new_code(&self, now: i64) -> Result<String, ApiError> {
         let code = random_token().map_err(|_| ApiError::internal())?;
-        let now = Instant::now();
         let mut held = self.held();
         held.codes.retain(|_, until| *until > now);
-        held.codes.insert(hash_secret(&code), now + CODE_TTL);
+        held.codes
+            .insert(hash_secret(&code), now.saturating_add(CODE_TTL_MS));
         Ok(code)
     }
 
-    /// Spends a code: a session token, or `None` for a code that is unknown, used or old.
-    pub fn redeem(&self, code: &str) -> Result<Option<String>, ApiError> {
-        let now = Instant::now();
+    /// Spends a code at `now`: a session token, or `None` for a code that is unknown, used
+    /// or old.
+    pub fn redeem(&self, code: &str, now: i64) -> Result<Option<String>, ApiError> {
         let mut held = self.held();
         match held.codes.remove(&hash_secret(code)) {
             Some(until) if until > now => {}
@@ -109,13 +108,12 @@ impl LocalSessions {
         Ok(Some(token))
     }
 
-    /// The session of a whole bearer value, which this request keeps alive.
-    pub(crate) fn check(&self, token: &str) -> Option<[u8; 32]> {
-        let now = Instant::now();
+    /// The session of a whole bearer value at `now`, which this request keeps alive.
+    pub(crate) fn check(&self, token: &str, now: i64) -> Option<[u8; 32]> {
         let hash = hash_secret(token);
         let mut held = self.held();
         held.sessions
-            .retain(|_, seen| now.duration_since(*seen) < SESSION_IDLE);
+            .retain(|_, seen| now.saturating_sub(*seen) < SESSION_IDLE_MS);
         let seen = held.sessions.get_mut(&hash)?;
         *seen = now;
         Some(hash)
@@ -307,8 +305,9 @@ pub(crate) async fn browser_code(
     if arrival != Arrival::Socket {
         return Err(ApiError::not_found("No such route"));
     }
-    let code = s.sessions.new_code()?;
-    let expires = (s.clock)().saturating_add(CODE_TTL.as_millis() as i64);
+    let now = (s.clock)();
+    let code = s.sessions.new_code(now)?;
+    let expires = now.saturating_add(CODE_TTL_MS);
     ok(&BrowserCode {
         url: format!("{}/?t={code}", s.sessions.web_origin()),
         expires_at: Timestamp::from_millis(expires),
@@ -342,7 +341,7 @@ pub(crate) async fn local_session(
     if !matches!(arrival, Arrival::Web { .. }) {
         return Err(ApiError::not_found("No such route"));
     }
-    match s.sessions.redeem(body.code.expose())? {
+    match s.sessions.redeem(body.code.expose(), (s.clock)())? {
         Some(token) => ok(&SessionToken {
             session_token: token,
         }),
@@ -664,20 +663,21 @@ mod tests {
         assert!(!name_form_allowed("macos", Some(good), &lo));
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn codes_work_once_and_expire_and_sessions_idle_out() {
+    #[test]
+    fn codes_work_once_and_expire_and_sessions_idle_out() {
         let s = LocalSessions::new("http://127.0.0.1:1".into());
-        let code = s.new_code().unwrap();
-        let token = s.redeem(&code).unwrap().unwrap();
+        let mut now = 1_800_000_000_000;
+        let code = s.new_code(now).unwrap();
+        let token = s.redeem(&code, now).unwrap().unwrap();
         assert!(token.starts_with(SESSION_PREFIX));
-        assert!(s.redeem(&code).unwrap().is_none(), "a code works once");
-        let late = s.new_code().unwrap();
-        tokio::time::advance(CODE_TTL).await;
-        assert!(s.redeem(&late).unwrap().is_none(), "a code expires");
-        assert!(s.check(&token).is_some());
-        tokio::time::advance(SESSION_IDLE - Duration::from_secs(1)).await;
-        assert!(s.check(&token).is_some(), "a request keeps it alive");
-        tokio::time::advance(SESSION_IDLE).await;
-        assert!(s.check(&token).is_none(), "24 idle hours end it");
+        assert!(s.redeem(&code, now).unwrap().is_none(), "a code works once");
+        let late = s.new_code(now).unwrap();
+        now += CODE_TTL_MS;
+        assert!(s.redeem(&late, now).unwrap().is_none(), "a code expires");
+        assert!(s.check(&token, now).is_some());
+        now += SESSION_IDLE_MS - 1000;
+        assert!(s.check(&token, now).is_some(), "a request keeps it alive");
+        now += SESSION_IDLE_MS;
+        assert!(s.check(&token, now).is_none(), "24 idle hours end it");
     }
 }

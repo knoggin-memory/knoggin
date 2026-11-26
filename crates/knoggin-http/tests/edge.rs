@@ -1087,6 +1087,57 @@ async fn local_web_sessions() {
     assert_eq!(r.error(), Code::Unauthenticated);
 }
 
+/// A one-time code from the socket, as `knoggin open` gets it.
+async fn browser_code(env: &EdgeEnv) -> String {
+    let r = env
+        .local(Method::POST, "/v1/local/browser-code", None)
+        .await;
+    let url = r.json["url"].as_str().unwrap();
+    url.strip_prefix(&format!("http://{WEB}/?t="))
+        .unwrap()
+        .to_owned()
+}
+
+/// Spends `code` on the web listener.
+async fn redeem(env: &EdgeEnv, code: &str) -> support::Resp {
+    env.call(
+        web(),
+        Method::POST,
+        "/v1/local/session",
+        Some(json!({ "code": code })),
+        &[],
+    )
+    .await
+}
+
+#[tokio::test]
+async fn local_web_sessions_count_time_on_the_wall_clock() {
+    // The edge's clock, not a monotonic one that stops while the machine sleeps.
+    let env = EdgeEnv::new().await;
+    let code = browser_code(&env).await;
+    env.clock.advance(60 * 1000);
+    assert_eq!(
+        redeem(&env, &code).await.error(),
+        Code::Unauthenticated,
+        "a code lives 60 seconds"
+    );
+    let code = browser_code(&env).await;
+    env.clock.advance(59 * 1000);
+    let made = redeem(&env, &code).await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.json);
+    let token = made.json["sessionToken"].as_str().unwrap().to_owned();
+    env.clock.advance(MILLIS_PER_DAY - 1000);
+    let r = env
+        .bearer(web(), &token, Method::GET, "/v1/stores", None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "a request keeps it alive");
+    env.clock.advance(MILLIS_PER_DAY);
+    let r = env
+        .bearer(web(), &token, Method::GET, "/v1/stores", None)
+        .await;
+    assert_eq!(r.error(), Code::Unauthenticated, "24 idle hours end it");
+}
+
 #[tokio::test]
 async fn rate_limits() {
     let env = EdgeEnv::with(tight).await;

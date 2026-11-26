@@ -229,7 +229,7 @@ impl EdgeState {
                     .as_ref()
                     .filter(|_| matches!(p.arrival, Arrival::Web { .. }));
                 let hash = local
-                    .and_then(|l| l.check(value))
+                    .and_then(|l| l.check(value, now))
                     .ok_or_else(unauthenticated)?;
                 Credential::LocalSession(hash)
             } else if let Some(random) = value.strip_prefix(API_KEY_PREFIX) {
