@@ -816,7 +816,6 @@ impl StoreHost {
         kind: WriteKind,
         f: impl FnOnce(&mut Store) -> Result<R, ApiError> + Send + 'static,
     ) -> Result<R, ApiError> {
-        self.admit(open, kind)?;
         let gate = open
             .gate
             .clone()
@@ -827,6 +826,9 @@ impl StoreHost {
         if open.dropped.load(Ordering::SeqCst) {
             return Err(ApiError::unavailable(1));
         }
+        // After the gate, so that writes queued behind one another each see the total
+        // the one before them left.
+        self.admit(open, kind)?;
         let store = open.store.clone();
         let watcher = open.clone();
         let out = tokio::task::spawn_blocking(move || {

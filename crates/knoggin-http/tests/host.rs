@@ -387,6 +387,48 @@ async fn a_write_racing_a_close_is_never_lost() {
     assert_eq!(list.items.len(), 2, "the write during the close was kept");
 }
 
+#[tokio::test]
+async fn queued_writes_each_meet_the_budget_after_the_gate() {
+    let mut config = fake_config();
+    config.memory_budget = Some(4_000);
+    // One at a time: how many fit.
+    let one_by_one = Env::with_config(config.clone(), false).await;
+    let ctx = one_by_one.t.ctx(Permissions::READ_WRITE);
+    let mut fit = 0;
+    while one_by_one
+        .t
+        .host
+        .store_memory(&ctx, mem("a memory that takes room"), None)
+        .await
+        .is_ok()
+    {
+        fit += 1;
+        assert!(fit < 100);
+    }
+    // All at once, queued behind the write gate: no more fit.
+    let env = Env::with_config(config, false).await;
+    let ctx = env.t.ctx(Permissions::READ_WRITE);
+    env.t.host.list_namespaces(&ctx).await.unwrap();
+    let writes: Vec<_> = (0..fit * 3)
+        .map(|_| {
+            let host = env.t.host.clone();
+            let ctx = ctx.clone();
+            tokio::spawn(async move {
+                host.store_memory(&ctx, mem("a memory that takes room"), None)
+                    .await
+            })
+        })
+        .collect();
+    let mut stored = 0;
+    for w in writes {
+        match w.await.unwrap() {
+            Ok(_) => stored += 1,
+            Err(e) => assert_eq!(e.code, Code::ResourceExhausted),
+        }
+    }
+    assert_eq!(stored, fit);
+}
+
 #[tokio::test(start_paused = true)]
 async fn a_caller_that_gives_up_does_not_cancel_the_load() {
     let env = Env::new(false).await;
