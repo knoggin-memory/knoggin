@@ -802,6 +802,7 @@ async fn wait_for_stop(
 pub(crate) fn spawn_detached(
     home: &Home,
     config: Option<&Path>,
+    log_level: Option<crate::config::LogLevel>,
 ) -> anyhow::Result<std::process::Child> {
     let log = crate::logging::open_log_file(&home.log_file())
         .with_context(|| format!("opening {}", home.log_file().display()))?;
@@ -810,6 +811,11 @@ pub(crate) fn spawn_detached(
     if let Some(c) = config {
         cmd.arg("--config").arg(c);
     }
+    if let Some(level) = log_level.and_then(|l| clap::ValueEnum::to_possible_value(&l)) {
+        cmd.arg("--log-level").arg(level.get_name());
+    }
+    // The bridge's key is for its own requests, never the daemon's.
+    cmd.env_remove("KNOGGIN_API_KEY");
     cmd.arg("daemon")
         .arg("--new-session")
         .stdin(std::process::Stdio::null())

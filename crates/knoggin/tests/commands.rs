@@ -362,3 +362,28 @@ fn a_detached_daemon_logs_each_line_once() {
     let log = std::fs::read_to_string(home.root().join("logs/daemon.log")).unwrap();
     assert_eq!(log.matches("the daemon is ready").count(), 1, "{log}");
 }
+
+#[test]
+fn start_passes_the_log_level_and_not_the_api_key() {
+    let home = Home::new().with("KNOGGIN_API_KEY", "knoggin_live_mkrapikey");
+    let _stop = support::Started(&home);
+    let o = home.run(&["start", "--log-level", "warn"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let env = std::process::Command::new("ps")
+        .args(["eww", "-o", "command=", "-p", &home.pid().to_string()])
+        .output()
+        .unwrap();
+    let env = String::from_utf8_lossy(&env.stdout).into_owned();
+    assert!(
+        env.contains("KNOGGIN_HOME="),
+        "ps shows no environment: {env}"
+    );
+    assert!(env.contains("--log-level warn"), "{env}");
+    assert!(!env.contains("KNOGGIN_API_KEY"), "{env}");
+    assert_eq!(home.run(&["stop"]).code, 0);
+    let log = std::fs::read_to_string(home.root().join("logs/daemon.log")).unwrap();
+    assert!(
+        !log.contains("the daemon is ready"),
+        "an info line at warn: {log}"
+    );
+}

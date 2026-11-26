@@ -409,7 +409,8 @@ async fn ensure_running(ctx: &Ctx<'_>) -> anyhow::Result<bool> {
     if healthy(&client).await {
         return Ok(false);
     }
-    let mut child = daemon::spawn_detached(&ctx.home, ctx.config_path.as_deref())?;
+    let mut child =
+        daemon::spawn_detached(&ctx.home, ctx.config_path.as_deref(), ctx.flags.log_level)?;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         if let Some(status) = child.try_wait()? {
@@ -584,11 +585,15 @@ async fn mcp(ctx: &Ctx<'_>, tool_set: ToolSet, url: Option<String>) -> anyhow::R
             Target::Remote { http, url, key }
         }
         None => {
-            let (home, config_path) = (ctx.home.clone(), ctx.config_path.clone());
+            let (home, config_path, level) = (
+                ctx.home.clone(),
+                ctx.config_path.clone(),
+                ctx.flags.log_level,
+            );
             Target::Local {
                 client: ctx.client().with_api_key(ctx.env.api_key.clone()),
                 start: Box::new(move || {
-                    daemon::spawn_detached(&home, config_path.as_deref()).map(drop)
+                    daemon::spawn_detached(&home, config_path.as_deref(), level).map(drop)
                 }),
             }
         }
