@@ -18,6 +18,7 @@ aws-sdk-s3 = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
+futures-util = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
@@ -26,6 +27,7 @@ hyper-util = { workspace = true }
 knoggin-core = { path = "../knoggin-core" }
 knoggin-http = { path = "../knoggin-http" }
 knoggin-state = { path = "../knoggin-state" }
+metrics = { workspace = true }
 rcgen = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
@@ -35,10 +37,14 @@ time = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
 tower = { workspace = true }
+tower-http = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+knoggin-crypto = { path = "../knoggin-crypto" }
+tracing-subscriber = { workspace = true }
+tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 wiremock = { workspace = true }
