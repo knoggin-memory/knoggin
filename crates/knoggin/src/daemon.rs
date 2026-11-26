@@ -114,6 +114,30 @@ pub(crate) fn check_settings(config: &Config, test_mode: bool) -> anyhow::Result
     Ok(())
 }
 
+/// Step 3's rule for an existing key file (tab "Snapshots and keys"): this user's own
+/// regular file, with no permission bit for group or others.
+fn check_key_file(path: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| format!("checking {}", path.display())),
+    };
+    let own = rustix::process::geteuid().as_raw();
+    if !key_file_is_private(meta.is_file(), meta.uid(), meta.mode(), own) {
+        bail!(
+            "the key file {} must be a file of this user with no permission for group or \
+             others; fix it with `chmod 600` (and `chown` if it belongs to another user)",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn key_file_is_private(is_file: bool, uid: u32, mode: u32, own: u32) -> bool {
+    is_file && uid == own && mode & 0o077 == 0
+}
+
 fn make_private_dir(path: &Path) -> anyhow::Result<()> {
     DirBuilder::new()
         .recursive(true)
@@ -509,6 +533,7 @@ pub(crate) async fn run(config: Config, env: &Env) -> anyhow::Result<u8> {
     {
         local::check_private_dir(dir)?;
     }
+    check_key_file(&config.local.master_key_file)?;
     // Step 4.
     clean_run_dir(&run_dir)?;
     // Steps 5 and 6.
@@ -879,6 +904,17 @@ mod tests {
         all.insert("KNOGGIN_HOME".into(), "/nonexistent-home/k".into());
         let env = Env::from_vars(all, "/".into()).unwrap();
         Config::load(&env, Role::Local, None, &Flags::default()).unwrap()
+    }
+
+    #[test]
+    fn a_key_file_of_another_user_or_with_group_or_other_bits_is_refused() {
+        assert!(key_file_is_private(true, 501, 0o100600, 501));
+        assert!(key_file_is_private(true, 501, 0o100400, 501));
+        assert!(!key_file_is_private(true, 0, 0o100600, 501));
+        assert!(!key_file_is_private(false, 501, 0o040700, 501));
+        for mode in [0o100640, 0o100604, 0o100610, 0o100601] {
+            assert!(!key_file_is_private(true, 501, mode, 501), "{mode:o}");
+        }
     }
 
     #[test]

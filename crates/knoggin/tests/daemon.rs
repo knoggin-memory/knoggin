@@ -282,18 +282,111 @@ fn a_clean_stop_leaves_a_readable_snapshot_and_no_lock() {
     assert_eq!(i["containerFormat"], 1);
 }
 
+/// Runs `knoggin daemon`, which must refuse to start: exit code 1 within 20 seconds.
+fn refused(home: &Home) -> String {
+    let err = home.dir.path().join("refused.err");
+    let mut child = home
+        .cmd(&["daemon"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&err).unwrap())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let status = loop {
+        if let Some(s) = child.try_wait().unwrap() {
+            break s;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("the daemon started: {}", std::fs::read_to_string(&err).unwrap());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let stderr = std::fs::read_to_string(&err).unwrap();
+    assert_eq!(status.code(), Some(1), "{stderr}");
+    stderr
+}
+
+fn chmod(path: &Path, mode: u32) {
+    std::fs::create_dir_all(path).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// Start-up step 3: each refusal, on the process.
 #[test]
-fn a_home_that_others_can_write_is_refused() {
+fn start_up_refuses_what_step_3_refuses() {
+    // A folder that group or others can write: home, run, data, state, stores, key folder.
+    for (dir, mode) in [
+        ("", 0o770),
+        ("run", 0o777),
+        ("data", 0o777),
+        ("data/state", 0o770),
+        ("data/stores", 0o707),
+        ("keys", 0o777),
+    ] {
+        let home = Home::new();
+        let key = home.root().join("keys/master.key");
+        let home = home.with("KNOGGIN_LOCAL__MASTER_KEY_FILE", key.to_str().unwrap());
+        chmod(&home.root(), 0o700);
+        chmod(&home.root().join(dir), mode);
+        let e = refused(&home);
+        assert!(e.contains("cannot write"), "{dir}: {e}");
+    }
+    // A key file with any permission bit for group or others.
     let home = Home::new();
-    std::fs::create_dir_all(home.root()).unwrap();
-    std::fs::set_permissions(home.root(), std::fs::Permissions::from_mode(0o770)).unwrap();
-    let o = home.run(&["daemon"]);
-    assert_ne!(o.code, 0);
-    assert!(o.stderr.contains("cannot write"), "{}", o.stderr);
-    let home = Home::new().with("KNOGGIN_SERVER__BIND", "0.0.0.0:0");
-    let o = home.run(&["daemon"]);
-    assert_ne!(o.code, 0);
-    assert!(o.stderr.contains("loopback"), "{}", o.stderr);
+    let mut d = home.daemon();
+    d.stop();
+    let key = home.root().join("master.key");
+    for mode in [0o640, 0o604, 0o660] {
+        std::fs::set_permissions(&key, std::fs::Permissions::from_mode(mode)).unwrap();
+        let e = refused(&home);
+        assert!(e.contains("no permission for group"), "{mode:o}: {e}");
+    }
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    // The key file inside the data folder.
+    let other = Home::new();
+    let inside = other.data().join("master.key");
+    let e = refused(&other.with("KNOGGIN_LOCAL__MASTER_KEY_FILE", inside.to_str().unwrap()));
+    assert!(e.contains("inside local.data_dir"), "{e}");
+    // A socket path longer than 100 bytes.
+    let long = Home::new();
+    let root = long.dir.path().join("h".repeat(100));
+    let e = refused(&long.with("KNOGGIN_HOME", root.to_str().unwrap()));
+    assert!(e.contains("longer than"), "{e}");
+    // A bind that is not loopback, in both sign-in modes.
+    for mode in ["none", "oauth"] {
+        let home = Home::new()
+            .with("KNOGGIN_SERVER__BIND", "0.0.0.0:0")
+            .with("KNOGGIN_AUTH__MODE", mode);
+        assert!(refused(&home).contains("loopback"), "{mode}");
+    }
+    // Sign-in on: allowed emails required, domains refused, an https public address.
+    let oauth = || {
+        Home::new()
+            .with("KNOGGIN_AUTH__MODE", "oauth")
+            .with("KNOGGIN_SERVER__PUBLIC_URL", "http://127.0.0.1:7690")
+    };
+    assert!(refused(&oauth()).contains("allowed_emails"));
+    let e = refused(
+        &oauth()
+            .with("KNOGGIN_AUTH__ALLOWED_EMAILS", "me@example.com")
+            .with("KNOGGIN_AUTH__ALLOWED_EMAIL_DOMAINS", "example.com"),
+    );
+    assert!(e.contains("allowed_email_domains"), "{e}");
+    let e = refused(
+        &Home::new()
+            .with("KNOGGIN_AUTH__MODE", "oauth")
+            .with("KNOGGIN_AUTH__ALLOWED_EMAILS", "me@example.com")
+            .with("KNOGGIN_SERVER__PUBLIC_URL", "http://localhost.example:7690"),
+    );
+    assert!(e.contains("public_url"), "{e}");
+    // Test mode and a public address that is not loopback.
+    let e = refused(
+        &Home::new().with("KNOGGIN_SERVER__PUBLIC_URL", "https://memory.example.com"),
+    );
+    assert!(e.contains("test mode refuses"), "{e}");
 }
 
 /// CPU seconds a process has used, from `ps -o time=` (`[[dd-]hh:]mm:ss[.cc]`).
