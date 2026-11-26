@@ -53,6 +53,29 @@ Outside the crate: `knoggin_http::ctx::headers::{CONTAINER_ID, INTERNAL_STATUS}`
 - **Memory budget.** `settings::store_budget(memory_limit_bytes)` on both sides; the broker's
   `sizeBytes` bound is twice `store_budget(containers.memory_limit_bytes())`.
 
+## The router side (milestone 6, branch `m6-router`)
+
+| Module | Offers |
+| --- | --- |
+| `lease` | `Fleet::new(FleetConfig, db, field_keys, launcher, storage, clock)`; `acquire(user, wait)` (the request loop: warm lease or `unavailable`/`upgrading`), `mark_gone(id, Option<StopReason>, Caller)`, `finish_parked(id)` (the broker's `parked`: steps 2 to 4, then a stop), `request_park(user, reason)`, `status`, `park`, `bounds()`, `shutdown()` |
+| `pool` | `Fleet::launch(BuildSpec)` (record `starting` first, the rest as an owned task) |
+| `reconcile` | `run(fleet, stop)`, `Fleet::take_leadership`, `Fleet::pass(&mut Reconciler)` |
+| `rollout` | `at_start(meta, own, allow_downgrade)` (start-up step 9) |
+| `router` | `guards(edge, settings, one_host)`, `public_router(edge, fleet, mode_routes, request_timeout, trusted_proxies, Timing)`, `guarded(app)` (the panic guard), `client_address`, `run(RouterRole, Listeners, stop)`; `router::forward::{forwarder, STORE_ROUTES, Timing}`; `router::status::{mode_routes, StatusInfo}`; `router::internal::{PeerBounds, internal_router}` |
+| `testing` | `FakeLauncher::new(Runner, clock)` with `forget`, `drain`, `kill`, `unreachable`, `refuse`, `fail_stop`, `fixed_address`, `set_runner`; `stub_runner(build, test_mode, StubControl)` |
+
+- **The broker** is mounted by `router::run` as `RouterRole::broker` (an `axum::Router` whose
+  routes are all under `/internal/v1/`); `internal_router` adds the 404 for everything else, and
+  `serve_tls` runs it with the per-address bounds. A failed token check is reported with
+  `fleet.bounds().failed_token(peer_ip)`. The lease check reads `knoggin_state::Leases` directly.
+  `parked` calls `fleet.finish_parked(container_id)`.
+- **The fake launcher's `Runner`** is `Fn(ContainerEnv, TcpListener, oneshot::Receiver<()>) ->
+  BoxFuture<'static, i64>`: the container's environment, a listener already bound to its
+  `127.0.0.x` address (127.0.0.1 off Linux), and the launcher's stop. It returns the exit code;
+  `describe` and `list` report `endReason` (`exited`, `memory`, `stopped`) and `exitCode`. A fleet
+  test wraps the container role in such a runner (its local address for the client to the router
+  is the listener's IP).
+
 ## Where the rest goes
 
 | Module | Owner | Holds |
