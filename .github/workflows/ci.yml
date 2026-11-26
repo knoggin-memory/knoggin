@@ -5,7 +5,6 @@ name: CI
 #   stack    (milestone 6) ubuntu-24.04, the stack tier
 #   web      (milestone 4) ubuntu-24.04, the web UI tier
 #   web-e2e  (milestone 4) ubuntu-24.04, UI build, release daemon, end-to-end tier
-#   openapi  (milestone 3) ubuntu-24.04, regenerate docs/openapi.json and the UI types
 #   sdk      (milestone 8) ubuntu-24.04, the SDK tier and `uv build`
 #   deploy   (milestone 7) ubuntu-24.04, the deploy tier
 
@@ -166,6 +165,32 @@ jobs:
       # Called directly: it reads the manifests and sources and needs no toolchain.
       - run: cargo-machete
 
+  # Regenerates docs/openapi.json and the web UI's TypeScript types with their explicit
+  # steps, and fails when either differs from what is committed.
+  openapi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-nextest
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/nextest.tar.gz" https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-unknown-linux-gnu.tar.gz
+          echo "d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a  $RUNNER_TEMP/nextest.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/nextest.tar.gz" -C "$HOME/.cargo/bin" cargo-nextest
+      - run: cargo nextest run -p knoggin-http --locked --run-ignored only -E 'test(write_openapi) | test(export_ui_types)'
+      - name: The committed files are current
+        run: |
+          git status --porcelain -- docs/openapi.json ui/src/lib/api/types
+          test -z "$(git status --porcelain -- docs/openapi.json ui/src/lib/api/types)"
+
   workflows:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -223,7 +248,7 @@ jobs:
   # The one required check. Skipped jobs (deps and dco on a push) count as passed.
   ci-ok:
     if: always()
-    needs: [fmt, clippy, test, budgets, doc, deny, machete, workflows, deps, dco]
+    needs: [fmt, clippy, test, budgets, doc, deny, machete, openapi, workflows, deps, dco]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
