@@ -120,6 +120,9 @@ async fn sequence_numbers_and_the_three_newest_files() {
         .await;
     assert!(matches!(r, Err(StateError::Conflict)));
     assert_eq!(files(&dir), [name(4), name(5), name(6)]);
+    // An empty write list does nothing, and writes no file.
+    db.write(Vec::new()).await.unwrap();
+    assert_eq!(files(&dir), [name(4), name(5), name(6)]);
     // The file holds the items, sorted, with their versions.
     let items = content(&dir.join(name(6)));
     let keys: Vec<_> = items

@@ -127,7 +127,10 @@ impl LocalFileDb {
             }),
             clock,
         };
-        db.write(Vec::new()).await?;
+        {
+            let mut inner = db.inner.lock().await;
+            db.save(&mut inner, Table::new(), None).await?;
+        }
         Ok(db)
     }
 
@@ -233,6 +236,9 @@ impl StateDb for LocalFileDb {
     }
 
     async fn write(&self, writes: Vec<Write>) -> Result<(), StateError> {
+        if writes.is_empty() {
+            return Ok(());
+        }
         let mut inner = self.inner.lock().await;
         let next = table_apply(&inner.table, writes, (self.clock)())?;
         self.save(&mut inner, next, None).await
