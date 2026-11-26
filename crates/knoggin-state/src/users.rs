@@ -212,6 +212,24 @@ impl Users {
         bookkeeping(&*self.db, vec![w]).await
     }
 
+    /// Stores a newly verified `email` with a bookkeeping write: conditional on the user
+    /// as read, a conflict ignored.
+    pub async fn note_email(&self, user: &Versioned<User>, email: &str) -> Result<(), StateError> {
+        let mut value = user.value.clone();
+        value.email = Some(Sensitive::new(email.to_owned()));
+        value.email_verified = true;
+        let w = put(
+            Some(&self.keys),
+            keys::user(value.id),
+            ONE.into(),
+            &value,
+            Some(user),
+            user.cond(),
+            user.expires_ms,
+        )?;
+        bookkeeping(&*self.db, vec![w]).await
+    }
+
     /// Gives a user that has lost its personal store a new, empty one (named "Personal")
     /// and clears its deletion mark, in one write conditional on the user as read.
     pub async fn replace_personal_store(
