@@ -921,9 +921,9 @@ impl Config {
             .map(PathBuf::from)
     }
 
-    /// Every effective value as `(dotted key, text)`, secrets as `[set]` or `[not set]`,
-    /// for `knoggin config check`.
-    pub(crate) fn effective(&self) -> Vec<(String, String)> {
+    /// Every effective value as `(dotted key, value)`, secrets as the text `[set]` or
+    /// `[not set]`, for `knoggin config check`.
+    pub(crate) fn effective(&self) -> Vec<(String, Value)> {
         let mut out = Vec::new();
         if let Ok(table) = Table::try_from(self) {
             flatten("", &table, &mut out);
@@ -932,10 +932,10 @@ impl Config {
             let set = self.secrets.contains_key(key) || self.secret_file(key).is_some();
             out.push((
                 (*key).to_owned(),
-                if set { "[set]" } else { "[not set]" }.to_owned(),
+                Value::String(if set { "[set]" } else { "[not set]" }.to_owned()),
             ));
         }
-        out.sort();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     }
 }
@@ -955,7 +955,7 @@ fn default_file(env: &Env, role: Role) -> PathBuf {
     }
 }
 
-fn flatten(prefix: &str, table: &Table, out: &mut Vec<(String, String)>) {
+fn flatten(prefix: &str, table: &Table, out: &mut Vec<(String, Value)>) {
     for (k, v) in table {
         let key = if prefix.is_empty() {
             k.clone()
@@ -964,7 +964,7 @@ fn flatten(prefix: &str, table: &Table, out: &mut Vec<(String, String)>) {
         };
         match v {
             Value::Table(t) => flatten(&key, t, out),
-            other => out.push((key, other.to_string())),
+            other => out.push((key, other.clone())),
         }
     }
 }
@@ -1166,11 +1166,11 @@ mod tests {
         let shown = format!("{:?}", c.effective());
         assert!(!shown.contains("marker"), "{shown}");
         assert!(
-            shown.contains("\"auth.web_client_secret\", \"[set]\""),
+            shown.contains("\"auth.web_client_secret\", String(\"[set]\")"),
             "{shown}"
         );
         assert!(
-            shown.contains("\"state.postgres_url\", \"[not set]\""),
+            shown.contains("\"state.postgres_url\", String(\"[not set]\")"),
             "{shown}"
         );
     }

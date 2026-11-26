@@ -208,7 +208,12 @@ fn config_check_model_verify_and_test_mode() {
     );
     assert!(!o.stdout.contains("secret-marker-123"));
     let v = home.json(&["config", "check", "--role", "router"]);
-    assert_eq!(v["auth.mode"], "\"oauth\"");
+    // Real JSON values: strings, booleans, numbers and arrays.
+    assert_eq!(v["auth.mode"], "oauth");
+    assert_eq!(v["model.download"], true);
+    assert_eq!(v["retention.days"], 7);
+    assert_eq!(v["auth.audiences"], json!([]));
+    assert_eq!(v["auth.web_client_secret"], "[set]");
     let bad = Home::new().with("KNOGGIN_TEST_MODE", "yes");
     assert_eq!(bad.run(&["config", "check"]).code, 1);
     let unknown = Home::new();

@@ -351,14 +351,20 @@ async fn dispatch(cli: Cli, env: &Env) -> anyhow::Result<u8> {
         Command::State(StateCommand::UsePrevious { yes }) => use_previous(&ctx, &config, yes).await,
         Command::Config(ConfigCommand::Check { .. }) => {
             let values = config.effective();
-            let object: serde_json::Map<String, Value> = values
-                .iter()
-                .map(|(k, v)| (k.clone(), Value::String(v.clone())))
-                .collect();
+            let mut object = serde_json::Map::new();
+            for (k, v) in &values {
+                object.insert(k.clone(), serde_json::to_value(v)?);
+            }
             ctx.print(&Value::Object(object), || {
                 values
                     .iter()
-                    .map(|(k, v)| format!("{k} = {v}"))
+                    .map(|(k, v)| match v {
+                        // A secret's state is printed bare: `[set]` or `[not set]`.
+                        toml::Value::String(s) if crate::config::SECRETS.contains(&k.as_str()) => {
+                            format!("{k} = {s}")
+                        }
+                        other => format!("{k} = {other}"),
+                    })
                     .collect::<Vec<_>>()
                     .join("\n")
             });
