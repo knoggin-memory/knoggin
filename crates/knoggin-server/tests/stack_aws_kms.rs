@@ -122,11 +122,14 @@ async fn kms_key_provider_on_moto() {
     ));
 
     // A provider over another key cannot open it. Real KMS answers IncorrectKeyException
-    // (`Unwrap`, unit-tested); moto answers AccessDeniedException, an outage here.
+    // (`UnknownMasterKey`, unit-tested); moto answers AccessDeniedException, an outage here.
     let other = KmsKeyProvider::from_conf(moto_config(&endpoint), &other_arn);
     let e = other.unwrap(a, &wrapped).await.unwrap_err();
     assert!(
-        matches!(e, KeyError::Unwrap | KeyError::Unavailable(_)),
+        matches!(
+            e,
+            KeyError::UnknownMasterKey { .. } | KeyError::Unavailable(_)
+        ),
         "{e:?}"
     );
 

@@ -76,13 +76,14 @@ fn data_key(plaintext: Option<Blob>) -> Result<DataKey, KeyError> {
     Ok(DataKey::from_bytes(*key))
 }
 
-/// A blob that is not this key's, or not this store's, does not unwrap; a key that KMS does
-/// not know is a missing master key; anything else is an outage, with KMS's code only.
+/// A blob that is damaged, or not this store's, does not unwrap; a key that KMS does not know,
+/// or a blob wrapped under another key than this one, is a missing master key (the store
+/// locks with `master_key_missing`); anything else is an outage, with KMS's code only.
 fn kms_err<E: ProvideErrorMetadata, R>(e: &SdkError<E, R>, kek_id: &str) -> KeyError {
     match e {
         SdkError::ServiceError(s) => match s.err().code() {
-            Some("InvalidCiphertextException" | "IncorrectKeyException") => KeyError::Unwrap,
-            Some("NotFoundException") => KeyError::UnknownMasterKey {
+            Some("InvalidCiphertextException") => KeyError::Unwrap,
+            Some("NotFoundException" | "IncorrectKeyException") => KeyError::UnknownMasterKey {
                 kek_id: kek_id.to_owned(),
             },
             code => {
@@ -256,7 +257,7 @@ mod tests {
         };
         let cases = [
             ("InvalidCiphertextException", 400, "unwrap".to_owned()),
-            ("IncorrectKeyException", 400, "unwrap".to_owned()),
+            ("IncorrectKeyException", 400, format!("unknown {ARN}")),
             ("NotFoundException", 400, format!("unknown {ARN}")),
             (
                 "DisabledException",
