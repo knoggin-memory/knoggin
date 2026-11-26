@@ -86,7 +86,18 @@ impl Credential {
 
     /// Whether this credential reaches the control routes: the socket, a session, or none.
     pub fn is_control(&self) -> bool {
-        !matches!(self, Self::ApiKey(..))
+        match self {
+            Self::Local | Self::LocalSession(_) | Self::None => true,
+            Self::ApiKey(..) => false,
+        }
+    }
+
+    /// The API key and its hash, for the steps that only an API key takes.
+    fn api_key(&self) -> Option<(&Versioned<ApiKey>, &[u8; 32])> {
+        match self {
+            Self::ApiKey(k, hash) => Some((k, hash)),
+            Self::Local | Self::LocalSession(_) | Self::None => None,
+        }
     }
 
     fn bucket(&self) -> Option<CredentialKey> {
@@ -245,7 +256,9 @@ impl EdgeState {
         };
         let user_id = match &credential {
             Credential::ApiKey(k, _) => k.value.user_id,
-            _ => inner.local_user.ok_or_else(ApiError::internal)?,
+            Credential::Local | Credential::LocalSession(_) | Credential::None => {
+                inner.local_user.ok_or_else(ApiError::internal)?
+            }
         };
         let mut user = inner
             .users
@@ -272,7 +285,7 @@ impl EdgeState {
             }
         }
         // Step 11 for an API key: its store must be live.
-        if let Credential::ApiKey(k, _) = &credential {
+        if let Some((k, _)) = credential.api_key() {
             let store = inner
                 .stores
                 .get_of(user_id, k.value.store_id)
@@ -362,7 +375,7 @@ impl EdgeState {
         if inner.users.touch_active(&caller.user, now).await.is_err() {
             tracing::debug!(kind = "bookkeeping", "last_active_day not written");
         }
-        if let Credential::ApiKey(k, hash) = &caller.credential
+        if let Some((k, hash)) = caller.credential.api_key()
             && inner.api_keys.touch_used(k, hash, now).await.is_err()
         {
             tracing::debug!(kind = "bookkeeping", "last_used_day not written");
@@ -391,28 +404,34 @@ impl EdgeState {
             }
         };
         let user = caller.user.value.id;
-        let named = match (&caller.credential, header, store_param) {
-            (Credential::ApiKey(..), Some(_), _) => {
-                return Err(ApiError::invalid_argument(
-                    "Knoggin-Store",
-                    "an API key reaches its own store only; do not send Knoggin-Store",
-                ));
+        let named = match &caller.credential {
+            Credential::ApiKey(k, _) => match (header, store_param) {
+                (Some(_), _) => {
+                    return Err(ApiError::invalid_argument(
+                        "Knoggin-Store",
+                        "an API key reaches its own store only; do not send Knoggin-Store",
+                    ));
+                }
+                (None, Some(_)) => {
+                    return Err(ApiError::permission_denied(
+                        "the store parameter is accepted only from a session",
+                    ));
+                }
+                (None, None) => k.value.store_id,
+            },
+            Credential::Local | Credential::LocalSession(_) | Credential::None => {
+                match (header, store_param) {
+                    (Some(_), Some(_)) => {
+                        return Err(ApiError::invalid_argument(
+                            "store",
+                            "send the store parameter or the Knoggin-Store header, not both",
+                        ));
+                    }
+                    (Some(text), None) => parse_store(&text, "Knoggin-Store")?,
+                    (None, Some(text)) => parse_store(text, "store")?,
+                    (None, None) => caller.user.value.personal_store_id,
+                }
             }
-            (Credential::ApiKey(..), None, Some(_)) => {
-                return Err(ApiError::permission_denied(
-                    "the store parameter is accepted only from a session",
-                ));
-            }
-            (Credential::ApiKey(k, _), None, None) => k.value.store_id,
-            (_, Some(_), Some(_)) => {
-                return Err(ApiError::invalid_argument(
-                    "store",
-                    "send the store parameter or the Knoggin-Store header, not both",
-                ));
-            }
-            (_, Some(text), None) => parse_store(&text, "Knoggin-Store")?,
-            (_, None, Some(text)) => parse_store(text, "store")?,
-            (_, None, None) => caller.user.value.personal_store_id,
         };
         let store = inner
             .stores
@@ -624,7 +643,10 @@ async fn prepare(
         Credential::ApiKey(k, _) if !k.value.permissions.contains(&Permission::Write) => {
             Permissions::READ
         }
-        _ => Permissions::READ_WRITE,
+        Credential::ApiKey(..)
+        | Credential::Local
+        | Credential::LocalSession(_)
+        | Credential::None => Permissions::READ_WRITE,
     };
     let ctx = RequestContext {
         request_id: crate::trace::request_id(request).unwrap_or_else(Uuid::now_v7),
@@ -699,7 +721,7 @@ async fn run(edge: &EdgeState, mut request: Request, next: Next, prepared: Prepa
     }
     let mut response = next.run(request).await;
     let now = edge.now();
-    if let Credential::ApiKey(k, _) = &caller.credential
+    if let Some((k, _)) = caller.credential.api_key()
         && k.value.key_expires_ms - now <= EXPIRY_WARNING_MS
         && let Some(text) = Timestamp::from_millis(k.value.key_expires_ms).to_rfc3339()
         && let Ok(value) = HeaderValue::from_str(&text)

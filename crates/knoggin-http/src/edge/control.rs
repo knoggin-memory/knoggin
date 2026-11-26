@@ -283,15 +283,11 @@ impl EdgeState {
                             .collect(),
                         Some(k.value.store_id),
                     ),
-                    other => (
-                        match other {
-                            Credential::Local => "local",
-                            Credential::LocalSession(_) => "session",
-                            _ => "none",
-                        },
-                        vec!["memory:read", "memory:write"],
-                        None,
-                    ),
+                    Credential::Local => ("local", vec!["memory:read", "memory:write"], None),
+                    Credential::LocalSession(_) => {
+                        ("session", vec!["memory:read", "memory:write"], None)
+                    }
+                    Credential::None => ("none", vec!["memory:read", "memory:write"], None),
                 };
                 view.credential = Some(SessionCredential {
                     kind,
@@ -767,7 +763,7 @@ pub(crate) async fn delete_account(
     if let Some(local) = &edge.inner().local {
         let keep = match &c.credential {
             Credential::LocalSession(h) => Some(*h),
-            _ => None,
+            Credential::Local | Credential::ApiKey(..) | Credential::None => None,
         };
         local.forget_all_but(keep);
     }

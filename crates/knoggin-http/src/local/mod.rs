@@ -368,9 +368,9 @@ pub(crate) async fn logout(
             s.sessions.forget(&hash);
             Ok(StatusCode::NO_CONTENT.into_response())
         }
-        _ => Err(ApiError::permission_denied(
-            "Logout ends a local web session only",
-        )),
+        Credential::Local | Credential::ApiKey(..) | Credential::None => Err(
+            ApiError::permission_denied("Logout ends a local web session only"),
+        ),
     }
 }
 
