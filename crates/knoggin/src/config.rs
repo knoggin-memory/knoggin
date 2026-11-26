@@ -154,7 +154,7 @@ const ETC_CONFIG: &str = "/etc/knoggin/config.toml";
 // The settings. `#[serde(default)]` holds the local defaults; the few that differ on a
 // server are `Option`s filled in by `resolve`.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Config {
     pub(crate) source_url: String,
@@ -176,6 +176,20 @@ pub(crate) struct Config {
     /// Secret values given through their environment variable. Never serialized.
     #[serde(skip)]
     secrets: BTreeMap<&'static str, Sensitive<String>>,
+}
+
+/// Names no person: no email, subject, path under a home folder or URL that the owner set.
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Config")
+            .field("server.bind", &self.server.bind)
+            .field("auth", &self.auth)
+            .field("log", &self.log)
+            .field("metrics.bind", &self.metrics.bind.is_some())
+            .field("state.backend", &self.state.backend)
+            .field("secrets", &self.secrets.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for Config {
@@ -218,7 +232,7 @@ pub(crate) enum AuthMode {
     Oauth,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct Auth {
     pub(crate) mode: Option<AuthMode>,
@@ -234,6 +248,19 @@ pub(crate) struct Auth {
     pub(crate) email_claim: Option<String>,
     pub(crate) session_max_days: u32,
     pub(crate) session_idle_hours: u32,
+}
+
+/// Counts only: the lists hold people's emails and subjects.
+impl fmt::Debug for Auth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Auth")
+            .field("mode", &self.mode)
+            .field("admin_emails", &self.admin_emails.len())
+            .field("admin_subjects", &self.admin_subjects.len())
+            .field("allowed_emails", &self.allowed_emails.len())
+            .field("allowed_email_domains", &self.allowed_email_domains.len())
+            .finish_non_exhaustive()
+    }
 }
 
 impl Default for Auth {
@@ -999,6 +1026,22 @@ mod tests {
     ) -> anyhow::Result<Config> {
         let p = file(dir, text);
         Config::load(&env(dir, vars), Role::Local, Some(&p), flags)
+    }
+
+    #[test]
+    fn debug_names_no_person() {
+        let d = tempfile::tempdir().unwrap();
+        let c = load(
+            d.path(),
+            "[auth]\nallowed_emails = [\"mkr@example.com\"]\nadmin_subjects = [\"mkrsubject\"]\n",
+            &[],
+            &Flags::default(),
+        )
+        .unwrap();
+        let shown = format!("{c:?}");
+        assert!(!shown.contains("mkr"), "{shown}");
+        assert!(shown.contains("allowed_emails: 1"), "{shown}");
+        assert!(!shown.contains(&d.path().display().to_string()), "{shown}");
     }
 
     #[test]
