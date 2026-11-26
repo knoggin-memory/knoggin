@@ -24,7 +24,7 @@ use http_body_util::BodyExt;
 use knoggin_core::StoreId;
 use knoggin_core::snapshot::SnapshotName;
 use knoggin_http::RequestContext;
-use knoggin_http::error::Code;
+use knoggin_http::error::{Code, LockReason};
 use knoggin_http::host::{
     BackendError, EmbedWaits, HostConfig, LocalBackend, OpenedStore, SealedSnapshot, StoreBackend,
 };
@@ -32,6 +32,7 @@ use knoggin_http::store_layer;
 use knoggin_http::testing::{TestHost, fake_config};
 use serde_json::Value;
 use tempfile::TempDir;
+use tokio::sync::{Notify, oneshot};
 use tower::ServiceExt;
 
 /// Short waits for tests that cross the embedding threads.
@@ -145,22 +146,39 @@ impl Resp {
     }
 }
 
-/// A backend over `LocalBackend` that counts saves and can fail the next few.
+/// A backend over `LocalBackend` that counts opens and saves, can fail the next few saves
+/// (with `fail_with`), lock or slow down opens, and hold a save until released.
 #[derive(Debug)]
 pub struct Counting {
     pub inner: Arc<LocalBackend>,
     pub saves: Mutex<Vec<(tokio::time::Instant, StoreId, SnapshotName)>>,
     pub fail_next: AtomicU32,
+    pub fail_with: Mutex<BackendError>,
     pub failures: AtomicU32,
+    pub opens: AtomicU32,
+    /// Each open waits this long first.
+    pub open_delay: Mutex<Duration>,
+    /// Opens answer this lock while it is set.
+    pub lock_with: Mutex<Option<LockReason>>,
+    /// Notified when a save starts.
+    pub save_entered: Notify,
+    /// The next save waits until this is sent (or dropped).
+    pub stall_save: Mutex<Option<oneshot::Receiver<()>>>,
 }
 
 impl Counting {
-    fn new(inner: Arc<LocalBackend>) -> Self {
+    pub fn new(inner: Arc<LocalBackend>) -> Self {
         Self {
             inner,
             saves: Mutex::new(Vec::new()),
             fail_next: AtomicU32::new(0),
+            fail_with: Mutex::new(BackendError::Unavailable),
             failures: AtomicU32::new(0),
+            opens: AtomicU32::new(0),
+            open_delay: Mutex::new(Duration::ZERO),
+            lock_with: Mutex::new(None),
+            save_entered: Notify::new(),
+            stall_save: Mutex::new(None),
         }
     }
 
@@ -182,17 +200,29 @@ impl StoreBackend for Counting {
         store: StoreId,
         after: Option<SnapshotName>,
     ) -> Result<OpenedStore, BackendError> {
+        self.opens.fetch_add(1, Ordering::SeqCst);
+        let delay = *self.open_delay.lock().unwrap();
+        tokio::time::sleep(delay).await;
+        let locked = *self.lock_with.lock().unwrap();
+        if let Some(reason) = locked {
+            return Err(BackendError::Locked(reason));
+        }
         self.inner.open(store, after).await
     }
 
     async fn save(&self, store: StoreId, snapshot: SealedSnapshot) -> Result<(), BackendError> {
+        self.save_entered.notify_one();
+        let stall = self.stall_save.lock().unwrap().take();
+        if let Some(stall) = stall {
+            let _ = stall.await;
+        }
         if self
             .fail_next
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
             .is_ok()
         {
             self.failures.fetch_add(1, Ordering::SeqCst);
-            return Err(BackendError::Unavailable);
+            return Err(*self.fail_with.lock().unwrap());
         }
         let name = snapshot.name;
         self.inner.save(store, snapshot).await?;

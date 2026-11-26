@@ -353,3 +353,33 @@ async fn a_store_saved_under_another_model_queues_every_memory_again() {
     let status = host.store_status(t.store);
     assert_eq!(status.embedding.unwrap().pending, 2);
 }
+
+#[tokio::test(start_paused = true)]
+async fn a_caller_that_gives_up_does_not_cancel_the_load() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(Permissions::READ_WRITE);
+    save(&env, &ctx, "one").await;
+    env.t.host.close(env.t.store).await.unwrap();
+    *env.counting.open_delay.lock().unwrap() = Duration::from_secs(5);
+    let before = env.counting.opens.load(Ordering::SeqCst);
+    let gave_up =
+        tokio::time::timeout(Duration::from_secs(1), env.t.host.list_namespaces(&ctx)).await;
+    assert!(gave_up.is_err());
+    assert_eq!(
+        env.t.host.store_status(env.t.store).state,
+        StoreState::Waking
+    );
+    // A second caller waits for the same load.
+    let list = env
+        .t
+        .host
+        .list_memories(&ctx, serde_json::from_value(json!({})).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(list.items.len(), 1);
+    assert_eq!(
+        env.counting.opens.load(Ordering::SeqCst) - before,
+        1,
+        "one load"
+    );
+}

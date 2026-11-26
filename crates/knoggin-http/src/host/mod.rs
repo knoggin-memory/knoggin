@@ -28,14 +28,14 @@ use std::time::Duration;
 
 use aws_lc_rs::digest;
 use knoggin_core::embed::ModelIdentity;
-use knoggin_core::ops::{ChangeCounters, EmbeddingProgress, ModelState};
+use knoggin_core::ops::{ChangeCounters, EmbeddingProgress, ModelState, StoreSummary};
 use knoggin_core::snapshot::{self, SnapshotError, SnapshotName};
 use knoggin_core::store::request_hash_input;
 use knoggin_core::{MemoryId, Store, StoreId, Timestamp};
 use knoggin_crypto::container::{self, ContainerError};
 use knoggin_crypto::{DataKey, WrappedKey};
 use serde::Serialize;
-use tokio::sync::{Notify, OnceCell, OwnedSemaphorePermit, Semaphore, watch};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 use uuid::Uuid;
@@ -281,10 +281,22 @@ impl OpenStore {
     }
 }
 
-/// One store's entry while it opens or is open.
-#[derive(Debug, Default)]
+/// What a store's load ended with; `None` while it runs.
+type LoadState = Option<Result<Arc<OpenStore>, ApiError>>;
+
+/// One store's entry while it opens or is open. The load runs as a task of its own that
+/// every caller waits on, so a caller that gives up (its request timed out) cancels
+/// nothing and a second caller starts no second load.
+#[derive(Debug)]
 struct Entry {
-    cell: OnceCell<Arc<OpenStore>>,
+    state: watch::Receiver<LoadState>,
+}
+
+impl Entry {
+    /// The open store, once the load has succeeded.
+    fn open(&self) -> Option<Arc<OpenStore>> {
+        self.state.borrow().as_ref()?.as_ref().ok().cloned()
+    }
 }
 
 /// Running totals since the process started, for the container's `status` answer.
@@ -387,6 +399,17 @@ impl fmt::Debug for StoreHost {
     }
 }
 
+/// A loaded store with the figures `install` needs, all taken on the blocking thread.
+struct Decoded {
+    store: Store,
+    /// The counters as the snapshot left them.
+    saved: ChangeCounters,
+    /// The counters after the open's own changes (open, model change, sweep).
+    current: ChangeCounters,
+    summary: StoreSummary,
+    estimated: u64,
+}
+
 /// Why loading one snapshot failed.
 enum LoadError {
     /// Not readable under its key, or its content does not decode: try an older one.
@@ -466,53 +489,74 @@ impl StoreHost {
     /// The MCP client names an open store has seen, most recent first, with when each
     /// was last seen (for the web UI's system status). Empty for a store not open.
     pub fn clients(&self, id: StoreId) -> Vec<(String, Timestamp)> {
-        let open = lock(&self.entries)
-            .get(&id)
-            .and_then(|e| e.cell.get().cloned());
+        let open = lock(&self.entries).get(&id).and_then(|e| e.open());
         let mut list = open.map(|o| lock(&o.clients).clone()).unwrap_or_default();
         list.sort_by_key(|(_, seen)| std::cmp::Reverse(*seen));
         list
     }
 
     async fn open_store(&self, id: StoreId) -> Result<Arc<OpenStore>, ApiError> {
+        let mut state = self.start_open(id)?.state.clone();
+        let loaded = state
+            .wait_for(Option::is_some)
+            .await
+            .map_err(|_| ApiError::unavailable(2))?;
+        loaded
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| Err(ApiError::unavailable(2)))
+    }
+
+    /// A store's lock while it holds: for a minute after the last try.
+    fn cached_lock(&self, id: StoreId) -> Option<LockReason> {
+        let (reason, at) = lock(&self.locks).get(&id).copied()?;
+        (at.elapsed() < LOCK_RETRY).then_some(reason)
+    }
+
+    /// The store's entry, starting its load when there is none.
+    fn start_open(&self, id: StoreId) -> Result<Arc<Entry>, ApiError> {
         if self.closing.load(Ordering::Relaxed) {
             return Err(ApiError::unavailable(2));
         }
-        if let Some((reason, at)) = lock(&self.locks).get(&id).copied()
-            && at.elapsed() < LOCK_RETRY
-        {
+        if let Some(reason) = self.cached_lock(id) {
             return Err(ApiError::store_locked(reason));
         }
-        let entry = lock(&self.entries).entry(id).or_default().clone();
-        let result = entry.cell.get_or_try_init(|| self.load(id)).await.cloned();
-        match result {
-            Ok(open) => Ok(open),
-            Err(e) => {
-                let mut entries = lock(&self.entries);
-                if entries
-                    .get(&id)
-                    .is_some_and(|e| Arc::ptr_eq(e, &entry) && e.cell.get().is_none())
-                {
+        let mut entries = lock(&self.entries);
+        if let Some(entry) = entries.get(&id) {
+            return Ok(entry.clone());
+        }
+        let host = self.me.upgrade().ok_or_else(|| ApiError::unavailable(2))?;
+        let (tx, state) = watch::channel(None);
+        let entry = Arc::new(Entry { state });
+        entries.insert(id, entry.clone());
+        drop(entries);
+        let mine = entry.clone();
+        let task = tokio::spawn(async move {
+            let result = host.load(id).await.map_err(|failure| {
+                if let OpenFailure::Locked(reason) = failure {
+                    lock(&host.locks).insert(id, (reason, Instant::now()));
+                }
+                let mut entries = lock(&host.entries);
+                if entries.get(&id).is_some_and(|e| Arc::ptr_eq(e, &mine)) {
                     entries.remove(&id);
                 }
-                drop(entries);
-                if e.code == Code::StoreLocked
-                    && let Some(reason) = lock_reason_of(&e)
-                {
-                    lock(&self.locks).insert(id, (reason, Instant::now()));
-                }
-                Err(e)
-            }
-        }
+                ApiError::from(failure)
+            });
+            tx.send_replace(Some(result));
+        });
+        self.own(task);
+        Ok(entry)
+    }
+
+    /// Keeps a spawned task's handle, so that `shutdown` can stop it.
+    fn own(&self, task: JoinHandle<()>) {
+        let mut tasks = lock(&self.tasks);
+        tasks.retain(|t| !t.is_finished());
+        tasks.push(task);
     }
 
     /// Loading a store (tab "Snapshots and keys", "Loading a store").
-    async fn load(&self, id: StoreId) -> Result<Arc<OpenStore>, ApiError> {
-        if let Some((reason, at)) = lock(&self.locks).get(&id).copied()
-            && at.elapsed() < LOCK_RETRY
-        {
-            return Err(ApiError::store_locked(reason));
-        }
+    async fn load(&self, id: StoreId) -> Result<Arc<OpenStore>, OpenFailure> {
         let mut after = None;
         let mut tries = 0;
         loop {
@@ -545,17 +589,22 @@ impl StoreHost {
                     store.adopt_model(model);
                 }
                 store.sweep(now);
-                Ok::<_, LoadError>((store, saved))
+                Ok::<_, LoadError>(Decoded {
+                    saved,
+                    current: store.changes(),
+                    summary: store.summary(),
+                    estimated: store.estimated_bytes(),
+                    store,
+                })
             })
             .await
-            .map_err(|e| ApiError::from_join(&e))?;
+            .map_err(|e| OpenFailure::Other(ApiError::from_join(&e)))?;
             match loaded {
-                Ok((store, saved)) => {
+                Ok(decoded) => {
                     let restored = if restore { name } else { None };
                     return Ok(self.install(
                         id,
-                        store,
-                        saved,
+                        decoded,
                         key,
                         wrapped,
                         generation,
@@ -564,12 +613,14 @@ impl StoreHost {
                     ));
                 }
                 Err(LoadError::FormatTooNew) => {
-                    return Err(ApiError::store_locked(LockReason::FormatTooNew));
+                    return Err(OpenFailure::Locked(LockReason::FormatTooNew));
                 }
                 Err(LoadError::TooLarge) => {
-                    return Err(ApiError::store_locked(LockReason::OutOfMemory));
+                    return Err(OpenFailure::Locked(LockReason::OutOfMemory));
                 }
-                Err(LoadError::Transit) => return Err(ApiError::unavailable(2)),
+                Err(LoadError::Transit) => {
+                    return Err(OpenFailure::Other(ApiError::unavailable(2)));
+                }
                 Err(LoadError::Corrupt) => {
                     tracing::warn!(
                         store_id = %id,
@@ -580,7 +631,7 @@ impl StoreHost {
                     metrics::counter!("knoggin_snapshot_failures_total").increment(1);
                     tries += 1;
                     if restore || tries >= MAX_SNAPSHOT_TRIES {
-                        return Err(ApiError::store_locked(LockReason::SnapshotUnreadable));
+                        return Err(OpenFailure::Locked(LockReason::SnapshotUnreadable));
                     }
                     after = name;
                 }
@@ -592,17 +643,20 @@ impl StoreHost {
     fn install(
         &self,
         id: StoreId,
-        store: Store,
-        saved: ChangeCounters,
+        decoded: Decoded,
         key: DataKey,
         wrapped: WrappedKey,
         generation: u64,
         next_sequence: u64,
         restored: Option<SnapshotName>,
     ) -> Arc<OpenStore> {
-        let summary = store.summary();
-        let estimated = store.estimated_bytes();
-        let current = store.changes();
+        let Decoded {
+            store,
+            saved,
+            current,
+            summary,
+            estimated,
+        } = decoded;
         let open = Arc::new(OpenStore {
             id,
             store: Arc::new(RwLock::new(store)),
@@ -653,9 +707,9 @@ impl StoreHost {
         open
     }
 
-    fn backend_error(&self, id: StoreId, e: BackendError) -> ApiError {
-        match e {
-            BackendError::Locked(reason) => ApiError::store_locked(reason),
+    fn backend_error(&self, id: StoreId, e: BackendError) -> OpenFailure {
+        OpenFailure::Other(match e {
+            BackendError::Locked(reason) => return OpenFailure::Locked(reason),
             BackendError::Deleted => ApiError::store_deleting(),
             BackendError::LeaseLost => {
                 self.on_lease_lost();
@@ -670,7 +724,7 @@ impl StoreHost {
                 tracing::warn!(store_id = %id, kind = e.kind(), "opening a store failed");
                 ApiError::unavailable(2)
             }
-        }
+        })
     }
 
     /// The engine's estimate summed over every open store.
@@ -685,7 +739,7 @@ impl StoreHost {
     fn open_list(&self) -> Vec<Arc<OpenStore>> {
         let mut list: Vec<Arc<OpenStore>> = lock(&self.entries)
             .values()
-            .filter_map(|e| e.cell.get().cloned())
+            .filter_map(|e| e.open())
             .collect();
         list.sort_by_key(|o| o.id);
         list
@@ -806,9 +860,7 @@ impl StoreHost {
     /// The next request loads its last snapshot.
     pub fn drop_store(&self, id: StoreId) {
         // The map's guard must end before `drop_open` takes the map again.
-        let open = lock(&self.entries)
-            .get(&id)
-            .and_then(|e| e.cell.get().cloned());
+        let open = lock(&self.entries).get(&id).and_then(|e| e.open());
         if let Some(open) = open {
             self.drop_open(&open);
         }
@@ -822,8 +874,8 @@ impl StoreHost {
             let mut entries = lock(&self.entries);
             if entries
                 .get(&open.id)
-                .and_then(|e| e.cell.get())
-                .is_some_and(|o| Arc::ptr_eq(o, open))
+                .and_then(|e| e.open())
+                .is_some_and(|o| Arc::ptr_eq(&o, open))
             {
                 entries.remove(&open.id);
             }
@@ -846,10 +898,7 @@ impl StoreHost {
     /// Writes a final snapshot of one store if it has unsaved changes, then drops it.
     /// A store whose save fails stays open.
     pub async fn close(&self, id: StoreId) -> Result<(), BackendError> {
-        let Some(open) = lock(&self.entries)
-            .get(&id)
-            .and_then(|e| e.cell.get().cloned())
-        else {
+        let Some(open) = lock(&self.entries).get(&id).and_then(|e| e.open()) else {
             return Ok(());
         };
         self.close_open(&open).await
@@ -893,7 +942,7 @@ impl StoreHost {
     pub fn store_status(&self, id: StoreId) -> StoreStatus {
         let entry = lock(&self.entries).get(&id).cloned();
         if let Some(entry) = entry {
-            return match entry.cell.get() {
+            return match entry.open() {
                 Some(open) => StoreStatus {
                     state: StoreState::Ready,
                     full: open.full.load(Ordering::Relaxed)
@@ -910,18 +959,12 @@ impl StoreHost {
                 },
             };
         }
-        let locked = lock(&self.locks).get(&id).copied();
+        let locked = lock(&self.locks).get(&id).map(|l| l.0);
         let state = match locked {
-            Some((reason, at)) => {
-                if at.elapsed() >= LOCK_RETRY
-                    && let Some(host) = self.me.upgrade()
-                {
-                    let retry = tokio::spawn(async move {
-                        let _ = host.open_store(id).await;
-                    });
-                    let mut tasks = lock(&self.tasks);
-                    tasks.retain(|t| !t.is_finished());
-                    tasks.push(retry);
+            Some(reason) => {
+                if self.cached_lock(id).is_none() {
+                    // Starts the load in the background; its result is not waited for.
+                    let _ = self.start_open(id);
                 }
                 StoreState::Locked(reason)
             }
@@ -938,7 +981,7 @@ impl StoreHost {
     pub fn report(&self) -> HostReport {
         let mut report = HostReport::default();
         for entry in lock(&self.entries).iter() {
-            match entry.1.cell.get() {
+            match entry.1.open() {
                 Some(open) => report.stores.push(OpenStoreReport {
                     store_id: open.id,
                     memory_count: open.memory_count.load(Ordering::Relaxed),
@@ -979,7 +1022,7 @@ impl StoreHost {
     pub fn is_open(&self, id: StoreId) -> bool {
         lock(&self.entries)
             .get(&id)
-            .is_some_and(|e| e.cell.get().is_some())
+            .is_some_and(|e| e.open().is_some())
     }
 
     pub(crate) fn notify_work(&self) {
@@ -990,17 +1033,21 @@ impl StoreHost {
 /// A store lock was poisoned by a panic.
 struct Poisoned;
 
-fn lock_reason_of(e: &ApiError) -> Option<LockReason> {
-    [
-        LockReason::MasterKeyMissing,
-        LockReason::SnapshotUnreadable,
-        LockReason::FormatTooNew,
-        LockReason::OutOfMemory,
-        LockReason::StateUnreadable,
-        LockReason::StateMissing,
-    ]
-    .into_iter()
-    .find(|r| Some(r.as_str()) == e.reason)
+/// Why a store could not be opened.
+enum OpenFailure {
+    /// Locked: remembered, and tried again at most once a minute.
+    Locked(LockReason),
+    /// Anything else; the next request tries again.
+    Other(ApiError),
+}
+
+impl From<OpenFailure> for ApiError {
+    fn from(failure: OpenFailure) -> Self {
+        match failure {
+            OpenFailure::Locked(reason) => ApiError::store_locked(reason),
+            OpenFailure::Other(e) => e,
+        }
+    }
 }
 
 /// Reads, checks, decrypts and decodes one snapshot, on a blocking thread.
