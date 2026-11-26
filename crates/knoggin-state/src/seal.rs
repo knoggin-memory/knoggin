@@ -87,7 +87,7 @@ fn field_aad(pk: &str, sk: &str, field: &str) -> Vec<u8> {
     format!("{pk}\n{sk}\n{field}").into_bytes()
 }
 
-fn cipher(key: &DataKey) -> Result<LessSafeKey, StateError> {
+pub(crate) fn cipher(key: &DataKey) -> Result<LessSafeKey, StateError> {
     UnboundKey::new(&AES_256_GCM_SIV, key.expose())
         .map(LessSafeKey::new)
         .map_err(|_| StateError::Internal)
