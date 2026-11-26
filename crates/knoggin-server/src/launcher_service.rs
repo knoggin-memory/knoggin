@@ -837,7 +837,7 @@ pub async fn run(
         }
     };
     let mut serve_stop = stop.clone();
-    let server = tokio::spawn(knoggin_http::edge::listen::serve_tcp(
+    let mut server = tokio::spawn(knoggin_http::edge::listen::serve_tcp(
         listener,
         service.router(),
         knoggin_http::edge::Arrival::Public,
@@ -856,7 +856,12 @@ pub async fn run(
         }
     }
     service.abort_stops();
-    let _ = tokio::time::timeout(Duration::from_secs(5), server).await;
+    if tokio::time::timeout(Duration::from_secs(5), &mut server)
+        .await
+        .is_err()
+    {
+        server.abort();
+    }
     0
 }
 
