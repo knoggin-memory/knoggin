@@ -14,7 +14,7 @@ use anyhow::{Context, anyhow, bail};
 use knoggin_core::Timestamp;
 use knoggin_crypto::source::{FileRule, read_key_file};
 use knoggin_crypto::{KeyProvider, LocalKeyProvider, MasterKeySet};
-use knoggin_http::edge::{self, Rate};
+use knoggin_http::edge;
 use knoggin_server::launcher::{BuildInfo, ContainerEnv, DockerLauncher, Launcher};
 use knoggin_server::link::InternalSecret;
 use knoggin_server::router::{
@@ -297,15 +297,8 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
     let mut edge =
         crate::daemon::edge_config(config, public_url.clone(), env.test_mode, Role::Router)?;
     edge.role = edge::Role::Server;
-    edge.idle_seconds = Some(config.containers.idle_seconds);
-    edge.per_address = Some(Rate {
-        per_second: config.limits.per_address_rps,
-        burst: config.limits.per_address_burst,
-    });
-    edge.per_user = Some(Rate {
-        per_second: config.limits.per_user_rps,
-        burst: config.limits.per_user_burst,
-    });
+    // `run_router` sets the rates per address and per user, and the idle time, from
+    // `settings`.
 
     let clock = system_clock();
     let keys = key_provider(&keys)?;
