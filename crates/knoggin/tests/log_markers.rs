@@ -736,17 +736,35 @@ fn set_cookie(r: &support::Resp, name: &str) -> String {
 /// Milestone 5: a daemon with sign-in on against the test issuer, at log level `trace`.
 /// Markers sit in the sign-in subject, the email and the name; every secret of the flow
 /// (state, nonce, PKCE verifier and challenge, authorization code, the sealed login
-/// cookie, the session value, the ID and access tokens the exchange returned, and minted
-/// tokens, good and bad) is then searched for in the logs and the metrics page.
+/// cookie, the session value, the ID and access tokens the exchange returned, minted
+/// tokens, good and bad, and the web client secret) is then searched for in the logs and
+/// the metrics page. The client secret goes in the token request's form.
 #[test]
 fn no_sign_in_secret_or_identity_reaches_a_log() {
+    sign_in_markers(false);
+}
+
+/// The same with an issuer that takes only `client_secret_basic`, so the client secret
+/// travels in an `Authorization: Basic` header; its base64 form is searched for too.
+#[test]
+fn no_sign_in_secret_reaches_a_log_with_client_secret_basic() {
+    sign_in_markers(true);
+}
+
+fn sign_in_markers(basic: bool) {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD;
     use knoggin_http::testing::issuer::{TEST_SECRET, TestIssuer};
 
     const SUB: &str = "mkrsubjectq20";
     const NAME: &str = "mkrnameq21";
+    const CLIENT_ID: &str = "web-client";
     let email = format!("{SUB}@test.example");
     let rt = tokio::runtime::Runtime::new().unwrap();
     let issuer = rt.block_on(TestIssuer::start(true)).unwrap();
+    if basic {
+        issuer.require_basic();
+    }
     let port = free_port();
     let metrics = free_port();
     let public = format!("http://127.0.0.1:{port}");
@@ -757,7 +775,7 @@ fn no_sign_in_secret_or_identity_reaches_a_log() {
         .with("KNOGGIN_SERVER__PUBLIC_URL", &public)
         .with("KNOGGIN_AUTH__MODE", "oauth")
         .with("KNOGGIN_AUTH__ISSUER", issuer.url())
-        .with("KNOGGIN_AUTH__WEB_CLIENT_ID", "web-client")
+        .with("KNOGGIN_AUTH__WEB_CLIENT_ID", CLIENT_ID)
         .with("KNOGGIN_AUTH__WEB_CLIENT_SECRET", TEST_SECRET)
         .with("KNOGGIN_AUTH__ALLOWED_EMAILS", &email);
     let mut d = home.daemon();
@@ -938,7 +956,14 @@ fn no_sign_in_secret_or_identity_reaches_a_log() {
     // state, nonce, challenge, code, verifier, the ID token and the access token.
     assert!(issued.len() >= 7, "{} secrets", issued.len());
     secrets.extend(issued);
+    // The web client secret, as the form carries it and as `client_secret_basic` does
+    // (the ID and the secret need no form-encoding here), with and without padding.
+    let pair = STANDARD.encode(format!("{CLIENT_ID}:{TEST_SECRET}"));
+    let alone = STANDARD.encode(TEST_SECRET);
     secrets.extend([
+        TEST_SECRET.to_owned(),
+        pair.trim_end_matches('=').to_owned(),
+        alone.trim_end_matches('=').to_owned(),
         SUB.to_owned(),
         NAME.to_owned(),
         email.clone(),

@@ -146,8 +146,8 @@ the MCP client names an open store has seen (at most 32, with when), for `/v1/ui
   logout) and the protected-resource metadata. The router's start-up guards are
   `edge::guard::{router_settings, router_users, check_public_url}`.
 - The test issuer: `testing::issuer::TestIssuer::start(test_mode)` (or `serve`), with
-  `url`, `claims`, `mint`, `mint_with`, `rotate_keys`, `remove_key`, `kids`, `secrets` and
-  `token_requests`;
+  `url`, `claims`, `mint`, `mint_with`, `rotate_keys`, `remove_key`, `kids`, `secrets`,
+  `token_requests` and `require_basic`;
   its client secret is `TEST_SECRET`.
 - `local`: `prepare_run_dir`, `bind_socket`, `bind_loopback(port)` (127.0.0.1 and [::1]),
   `web_label` + `web_authority` (the web listener's origin), `LocalSessions`, `erase_step`

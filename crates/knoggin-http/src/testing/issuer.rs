@@ -5,7 +5,7 @@
 //! tokens with any claims a test wants. Never use it for real users.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use aws_lc_rs::encoding::{AsDer, Pkcs8V1Der};
@@ -55,6 +55,8 @@ struct Shared {
     seen: Mutex<Vec<String>>,
     /// Requests that reached the token endpoint.
     token_requests: AtomicUsize,
+    /// Only `client_secret_basic` is offered and taken.
+    basic_only: AtomicBool,
 }
 
 /// A running test issuer. Dropping it stops it.
@@ -193,6 +195,7 @@ impl TestIssuer {
             codes: Mutex::new(HashMap::new()),
             seen: Mutex::new(Vec::new()),
             token_requests: AtomicUsize::new(0),
+            basic_only: AtomicBool::new(false),
         });
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(discovery))
@@ -270,6 +273,12 @@ impl TestIssuer {
         }
     }
 
+    /// From now on the discovery document lists only `client_secret_basic`, and the token
+    /// endpoint refuses a client secret in the form.
+    pub fn require_basic(&self) {
+        self.shared.basic_only.store(true, Ordering::Relaxed);
+    }
+
     /// How many requests reached the token endpoint, whatever their outcome.
     pub fn token_requests(&self) -> usize {
         self.shared.token_requests.load(Ordering::Relaxed)
@@ -287,6 +296,11 @@ impl TestIssuer {
 
 async fn discovery(State(s): State<Arc<Shared>>) -> Json<Value> {
     let u = &s.url;
+    let methods = if s.basic_only.load(Ordering::Relaxed) {
+        json!(["client_secret_basic"])
+    } else {
+        json!(["client_secret_post", "client_secret_basic"])
+    };
     Json(json!({
         "issuer": u,
         "authorization_endpoint": format!("{u}/authorize"),
@@ -294,7 +308,7 @@ async fn discovery(State(s): State<Arc<Shared>>) -> Json<Value> {
         "jwks_uri": format!("{u}/jwks"),
         "response_types_supported": ["code"],
         "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["client_secret_post", "client_secret_basic"],
+        "token_endpoint_auth_methods_supported": methods,
     }))
 }
 
@@ -409,7 +423,9 @@ async fn token(
     s.token_requests.fetch_add(1, Ordering::Relaxed);
     let (client_id, secret) = match (basic(&headers), f.get("client_id"), f.get("client_secret")) {
         (Some(pair), _, _) => pair,
-        (None, Some(id), Some(secret)) => (id.clone(), secret.clone()),
+        (None, Some(id), Some(secret)) if !s.basic_only.load(Ordering::Relaxed) => {
+            (id.clone(), secret.clone())
+        }
         _ => return bad("no client authentication"),
     };
     if secret != TEST_SECRET
