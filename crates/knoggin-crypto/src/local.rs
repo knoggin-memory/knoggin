@@ -156,6 +156,12 @@ impl MasterKeySet {
         format!("{LOCAL_KEK_PREFIX}{}", self.current)
     }
 
+    /// A key derived from the current key with HKDF-SHA-256 (empty salt, `info`): on one
+    /// host, the key that seals every Postgres document.
+    pub fn derive_current(&self, info: &[u8]) -> Result<DataKey, KeyError> {
+        Ok(DataKey::from_bytes(self.current_key()?.0).derive(info))
+    }
+
     /// Number of keys in the set, the current one included.
     pub fn len(&self) -> usize {
         self.keys.len()
