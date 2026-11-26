@@ -7,6 +7,7 @@
 pub mod container;
 pub mod key;
 pub mod local;
+pub mod source;
 pub mod testing;
 
 pub use key::{DataKey, KeyError, KeyProvider, WrappedKey};
