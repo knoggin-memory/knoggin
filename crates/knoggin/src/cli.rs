@@ -535,17 +535,20 @@ async fn admin(ctx: &Ctx<'_>, config: &Config, c: AdminCommand) -> anyhow::Resul
     let keys = server::keys_setting(config)?;
     let state = server::state_setting(config, Role::Admin)?;
     let storage_settings = server::storage_settings(config)?;
-    let db: Arc<dyn knoggin_state::StateDb> =
-        server::connect_state(&state, clock.clone(), false).await?;
+    let db: Arc<dyn knoggin_state::StateDb> = server::connect_state(&state, clock.clone(), false)
+        .await?
+        .db;
     if let AdminCommand::RotateMasterKey = c {
-        let server::Keys::File(path) = &keys;
+        let server::Keys::File(path) = &keys else {
+            bail!("keys.provider = \"kms\": KMS rotates its own key material");
+        };
         let (kek, stores) = admin::rotate_master_key(db, path).await?;
         ctx.print(&json!({ "kekId": kek, "stores": stores }), || {
             format!("The new master key is {kek}; {stores} store keys were wrapped again.")
         });
         return Ok(0);
     }
-    let provider = server::key_provider(&keys)?;
+    let provider = server::key_provider(&keys).await?;
     let storage = server::storage(&storage_settings).await;
     if let AdminCommand::Selftest = c {
         let http = reqwest::Client::builder()

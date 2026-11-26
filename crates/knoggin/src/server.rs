@@ -15,17 +15,18 @@ use knoggin_core::Timestamp;
 use knoggin_crypto::source::{FileRule, read_key_file};
 use knoggin_crypto::{KeyProvider, LocalKeyProvider, MasterKeySet};
 use knoggin_http::edge;
-use knoggin_server::launcher::{BuildInfo, ContainerEnv, DockerLauncher, Launcher};
+use knoggin_server::kms::KmsKeyProvider;
+use knoggin_server::launcher::{BuildInfo, ContainerEnv, DockerLauncher, EcsLauncher, Launcher};
 use knoggin_server::link::InternalSecret;
 use knoggin_server::router::{
     Backends, Listeners, RouterStart, forward::Timing, reserve, run_router,
 };
 use knoggin_server::settings::{
-    Cidr, ContainerSettings, InternalSettings, LauncherServiceSettings, RateSetting,
+    Cidr, ContainerSettings, EcsSettings, InternalSettings, LauncherServiceSettings, RateSetting,
     RetentionSettings, RolloutSettings, RouterLimits, RouterSettings, SecretText, StorageSettings,
 };
 use knoggin_server::storage::{ObjectStorage, S3Storage};
-use knoggin_state::{Clock, PostgresDb, StateDb, system_clock};
+use knoggin_state::{Clock, DynamoDb, PostgresDb, StateDb, system_clock};
 use tokio::sync::watch;
 
 use crate::config::{Backend, Config, Env, KeyProviderKind, LauncherKind, LogLevel, Role};
@@ -33,20 +34,35 @@ use crate::config::{Backend, Config, Env, KeyProviderKind, LauncherKind, LogLeve
 /// How long a server role keeps trying its database and the launcher at start.
 const START_TRIES: Duration = Duration::from_secs(60);
 
-/// The KMS key provider and the ECS launcher come with milestone 7.
-const NOT_YET: &str = "is not built yet (it comes with the AWS target, milestone 7)";
-
 /// Where the master key lives, checked before anything connects.
 pub(crate) enum Keys {
     /// `keys.provider = "key_file"`: the key set file.
     File(PathBuf),
+    /// `keys.provider = "kms"`: the KMS key ARN.
+    Kms(String),
 }
 
-/// `keys.*`: the provider a server role uses. `kms` is refused until it exists.
+impl Keys {
+    /// The admin status's name of the provider.
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Self::File(_) => "key_file",
+            Self::Kms(_) => "kms",
+        }
+    }
+}
+
+/// `keys.*`: the provider a server role uses.
 pub(crate) fn keys_setting(config: &Config) -> anyhow::Result<Keys> {
     match config.keys.provider {
         None => bail!("keys.provider is required on a server: key_file (one host) or kms (AWS)"),
-        Some(KeyProviderKind::Kms) => bail!("keys.provider = \"kms\" {NOT_YET}; use key_file"),
+        Some(KeyProviderKind::Kms) => config
+            .keys
+            .kms_key_id
+            .clone()
+            .filter(|id| !id.is_empty())
+            .map(Keys::Kms)
+            .ok_or_else(|| anyhow!("keys.provider = \"kms\" needs keys.kms_key_id")),
         Some(KeyProviderKind::KeyFile) => config
             .keys
             .master_key_file
@@ -56,27 +72,63 @@ pub(crate) fn keys_setting(config: &Config) -> anyhow::Result<Keys> {
     }
 }
 
-/// Reads the master key set (a server role reads a file that others cannot write).
-pub(crate) fn key_provider(keys: &Keys) -> anyhow::Result<Arc<dyn KeyProvider>> {
-    let Keys::File(path) = keys;
-    let set = read_key_file(path, FileRule::NotWritableByOthers)
-        .with_context(|| format!("keys.master_key_file {}", path.display()))?;
-    Ok(Arc::new(LocalKeyProvider::new(set)))
+/// The master key provider: the key set file (a server role reads a file that others
+/// cannot write), or the KMS key through the AWS default chain.
+pub(crate) async fn key_provider(keys: &Keys) -> anyhow::Result<Arc<dyn KeyProvider>> {
+    match keys {
+        Keys::File(path) => {
+            let set = read_key_file(path, FileRule::NotWritableByOthers)
+                .with_context(|| format!("keys.master_key_file {}", path.display()))?;
+            Ok(Arc::new(LocalKeyProvider::new(set)))
+        }
+        Keys::Kms(id) => Ok(Arc::new(KmsKeyProvider::new(&aws_config().await, id))),
+    }
+}
+
+/// The shared AWS config of DynamoDB, KMS and ECS: the default chain's region and
+/// credentials (the task role on AWS). Knoggin has no endpoint setting for these three; a
+/// test points a child process at its stand-in with `AWS_ENDPOINT_URL`.
+async fn aws_config() -> knoggin_server::aws::SdkConfig {
+    knoggin_server::aws::sdk_config(None, None).await
 }
 
 /// What `state.*` names, checked before anything connects.
-pub(crate) struct StateSetting {
-    url: knoggin_core::Sensitive<String>,
-    doc_keys: MasterKeySet,
+pub(crate) enum StateSetting {
+    /// One host: the URL and the state key set.
+    Postgres {
+        url: knoggin_core::Sensitive<String>,
+        doc_keys: MasterKeySet,
+    },
+    /// AWS: the table.
+    Dynamodb { table: String },
 }
 
-/// `state.*` for a server role: Postgres with its URL and the state key file.
+impl StateSetting {
+    /// The admin status's name of the backend.
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Self::Postgres { .. } => "postgres",
+            Self::Dynamodb { .. } => "dynamodb",
+        }
+    }
+}
+
+/// `state.*` for a server role: Postgres with its URL and the state key file, or DynamoDB
+/// with its table.
 pub(crate) fn state_setting(config: &Config, role: Role) -> anyhow::Result<StateSetting> {
     match config.state.backend {
         None => {
             bail!("state.backend is required on a server: postgres (one host) or dynamodb (AWS)")
         }
-        Some(Backend::Dynamodb) => bail!("state.backend = \"dynamodb\" {NOT_YET}; use postgres"),
+        Some(Backend::Dynamodb) => {
+            return config
+                .state
+                .dynamodb_table
+                .clone()
+                .filter(|t| !t.is_empty())
+                .map(|table| StateSetting::Dynamodb { table })
+                .ok_or_else(|| anyhow!("state.backend = \"dynamodb\" needs state.dynamodb_table"));
+        }
         Some(Backend::LocalFile) => bail!(
             "state.backend = \"local_file\" is the local daemon's; a server uses postgres or dynamodb"
         ),
@@ -93,18 +145,36 @@ pub(crate) fn state_setting(config: &Config, role: Role) -> anyhow::Result<State
         })?;
     let doc_keys = read_key_file(&path, FileRule::NotWritableByOthers)
         .with_context(|| format!("state.postgres_doc_key_file {}", path.display()))?;
-    Ok(StateSetting { url, doc_keys })
+    Ok(StateSetting::Postgres { url, doc_keys })
 }
 
-/// Connects, trying for up to 60 seconds; the router also migrates.
+/// The state database, and on Postgres the backend itself for the lifecycle task's
+/// housekeeping.
+pub(crate) struct State {
+    pub(crate) db: Arc<dyn StateDb>,
+    pub(crate) postgres: Option<Arc<PostgresDb>>,
+}
+
+/// Connects, trying Postgres for up to 60 seconds; the router also migrates. DynamoDB
+/// opens no connection here: the router's first read (the schema record) is its check.
 pub(crate) async fn connect_state(
     s: &StateSetting,
     clock: Clock,
     migrate: bool,
-) -> anyhow::Result<Arc<PostgresDb>> {
+) -> anyhow::Result<State> {
+    let (url, doc_keys) = match s {
+        StateSetting::Postgres { url, doc_keys } => (url, doc_keys),
+        StateSetting::Dynamodb { table } => {
+            let conf = aws_sdk_dynamodb::config::Builder::from(&aws_config().await);
+            return Ok(State {
+                db: Arc::new(DynamoDb::new(conf, table.clone(), clock)),
+                postgres: None,
+            });
+        }
+    };
     let deadline = tokio::time::Instant::now() + START_TRIES;
     let db = loop {
-        match PostgresDb::connect(s.url.expose(), &s.doc_keys, clock.clone()).await {
+        match PostgresDb::connect(url.expose(), doc_keys, clock.clone()).await {
             Ok(db) => break db,
             Err(knoggin_state::StateError::Unavailable(_))
                 if tokio::time::Instant::now() < deadline =>
@@ -119,7 +189,11 @@ pub(crate) async fn connect_state(
             .await
             .map_err(|e| anyhow!("migrating the state database: {e}"))?;
     }
-    Ok(Arc::new(db))
+    let db = Arc::new(db);
+    Ok(State {
+        db: db.clone(),
+        postgres: Some(db),
+    })
 }
 
 /// `storage.*`: the bucket must be named.
@@ -231,11 +305,19 @@ fn parse_addr(name: &str, text: &str) -> anyhow::Result<SocketAddr> {
         .map_err(|_| anyhow!("{name}: {text:?} is not an address and port"))
 }
 
-/// `launcher.*` as the router reads it: on one host the launcher service's client.
-fn docker_launcher(config: &Config) -> anyhow::Result<DockerLauncher> {
+/// `launcher.*` as the router reads it.
+enum LauncherSetting {
+    /// One host: the launcher service's client.
+    Docker(DockerLauncher),
+    /// AWS: ECS.
+    Ecs(EcsSettings),
+}
+
+/// `launcher.*`: on one host the launcher service's client, on AWS the ECS settings.
+fn launcher_setting(config: &Config) -> anyhow::Result<LauncherSetting> {
     match config.launcher.kind {
         None => bail!("launcher.kind is required on a server: docker (one host) or ecs (AWS)"),
-        Some(LauncherKind::Ecs) => bail!("launcher.kind = \"ecs\" {NOT_YET}; use docker"),
+        Some(LauncherKind::Ecs) => return ecs_settings(config).map(LauncherSetting::Ecs),
         Some(LauncherKind::Docker) => {}
     }
     let token = config
@@ -244,7 +326,40 @@ fn docker_launcher(config: &Config) -> anyhow::Result<DockerLauncher> {
             anyhow!("launcher.kind = \"docker\" needs launcher.docker.token (or its _file)")
         })?;
     DockerLauncher::new(&config.launcher.docker.url, SecretText::new(token.expose()))
+        .map(LauncherSetting::Docker)
         .map_err(|e| anyhow!("launcher.docker.url: {e}"))
+}
+
+/// `launcher.ecs.*` (tab "Deployment"): every value is needed, and containers reach the
+/// router at `internal.router_url`.
+fn ecs_settings(config: &Config) -> anyhow::Result<EcsSettings> {
+    let e = &config.launcher.ecs;
+    let need = |key: &str, value: &Option<String>| {
+        value
+            .clone()
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow!("launcher.kind = \"ecs\" needs launcher.ecs.{key}"))
+    };
+    if e.subnets.is_empty() || e.security_groups.is_empty() {
+        bail!(
+            "launcher.kind = \"ecs\" needs launcher.ecs.subnets and launcher.ecs.security_groups"
+        );
+    }
+    if config
+        .internal
+        .router_url
+        .as_deref()
+        .is_none_or(str::is_empty)
+    {
+        bail!("launcher.kind = \"ecs\" needs internal.router_url, the address containers use");
+    }
+    Ok(EcsSettings {
+        cluster: need("cluster", &e.cluster)?,
+        task_definition: need("task_definition", &e.task_definition)?,
+        subnets: e.subnets.clone(),
+        security_groups: e.security_groups.clone(),
+        capacity_provider: need("capacity_provider", &e.capacity_provider)?,
+    })
 }
 
 /// A task that ends when this is dropped, so that a role's helpers end with it.
@@ -280,8 +395,8 @@ async fn stopped(mut rx: watch::Receiver<bool>) {
 /// `knoggin router`.
 pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
     // Every setting first, then the connections.
-    let launcher = docker_launcher(config)?;
-    if config.containers.max == 0 {
+    let launcher = launcher_setting(config)?;
+    if matches!(launcher, LauncherSetting::Docker(_)) && config.containers.max == 0 {
         bail!(
             "with launcher.kind = \"docker\" containers.max must be set: one host has a fixed amount of memory"
         );
@@ -301,8 +416,16 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
     // `settings`.
 
     let clock = system_clock();
-    let keys = key_provider(&keys)?;
-    let db: Arc<dyn StateDb> = connect_state(&state, clock.clone(), true).await?;
+    let backends = Backends {
+        state_db: state.name(),
+        key_provider: keys.name(),
+        launcher: match launcher {
+            LauncherSetting::Docker(_) => "docker",
+            LauncherSetting::Ecs(_) => "ecs",
+        },
+    };
+    let keys = key_provider(&keys).await?;
+    let db: Arc<dyn StateDb> = connect_state(&state, clock.clone(), true).await?.db;
     let bucket = storage(&settings.storage).await;
     // The sockets are bound now and listen only at the last start-up step.
     let public =
@@ -328,10 +451,31 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
         None => (None, None, None),
     };
     let (stop, _watching) = stop_signal()?;
-    let launcher = Arc::new(launcher);
-    // Start-up steps 7 and 8: the bucket self-test, then the launcher's `attach`.
+    // On one host the launcher service's client and its `attach`; on AWS ECS, whose spec is
+    // the router's own task definition.
+    let (docker, launcher, one_host, spec): (_, Arc<dyn Launcher>, _, _) = match launcher {
+        LauncherSetting::Docker(d) => {
+            let d = Arc::new(d);
+            (
+                Some(d.clone()),
+                d,
+                Some("https://router:8443".to_owned()),
+                String::new(),
+            )
+        }
+        LauncherSetting::Ecs(e) => {
+            let spec = e.task_definition.clone();
+            (
+                None,
+                Arc::new(EcsLauncher::new(&aws_config().await, e)),
+                None,
+                spec,
+            )
+        }
+    };
+    // Start-up steps 7 and 8: the bucket self-test, then on one host the launcher's `attach`.
     let before_rollout = {
-        let (bucket, launcher, clock) = (bucket.clone(), launcher.clone(), clock.clone());
+        let (bucket, clock) = (bucket.clone(), clock.clone());
         Box::pin(async move {
             let http = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -344,6 +488,9 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
             )
             .await
             .map_err(|e| e.to_string())?;
+            let Some(launcher) = docker else {
+                return Ok(());
+            };
             let deadline = tokio::time::Instant::now() + START_TRIES;
             loop {
                 match launcher.attach().await {
@@ -362,13 +509,13 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
         RouterStart {
             edge,
             settings,
-            one_host: Some("https://router:8443".into()),
+            one_host,
             build: BuildInfo::new(env!("CARGO_PKG_VERSION")),
-            spec: String::new(),
+            spec,
             db,
             keys,
             storage: bucket,
-            launcher: launcher as Arc<dyn Launcher>,
+            launcher,
             clock,
             listeners: Listeners {
                 public,
@@ -377,11 +524,7 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
             },
             metrics,
             before_rollout: Some(before_rollout),
-            backends: Backends {
-                state_db: "postgres",
-                key_provider: "key_file",
-                launcher: "docker",
-            },
+            backends,
             timing: Timing::default(),
         },
         stopped(stop),
@@ -453,12 +596,12 @@ pub(crate) async fn lifecycle(config: &Config, every: Option<Duration>) -> anyho
     let state = state_setting(config, Role::Lifecycle)?;
     let storage_settings = storage_settings(config)?;
     let clock = system_clock();
-    let pg = connect_state(&state, clock.clone(), false).await?;
+    let state = connect_state(&state, clock.clone(), false).await?;
     let (stop, _watching) = stop_signal()?;
     let code = knoggin_server::lifecycle::run(
         knoggin_server::lifecycle::Lifecycle {
-            db: pg.clone(),
-            postgres: Some(pg),
+            db: state.db,
+            postgres: state.postgres,
             storage: storage(&storage_settings).await,
             retention: retention(config),
         },

@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The shared AWS SDK configuration: one dated behaviour version, so that an SDK update
 //! cannot change retry or checksum defaults unseen, and the credentials of
-//! `storage.credentials_file` when it is set. S3 now; KMS and ECS use it in milestone 7.
+//! `storage.credentials_file` when it is set. S3, DynamoDB, KMS and ECS use it.
 
 use std::path::Path;
 
+pub use aws_config::SdkConfig;
 use aws_config::profile::ProfileFileCredentialsProvider;
 #[allow(
     deprecated,
     reason = "aws-config offers these only under their old names; aws-runtime is no dependency"
 )]
 use aws_config::profile::profile_file::{ProfileFileKind, ProfileFiles};
-use aws_config::{BehaviorVersion, Region, SdkConfig};
+use aws_config::{BehaviorVersion, Region};
 
 /// The behaviour version every AWS client is built with.
 #[allow(deprecated, reason = "pinned on purpose")]

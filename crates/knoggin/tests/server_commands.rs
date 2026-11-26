@@ -68,7 +68,11 @@ fn the_router_refuses_each_missing_or_unbuilt_setting_before_it_connects() {
         refused(&home, config, &["router"], 1, needle);
     };
     step(&mut config, "", "launcher.kind is required");
-    step(&mut config, "[launcher]\nkind = \"ecs\"\n", "milestone 7");
+    step(
+        &mut config,
+        "[launcher]\nkind = \"ecs\"\n",
+        "launcher.ecs.subnets",
+    );
     config = config.replace("kind = \"ecs\"", "kind = \"docker\"");
     step(&mut config, "", "launcher.docker.token");
     step(
@@ -83,20 +87,20 @@ fn the_router_refuses_each_missing_or_unbuilt_setting_before_it_connects() {
     );
     step(
         &mut config,
-        "[keys]\nprovider = \"kms\"\nkms_key_id = \"arn:aws:kms:x\"\n",
-        "keys.provider = \"kms\" is not built yet",
+        "[keys]\nprovider = \"kms\"\nkms_key_id = \"\"\n",
+        "keys.kms_key_id",
     );
     config = config.replace("provider = \"kms\"", "provider = \"key_file\"");
     step(&mut config, "", "keys.master_key_file");
     config = config.replace(
-        "kms_key_id = \"arn:aws:kms:x\"",
+        "kms_key_id = \"\"",
         &format!("master_key_file = \"{}\"", d.join("master_key").display()),
     );
     step(&mut config, "", "state.backend is required");
     step(
         &mut config,
         "[state]\nbackend = \"dynamodb\"\n",
-        "milestone 7",
+        "state.dynamodb_table",
     );
     config = config.replace("backend = \"dynamodb\"", "backend = \"local_file\"");
     step(&mut config, "", "local daemon's");
@@ -140,6 +144,74 @@ fn the_router_refuses_each_missing_or_unbuilt_setting_before_it_connects() {
         &mut config,
         "[server]\npublic_url = \"http://127.0.0.1:8080\"\n",
         "sslmode",
+    );
+}
+
+/// The AWS settings: ECS, KMS and DynamoDB, each refused while incomplete. The walk stops
+/// before every setting passes, so nothing ever reaches AWS.
+#[test]
+fn the_router_on_aws_refuses_each_missing_setting_before_it_connects() {
+    let home = Home::new();
+    let mut config = "[launcher]\nkind = \"ecs\"\n[launcher.ecs]\n".to_owned();
+    let step = |config: &mut String, add: &str, needle: &str| {
+        *config = config.replace("[launcher.ecs]\n", &format!("[launcher.ecs]\n{add}"));
+        refused(&home, config, &["router"], 1, needle);
+    };
+    step(
+        &mut config,
+        "",
+        "launcher.ecs.subnets and launcher.ecs.security_groups",
+    );
+    step(
+        &mut config,
+        "subnets = [\"subnet-a\"]\n",
+        "launcher.ecs.security_groups",
+    );
+    step(
+        &mut config,
+        "security_groups = [\"sg-user\"]\n",
+        "internal.router_url",
+    );
+    config.insert_str(
+        0,
+        "[internal]\nrouter_url = \"https://router.knoggin.internal:8443\"\n",
+    );
+    step(&mut config, "", "launcher.ecs.cluster");
+    step(
+        &mut config,
+        "cluster = \"knoggin\"\n",
+        "launcher.ecs.task_definition",
+    );
+    step(
+        &mut config,
+        "task_definition = \"knoggin-user:3\"\n",
+        "launcher.ecs.capacity_provider",
+    );
+    // No containers.max is needed on AWS.
+    step(
+        &mut config,
+        "capacity_provider = \"knoggin-hosts\"\n",
+        "keys.provider is required",
+    );
+    config.insert_str(0, "[keys]\nprovider = \"kms\"\n");
+    refused(&home, &config, &["router"], 1, "keys.kms_key_id");
+    config = config.replace(
+        "provider = \"kms\"\n",
+        "provider = \"kms\"\nkms_key_id = \"arn:aws:kms:x\"\n",
+    );
+    refused(&home, &config, &["router"], 1, "state.backend is required");
+    config.insert_str(0, "[state]\nbackend = \"dynamodb\"\n");
+    refused(&home, &config, &["router"], 1, "state.dynamodb_table");
+    config = config.replace(
+        "backend = \"dynamodb\"\n",
+        "backend = \"dynamodb\"\ndynamodb_table = \"knoggin\"\n",
+    );
+    refused(
+        &home,
+        &config,
+        &["router"],
+        1,
+        "internal.secret is required",
     );
 }
 
@@ -205,7 +277,21 @@ fn the_other_roles_refuse_what_they_miss_and_wrong_usage_exits_2() {
         "[keys]\nprovider = \"kms\"\nkms_key_id = \"arn\"\n",
         &["admin", "selftest"],
         1,
-        "keys.provider = \"kms\" is not built yet",
+        "state.backend is required",
+    );
+    refused(
+        &home,
+        "[keys]\nprovider = \"kms\"\n",
+        &["admin", "selftest"],
+        1,
+        "keys.kms_key_id",
+    );
+    refused(
+        &home,
+        "[state]\nbackend = \"dynamodb\"\n",
+        &["lifecycle"],
+        1,
+        "state.dynamodb_table",
     );
     // On KMS, rotation is the provider's own and nothing is done.
     let file = home.dir.path().join("server.toml");

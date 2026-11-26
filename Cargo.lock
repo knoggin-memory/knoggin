@@ -2478,6 +2478,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "aws-lc-rs",
+ "aws-sdk-dynamodb",
  "axum",
  "base64 0.23.1",
  "bollard",
@@ -2503,6 +2504,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "testcontainers",
  "tokio",
  "tokio-util",
  "toml",

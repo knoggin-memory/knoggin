@@ -162,7 +162,6 @@ serve_tls(listener, tls, router, move |peer| {
 | `pool` | router | launching (`Launcher::launch`, `describe`, `hello`), pool size |
 | `reconcile` | router | leader lock and the 30-second loop, rollout (`BuildInfo::compare`) |
 | `testing` (fake launcher) | the first agent that needs it, once `serve` exists | a `Launcher` that runs the container role in process on `127.0.0.x` |
-| `kms` (`KmsKeyProvider`), `launcher::ecs` (`EcsLauncher`) | milestone 7 | use `aws::sdk_config` and `behavior_version` |
 
 ## Lifecycle, admin and launchers (built)
 
@@ -182,3 +181,17 @@ to thin without the field key.
 
 Settings for `knoggin_http::edge` (public URL, auth, per-credential limits) stay in `EdgeConfig`;
 the per-address and per-user rates are read from `RouterLimits` by `run_router` into the edge.
+
+## AWS (built)
+
+| Module | Offers |
+| --- | --- |
+| `kms` | `KmsKeyProvider::new(&SdkConfig, key_arn)` implements `KeyProvider` (`GenerateDataKey`/`Decrypt` with the context `knoggin:store`); `with_timeouts(builder)` + `from_conf` for a test client |
+| `launcher::ecs` | `EcsLauncher::new(&SdkConfig, EcsSettings)` implements `Launcher` (`RunTask`, `DescribeTasks` with tags, `ListTasks` running and stopped, `DescribeContainerInstances` for draining, `StopTask`); `with_timeouts` + `from_conf` for a test client |
+| `aws` | `SdkConfig` re-exported, so the binary names it without `aws-config` |
+
+`DynamoDb` lives in `knoggin-state` (`DynamoDb::new(aws_sdk_dynamodb::config::Builder::from(&sdk), table, clock)`).
+The binary builds all three from `aws::sdk_config(None, None)` (the default chain; no endpoint
+setting). Stack tests: `knoggin-state/tests/stack_aws_state.rs`, `tests/stack_aws_kms.rs`,
+`tests/stack_aws_launcher.rs`, and the binary's `knoggin/tests/stack_aws_admin.rs`, all on the
+pinned moto image.
