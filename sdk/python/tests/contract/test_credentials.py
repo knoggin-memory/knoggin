@@ -103,11 +103,11 @@ def test_the_socket_needs_no_credential_and_a_key_there_reaches_its_own_store_on
 
 
 def test_a_stopped_daemon_is_reported_as_not_running_and_no_tcp_connection_is_opened(
-    monkeypatch: pytest.MonkeyPatch,
+    daemon: Daemon, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     exe = binary()
     assert exe is not None
-    d = Daemon(exe)
+    d = Daemon(exe)  # a second daemon of its own, which this test stops
     try:
         address = d.base_url.removeprefix("http://")
         host, port = address.rsplit(":", 1)

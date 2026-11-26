@@ -108,7 +108,18 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/nextest.tar.gz" https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-unknown-linux-gnu.tar.gz
           echo "d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a  $RUNNER_TEMP/nextest.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/nextest.tar.gz" -C "$HOME/.cargo/bin" cargo-nextest
+      # stack_sdk.rs runs the SDK's contract tests with uv, as the sdk job does.
+      - name: Install uv
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/uv.whl" https://files.pythonhosted.org/packages/3d/aa/26d64642d808de4a652579ef950d7cd2d37f080a8babf9c67c6b75fc4c3f/uv-0.13.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19  $RUNNER_TEMP/uv.whl" | sha256sum -c -
+          unzip -j -o "$RUNNER_TEMP/uv.whl" uv-0.13.9.data/scripts/uv -d "$HOME/.cargo/bin"
+          chmod +x "$HOME/.cargo/bin/uv"
+          uv python install 3.15.2
       - run: cargo nextest run --workspace --locked --profile ci --run-ignored only -E 'kind(test) & binary(#stack_*)'
+        env:
+          UV_PYTHON: "3.15.2"
+          UV_PYTHON_DOWNLOADS: manual
 
   budgets:
     runs-on: ubuntu-24.04-arm
