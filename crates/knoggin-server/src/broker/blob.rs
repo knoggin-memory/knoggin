@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::{Extension, Request, State};
-use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
@@ -110,6 +110,27 @@ where
     })
 }
 
+/// The headers that go to the bucket: those the signature names, each sent once by the
+/// caller (else `None`), without the link headers, and with `length` as the one
+/// `Content-Length` of an upload.
+fn outbound_headers(signed: &[String], from: &HeaderMap, length: Option<u64>) -> Option<HeaderMap> {
+    let mut out = HeaderMap::new();
+    for name in signed {
+        if is_link_header(name) || name == header::CONTENT_LENGTH.as_str() {
+            continue;
+        }
+        let mut values = from.get_all(name.as_str()).iter();
+        let (Some(value), None) = (values.next(), values.next()) else {
+            return None;
+        };
+        out.insert(HeaderName::from_bytes(name.as_bytes()).ok()?, value.clone());
+    }
+    if let Some(len) = length {
+        out.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
+    }
+    Some(out)
+}
+
 pub(super) async fn blob(
     State(broker): State<Arc<Broker>>,
     Extension(peer): Extension<PeerAddr>,
@@ -178,22 +199,12 @@ pub(super) async fn blob(
     let mut outbound = broker
         .bucket
         .request(method.clone(), format!("{base}?{query}"));
-    for name in &signed_names {
-        if is_link_header(name) {
-            continue;
-        }
-        let mut values = req.headers().get_all(name.as_str()).iter();
-        let (Some(value), None) = (values.next(), values.next()) else {
-            return Err(refused());
-        };
-        outbound = outbound.header(name.as_str(), value);
-    }
+    let headers = outbound_headers(&signed_names, req.headers(), length).ok_or_else(refused)?;
+    outbound = outbound.headers(headers);
     let slot = checked.slot;
-    if let Some(len) = length {
+    if length.is_some() {
         let body = idle_limited(req.into_body().into_data_stream(), ());
-        outbound = outbound
-            .header(header::CONTENT_LENGTH, len)
-            .body(reqwest::Body::wrap_stream(body));
+        outbound = outbound.body(reqwest::Body::wrap_stream(body));
     }
     let answer = outbound.send().await.map_err(|_| {
         tracing::warn!(
@@ -255,6 +266,41 @@ mod tests {
         assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
         assert!(started.elapsed() >= IDLE);
         assert!(s.next().await.is_none(), "nothing after the error");
+    }
+
+    #[test]
+    fn an_upload_sends_content_length_once() {
+        let mut from = HeaderMap::new();
+        from.insert(header::CONTENT_LENGTH, HeaderValue::from(5));
+        from.insert(header::IF_NONE_MATCH, HeaderValue::from_static("*"));
+        from.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer t"));
+        from.insert(header::HOST, HeaderValue::from_static("router:8443"));
+        from.insert("x-extra", HeaderValue::from_static("1"));
+        let signed: Vec<String> = ["content-length", "host", "if-none-match", "authorization"]
+            .map(String::from)
+            .to_vec();
+        let out = outbound_headers(&signed, &from, Some(5)).unwrap();
+        let request = reqwest::Client::new()
+            .put("http://bucket.test/k")
+            .headers(out)
+            .body("12345")
+            .build()
+            .unwrap();
+        // What hyper writes to the bucket: every value in the map, so one length.
+        let lengths: Vec<_> = request
+            .headers()
+            .get_all(header::CONTENT_LENGTH)
+            .iter()
+            .collect();
+        assert_eq!(lengths, [HeaderValue::from(5)]);
+        let mut names: Vec<_> = request.headers().keys().map(|n| n.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["content-length", "if-none-match"]);
+        // A signed header sent twice is refused; a download sends no length.
+        from.append(header::IF_NONE_MATCH, HeaderValue::from_static("*"));
+        assert!(outbound_headers(&signed, &from, Some(5)).is_none());
+        let get = outbound_headers(&["host".into()], &from, None).unwrap();
+        assert!(get.is_empty());
     }
 
     #[test]
