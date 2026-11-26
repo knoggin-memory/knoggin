@@ -21,6 +21,7 @@ use knoggin_core::ops::{
 use knoggin_core::{EngineError, MemoryId, Store, Timestamp};
 use serde::Serialize;
 
+use super::live::{self, UiEvent};
 use super::{OpenStore, StoreHost, WriteKind, new_memory_id, now, request_hash};
 use crate::ctx::RequestContext;
 use crate::error::ApiError;
@@ -67,10 +68,23 @@ fn text_ids(saved: &StoredMemory) -> Vec<MemoryId> {
         .unwrap_or_default()
 }
 
+/// One write: the engine call, which also notes the web UI's events of what it did.
+/// It runs only when the request is not answered from the idempotency record, so a
+/// replay makes no event.
 type Op<T> = Box<
-    dyn FnOnce(&mut Store, &WriteContext, Timestamp) -> Result<(T, Vec<MemoryId>), EngineError>
+    dyn FnOnce(
+            &mut Store,
+            &WriteContext,
+            Timestamp,
+            &mut Vec<UiEvent>,
+        ) -> Result<(T, Vec<MemoryId>), EngineError>
         + Send,
 >;
+
+/// The client of a write, for its events.
+fn client(w: &WriteContext) -> Option<&str> {
+    w.client.as_deref()
+}
 
 impl StoreHost {
     /// One client write, idempotent when it has a key (and is not a dry run).
@@ -84,20 +98,23 @@ impl StoreHost {
     ) -> Result<Reply<T>, ApiError> {
         let write = ctx.write_context();
         let (open, _permit) = self.open_for(ctx).await?;
-        self.write_on(&open, kind, move |s| {
-            let reply = match keyed {
-                Some((key, hash)) => {
-                    s.run_idempotent(&key, hash, at, |s| op(s, &write, at))
+        let (reply, events) = self
+            .write_on(&open, kind, move |s| {
+                let mut events = Vec::new();
+                let reply = match keyed {
+                    Some((key, hash)) => s
+                        .run_idempotent(&key, hash, at, |s| op(s, &write, at, &mut events))
                         .map(|i| match i {
                             Idempotent::Ran(t) => Reply::Fresh(t),
                             Idempotent::Replayed(bytes) => Reply::Replayed(bytes),
-                        })
-                }
-                None => op(s, &write, at).map(|(t, _)| Reply::Fresh(t)),
-            };
-            reply.map_err(ApiError::from)
-        })
-        .await
+                        }),
+                    None => op(s, &write, at, &mut events).map(|(t, _)| Reply::Fresh(t)),
+                };
+                reply.map(|r| (r, events)).map_err(ApiError::from)
+            })
+            .await?;
+        open.events().publish(events);
+        Ok(reply)
     }
 
     /// The request back, with the key and its request hash when a key was sent. The hash
@@ -163,11 +180,12 @@ impl StoreHost {
                 WriteKind::Client,
                 keyed,
                 at,
-                Box::new(move |s, w, at| {
+                Box::new(move |s, w, at, ev| {
                     let mut saved = s.store_memory(req, id, vector, w, at)?;
                     if skipped {
                         saved.duplicate_check = Some(DuplicateCheck::Skipped);
                     }
+                    ev.push(live::stored(s, saved.id, client(w), at));
                     let ids = text_ids(&saved);
                     Ok((saved, ids))
                 }),
@@ -201,7 +219,15 @@ impl StoreHost {
                 WriteKind::Client,
                 keyed,
                 at,
-                Box::new(move |s, w, at| Ok((s.store_memories(req, ids, w, at)?, Vec::new()))),
+                Box::new(move |s, w, at, ev| {
+                    let result = s.store_memories(req, ids, w, at)?;
+                    for item in &result.results {
+                        if let Some(m) = &item.memory {
+                            ev.push(live::stored(s, m.id, client(w), at));
+                        }
+                    }
+                    Ok((result, Vec::new()))
+                }),
             )
             .await;
         self.notify_work();
@@ -232,11 +258,12 @@ impl StoreHost {
                 WriteKind::Client,
                 keyed,
                 at,
-                Box::new(move |s, w, at| {
+                Box::new(move |s, w, at, ev| {
                     let mut saved = s.supersede_memory(req, id, vector, w, at)?;
                     if skipped {
                         saved.duplicate_check = Some(DuplicateCheck::Skipped);
                     }
+                    ev.push(live::stored(s, saved.id, client(w), at));
                     let ids = text_ids(&saved);
                     Ok((saved, ids))
                 }),
@@ -260,7 +287,21 @@ impl StoreHost {
             WriteKind::Client,
             keyed,
             now(),
-            Box::new(move |s, w, at| Ok((s.reinforce_memory(req, w, at)?, Vec::new()))),
+            Box::new(move |s, w, at, ev| {
+                let (id, rating) = (req.id, req.quality);
+                let before = s.memory(id).map(|m| m.stability);
+                let done = s.reinforce_memory(req, w, at)?;
+                ev.push(UiEvent::Reinforce(live::ReinforceEvent {
+                    seq: 0,
+                    at: at.millis(),
+                    client: w.client.clone(),
+                    id,
+                    rating,
+                    stability_before: before,
+                    stability_after: done.stability,
+                }));
+                Ok((done, Vec::new()))
+            }),
         )
         .await
     }
@@ -279,7 +320,13 @@ impl StoreHost {
             WriteKind::MakesRoom,
             keyed,
             now(),
-            Box::new(move |s, w, at| Ok((s.forget_memory(req, w, at)?, Vec::new()))),
+            Box::new(move |s, w, at, ev| {
+                let done = s.forget_memory(req, w, at)?;
+                if done.deleted {
+                    ev.push(live::forgotten(done.id, client(w), at));
+                }
+                Ok((done, Vec::new()))
+            }),
         )
         .await
     }
@@ -304,7 +351,19 @@ impl StoreHost {
             kind,
             keyed,
             now(),
-            Box::new(move |s, w, at| Ok((s.forget_memories(req, w, at)?, Vec::new()))),
+            Box::new(move |s, w, at, ev| {
+                let dry_run = req.dry_run;
+                let done = s.forget_memories(req, w, at)?;
+                if !dry_run {
+                    ev.extend(
+                        done.results
+                            .iter()
+                            .filter(|r| r.deleted)
+                            .map(|r| live::forgotten(r.id, client(w), at)),
+                    );
+                }
+                Ok((done, Vec::new()))
+            }),
         )
         .await
     }
@@ -323,7 +382,7 @@ impl StoreHost {
             WriteKind::Client,
             keyed,
             now(),
-            Box::new(move |s, w, at| Ok((s.move_memories(req, w, at)?, Vec::new()))),
+            Box::new(move |s, w, at, _| Ok((s.move_memories(req, w, at)?, Vec::new()))),
         )
         .await
     }
@@ -342,7 +401,7 @@ impl StoreHost {
             WriteKind::Client,
             keyed,
             now(),
-            Box::new(move |s, w, at| Ok((s.create_namespace(req, w, at)?, Vec::new()))),
+            Box::new(move |s, w, at, _| Ok((s.create_namespace(req, w, at)?, Vec::new()))),
         )
         .await
     }
@@ -367,7 +426,7 @@ impl StoreHost {
             kind,
             keyed,
             now(),
-            Box::new(move |s, w, at| Ok((s.update_namespace_policy(req, w, at)?, Vec::new()))),
+            Box::new(move |s, w, at, _| Ok((s.update_namespace_policy(req, w, at)?, Vec::new()))),
         )
         .await
     }
@@ -393,13 +452,33 @@ impl StoreHost {
             kind,
             keyed,
             now(),
-            Box::new(move |s, w, at| Ok((s.delete_namespace(req, w, at)?, Vec::new()))),
+            Box::new(move |s, w, at, ev| {
+                // The memories a real delete removes, for their `forget` events.
+                let gone: Vec<MemoryId> = match s.namespace_by_name(&req.name) {
+                    Some(ns) if !req.dry_run => {
+                        let ns = ns.id;
+                        s.memories()
+                            .filter(|m| m.namespace == ns)
+                            .map(|m| m.id)
+                            .collect()
+                    }
+                    _ => Vec::new(),
+                };
+                let done = s.delete_namespace(req, w, at)?;
+                if done.deleted {
+                    ev.extend(
+                        gone.into_iter()
+                            .map(|id| live::forgotten(id, client(w), at)),
+                    );
+                }
+                Ok((done, Vec::new()))
+            }),
         )
         .await
     }
 
     /// One read under the read lock; returns the open store for access recording.
-    async fn read<R: Send + 'static>(
+    pub(crate) async fn read<R: Send + 'static>(
         &self,
         ctx: &RequestContext,
         f: impl FnOnce(&Store, Timestamp) -> Result<R, EngineError> + Send + 'static,
@@ -412,6 +491,19 @@ impl StoreHost {
         Ok((out, open))
     }
 
+    /// One read for the web UI's read models, with the open store's own figures; it
+    /// records nothing.
+    pub(crate) async fn read_with<R: Send + 'static>(
+        &self,
+        ctx: &RequestContext,
+        f: impl FnOnce(&Store, &OpenStore, Timestamp) -> Result<R, ApiError> + Send + 'static,
+    ) -> Result<R, ApiError> {
+        ctx.require_read()?;
+        let (open, _permit) = self.open_for(ctx).await?;
+        let figures = open.clone();
+        self.read_on(&open, move |s| f(s, &figures, now())).await
+    }
+
     /// Records access after a read, when the request asked for it and the credential may
     /// write. A failure is logged; the read's answer stands.
     async fn record(
@@ -420,13 +512,14 @@ impl StoreHost {
         open: &Arc<OpenStore>,
         asked: bool,
         hits: Vec<AccessHit>,
+        at: Timestamp,
     ) {
         if !asked || !ctx.permissions.write || hits.is_empty() {
             return;
         }
         let result = self
             .write_on(open, WriteKind::Bookkeeping, move |s| {
-                s.record_access(&hits, now());
+                s.record_access(&hits, at);
                 Ok(())
             })
             .await;
@@ -448,7 +541,7 @@ impl StoreHost {
                 id: view.id,
                 kind: AccessKind::Direct,
             };
-            self.record(ctx, &open, asked, vec![hit]).await;
+            self.record(ctx, &open, asked, vec![hit], now()).await;
         }
         Ok(view)
     }
@@ -471,7 +564,7 @@ impl StoreHost {
                 kind: AccessKind::Associative,
             })
             .collect();
-        self.record(ctx, &open, asked, hits).await;
+        self.record(ctx, &open, asked, hits, now()).await;
         Ok(result)
     }
 
@@ -527,7 +620,9 @@ impl StoreHost {
         mut req: Recall,
     ) -> Result<RecallResponse, ApiError> {
         ctx.require_read()?;
+        let started = std::time::Instant::now();
         req.namespace = fill(req.namespace.take(), ctx);
+        let namespace = req.namespace.clone().unwrap_or_default();
         let vector = self.query_vector(&req.query).await;
         let asked = req.record_access;
         let (result, open) = self
@@ -535,7 +630,17 @@ impl StoreHost {
                 s.recall(&req, vector.as_deref(), false, at)
             })
             .await?;
-        self.record(ctx, &open, asked, result.hits).await;
+        // The event and the access it records share one time, so that the Timeline can
+        // join them into one row.
+        let at = now();
+        open.events().publish(vec![live::recalled(
+            &result.trace,
+            &namespace,
+            ctx.client.as_deref(),
+            at,
+        )]);
+        self.record(ctx, &open, asked, result.hits, at).await;
+        self.recall_ms.note(started.elapsed());
         Ok(result.response)
     }
 
@@ -563,7 +668,7 @@ impl StoreHost {
     }
 
     /// The query vector; none for a query the engine will refuse anyway.
-    async fn query_vector(&self, query: &str) -> Option<Vec<f32>> {
+    pub(crate) async fn query_vector(&self, query: &str) -> Option<Vec<f32>> {
         if query.trim().is_empty() || query.len() > QUERY_MAX_BYTES {
             return None;
         }

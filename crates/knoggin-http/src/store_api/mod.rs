@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The store layer's axum router: the REST memory routes, export and import (tab "REST
-//! API", Store routes). It expects a `RequestContext` in the request extensions; the edge
-//! layer (or a container's middleware) puts it there. The web UI read models join in
-//! milestone 4.
+//! API", Store routes), and the web UI's read models and event stream (`ui`). It expects
+//! a `RequestContext` in the request extensions; the edge layer (or a container's
+//! middleware) puts it there.
 
 pub(crate) mod extract;
+pub(crate) mod ui;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -68,17 +69,20 @@ pub fn store_layer(host: Arc<StoreHost>) -> Router {
         )
         .route("/v1/namespaces/{name}/stats", get(namespace_stats))
         .route("/v1/namespaces/{name}/policy", put(update_policy))
-        .route("/v1/tags", get(tags));
+        .route("/v1/tags", get(tags))
+        .merge(ui::routes());
     let ordinary = bounded(ordinary, DEFAULT_BODY_BYTES).layer(timeout());
     let batch = bounded(
         Router::new().route("/v1/memories/batch", post(save_batch)),
         limits.body_bytes,
     )
     .layer(timeout());
-    // The two long-running routes have no time limit; the import streams, without a
+    // The three long-running routes have no time limit; the import streams, without a
     // limit on its whole body.
     let export = bounded(
-        Router::new().route("/v1/export", get(export)),
+        Router::new()
+            .route("/v1/export", get(export))
+            .merge(ui::stream_routes()),
         DEFAULT_BODY_BYTES,
     );
     let import = Router::new()

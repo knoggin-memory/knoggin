@@ -6,12 +6,12 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Weak};
 use std::time::Duration;
 
-use knoggin_core::ops::ApplyOutcome;
 use knoggin_core::snapshot::{SnapshotName, WRITE_CONTENT_FORMAT};
 use knoggin_crypto::container::{self, Header};
 use tokio::time::Instant;
 
 use super::embedder::QueueOutcome;
+use super::live;
 use super::{
     BackendError, OpenStore, SWEEP_EVERY, SealedSnapshot, SnapshotTiming, StoreHost, WriteKind,
     lock, now,
@@ -115,11 +115,21 @@ pub(super) async fn store_task(host: Weak<StoreHost>, open: Arc<OpenStore>) {
 
 async fn sweep(host: &StoreHost, open: &Arc<OpenStore>) {
     let result = host
-        .write_on(open, WriteKind::Bookkeeping, |s| Ok(s.sweep(now())))
+        .write_on(open, WriteKind::Bookkeeping, |s| {
+            let at = now();
+            let report = s.sweep(at);
+            let events = live::swept(s, &report, at);
+            Ok((report, events, at))
+        })
         .await;
     match result {
-        Ok(report) if report.deleted > 0 || report.summary_to_ghost > 0 => host.recheck_budget(),
-        Ok(_) => {}
+        Ok((report, events, at)) => {
+            *lock(&open.last_sweep) = at;
+            open.events.publish(events);
+            if report.deleted > 0 || report.summary_to_ghost > 0 {
+                host.recheck_budget();
+            }
+        }
         Err(e) => tracing::warn!(store_id = %open.id, code = e.code.as_str(), "the sweep failed"),
     }
 }
@@ -192,6 +202,8 @@ pub(super) async fn snapshot(host: &StoreHost, open: &Arc<OpenStore>) -> Result<
             Ok(()) => {
                 state.saved = counters;
                 *lock(&open.saved) = counters;
+                open.snapshot_failed.store(false, Ordering::Relaxed);
+                *lock(&open.snapshot_bytes) = Some(len);
                 state.next_sequence += 1;
                 state.restored = None;
                 open.last_sequence.store(name.sequence(), Ordering::Relaxed);
@@ -209,6 +221,7 @@ pub(super) async fn snapshot(host: &StoreHost, open: &Arc<OpenStore>) -> Result<
             // Rule 6: take the next sequence at once.
             Err(BackendError::NameTaken) => state.next_sequence += 1,
             Err(e) => {
+                open.snapshot_failed.store(true, Ordering::Relaxed);
                 host.counters
                     .snapshot_failures
                     .fetch_add(1, Ordering::Relaxed);
@@ -269,6 +282,9 @@ pub(super) async fn embed_worker(host: Weak<StoreHost>) {
             }
         }
         let Some((open, job)) = found else {
+            // An idle wait holds no open store: a closed store must go at once (its event
+            // streams end when it does).
+            drop(stores);
             h.idle_waits.fetch_add(1, Ordering::Relaxed);
             let mut changes = h.embedder.subscribe();
             // A closed channel means the model state can no longer change: wait for work.
@@ -293,11 +309,19 @@ pub(super) async fn embed_worker(host: Weak<StoreHost>) {
                 h.counters
                     .embed_millis
                     .fetch_add(started.elapsed().as_millis() as u64, Ordering::Relaxed);
-                h.write_on(&open, WriteKind::Bookkeeping, move |s| {
-                    Ok(s.apply_embedding(id, &model, vector, now()))
+                h.embed_ms.note(started.elapsed());
+                let applied = h
+                    .write_on(&open, WriteKind::Bookkeeping, move |s| {
+                        let at = now();
+                        let outcome = s.apply_embedding(id, &model, vector, at);
+                        Ok(live::linked(s, id, &outcome, at))
+                    })
+                    .await;
+                applied.map(|events| {
+                    let some = events.is_some();
+                    open.events.publish(events.unwrap_or_default());
+                    some
                 })
-                .await
-                .map(|o| matches!(o, ApplyOutcome::Applied { .. }))
             }
             QueueOutcome::Failed => {
                 h.write_on(&open, WriteKind::Bookkeeping, move |s| {

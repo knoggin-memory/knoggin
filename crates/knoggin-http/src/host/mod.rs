@@ -14,6 +14,7 @@
 
 mod backend;
 mod embedder;
+pub(crate) mod live;
 mod local;
 pub mod ops;
 mod schedule;
@@ -225,6 +226,14 @@ pub(crate) struct OpenStore {
     /// The MCP client names seen, with when each was last seen; in memory only.
     clients: Mutex<Vec<(String, Timestamp)>>,
     task: Mutex<Option<JoinHandle<()>>>,
+    /// The web UI's live events.
+    events: live::EventLog,
+    /// When the store was last swept: at open, then every 24 hours.
+    last_sweep: Mutex<Timestamp>,
+    /// The last snapshot attempt failed.
+    snapshot_failed: AtomicBool,
+    /// The size of the last snapshot read or written, when known.
+    snapshot_bytes: Mutex<Option<u64>>,
 }
 
 impl fmt::Debug for OpenStore {
@@ -237,6 +246,35 @@ impl fmt::Debug for OpenStore {
 }
 
 impl OpenStore {
+    /// The store's live events.
+    pub(crate) fn events(&self) -> &live::EventLog {
+        &self.events
+    }
+
+    /// When the store was last swept.
+    pub(crate) fn last_sweep(&self) -> Timestamp {
+        *lock(&self.last_sweep)
+    }
+
+    /// The size of the last snapshot read or written in this open, when known.
+    pub(crate) fn snapshot_bytes(&self) -> Option<u64> {
+        *lock(&self.snapshot_bytes)
+    }
+
+    /// Why the store's subsystem is degraded: its last snapshot failed, or it takes no
+    /// writes. `None` when it is well.
+    pub(crate) fn degraded(&self) -> Option<&'static str> {
+        if self.snapshot_failed.load(Ordering::Relaxed) {
+            Some("The last snapshot failed")
+        } else if self.read_only.load(Ordering::Relaxed)
+            || self.upload_blocked.load(Ordering::Relaxed)
+        {
+            Some("The store takes no writes")
+        } else {
+            None
+        }
+    }
+
     fn unsaved(&self) -> bool {
         *lock(&self.current) != *lock(&self.saved)
     }
@@ -386,6 +424,12 @@ pub struct StoreHost {
     idle_waits: AtomicU64,
     /// Running totals.
     pub counters: HostCounters,
+    /// When the host started, for `GET /v1/ui/system`.
+    started_at: Timestamp,
+    started: std::time::Instant,
+    /// The last 100 recalls and document embeddings.
+    pub(crate) recall_ms: live::Latencies,
+    pub(crate) embed_ms: live::Latencies,
 }
 
 impl fmt::Debug for StoreHost {
@@ -405,6 +449,8 @@ struct Decoded {
     current: ChangeCounters,
     summary: StoreSummary,
     estimated: u64,
+    /// The size of the snapshot it was read from.
+    snapshot_bytes: Option<u64>,
 }
 
 /// Why loading one snapshot failed.
@@ -443,6 +489,10 @@ impl StoreHost {
             lease_lost: watch::Sender::new(false),
             idle_waits: AtomicU64::new(0),
             counters: HostCounters::default(),
+            started_at: now(),
+            started: std::time::Instant::now(),
+            recall_ms: live::Latencies::default(),
+            embed_ms: live::Latencies::default(),
         });
         let worker = tokio::spawn(schedule::embed_worker(Arc::downgrade(&host)));
         lock(&host.tasks).push(worker);
@@ -452,6 +502,21 @@ impl StoreHost {
     /// The host's configuration.
     pub fn config(&self) -> &HostConfig {
         &self.config
+    }
+
+    /// When this host started, and how long ago.
+    pub(crate) fn started(&self) -> (Timestamp, Duration) {
+        (self.started_at, self.started.elapsed())
+    }
+
+    /// The live events of an open store; `None` when the store is not open. Opens
+    /// nothing and counts as no activity.
+    pub(crate) fn subscribe(
+        &self,
+        id: StoreId,
+    ) -> Option<tokio::sync::broadcast::Receiver<Arc<live::UiEvent>>> {
+        let open = lock(&self.entries).get(&id).and_then(|e| e.open())?;
+        Some(open.events.subscribe())
     }
 
     /// The Model state of this process.
@@ -587,9 +652,12 @@ impl StoreHost {
             let read_key = key.clone();
             let loaded = tokio::task::spawn_blocking(move || {
                 let now = now();
-                let mut store = match snapshot {
-                    None => Store::create(id, model.clone(), now),
-                    Some(source) => read_snapshot(id, source, &read_key, max_len)?,
+                let (mut store, snapshot_bytes) = match snapshot {
+                    None => (Store::create(id, model.clone(), now), None),
+                    Some(source) => {
+                        let (store, len) = read_snapshot(id, source, &read_key, max_len)?;
+                        (store, Some(len))
+                    }
                 };
                 let saved = store.changes();
                 store.on_open(now);
@@ -602,6 +670,7 @@ impl StoreHost {
                     current: store.changes(),
                     summary: store.summary(),
                     estimated: store.estimated_bytes(),
+                    snapshot_bytes,
                     store,
                 })
             })
@@ -664,6 +733,7 @@ impl StoreHost {
             current,
             summary,
             estimated,
+            snapshot_bytes,
         } = decoded;
         let concurrency = u32::try_from(self.config.limits.store_concurrency).unwrap_or(u32::MAX);
         let open = Arc::new(OpenStore {
@@ -697,6 +767,10 @@ impl StoreHost {
             last_request: Mutex::new(Instant::now()),
             clients: Mutex::new(Vec::new()),
             task: Mutex::new(None),
+            events: live::EventLog::new(),
+            last_sweep: Mutex::new(now()),
+            snapshot_failed: AtomicBool::new(false),
+            snapshot_bytes: Mutex::new(snapshot_bytes),
         });
         if current.bookkeeping != saved.bookkeeping {
             lock(&open.timers).bookkeeping_first = Some(Instant::now());
@@ -1096,14 +1170,33 @@ impl From<OpenFailure> for ApiError {
     }
 }
 
-/// Reads, checks, decrypts and decodes one snapshot, on a blocking thread.
+/// Counts the bytes read through it.
+struct Counted<R> {
+    inner: R,
+    read: u64,
+}
+
+impl<R: Read> Read for Counted<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.read += n as u64;
+        Ok(n)
+    }
+}
+
+/// Reads, checks, decrypts and decodes one snapshot, on a blocking thread. Returns the
+/// store and the snapshot's size.
 fn read_snapshot(
     id: StoreId,
     source: SnapshotSource,
     key: &DataKey,
     max_len: u64,
-) -> Result<Store, LoadError> {
-    let SnapshotSource { name, mut reader } = source;
+) -> Result<(Store, u64), LoadError> {
+    let SnapshotSource { name, reader } = source;
+    let mut reader = Counted {
+        inner: reader,
+        read: 0,
+    };
     let from_container = |e: ContainerError| match e {
         ContainerError::Io(_) => LoadError::Transit,
         ContainerError::TooLarge { .. } => LoadError::TooLarge,
@@ -1114,12 +1207,13 @@ fn read_snapshot(
     let content = container::open(&header, key, &mut reader as &mut dyn Read, max_len)
         .map_err(from_container)?;
     // The header is trusted only now that a chunk has decrypted under it.
-    snapshot::check_content_format(header.content_format)
+    let store = snapshot::check_content_format(header.content_format)
         .and_then(|()| Store::decode(header.content_format, &content))
         .map_err(|e| match e {
             SnapshotError::FormatTooNew(_) => LoadError::FormatTooNew,
             SnapshotError::Corrupt(_) => LoadError::Corrupt,
-        })
+        })?;
+    Ok((store, reader.read))
 }
 
 #[cfg(test)]
