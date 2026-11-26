@@ -381,19 +381,23 @@ fn start_passes_the_log_level_and_not_the_api_key() {
         .unwrap();
     let cmdline = String::from_utf8_lossy(&cmdline.stdout).into_owned();
     assert!(cmdline.contains("--log-level warn"), "{cmdline}");
-    // Linux's ps prints no environment with `eww -o`; /proc has it. macOS has no /proc.
-    let env = match std::fs::read(format!("/proc/{pid}/environ")) {
-        Ok(raw) => String::from_utf8_lossy(&raw).replace('\0', " "),
-        Err(_) => {
-            let out = std::process::Command::new("ps")
-                .args(["eww", "-o", "command=", "-p", &pid])
-                .output()
-                .unwrap();
-            String::from_utf8_lossy(&out.stdout).into_owned()
-        }
-    };
-    assert!(env.contains("KNOGGIN_HOME="), "no environment found: {env}");
-    assert!(!env.contains("KNOGGIN_API_KEY"), "{env}");
+    if cfg!(target_os = "linux") {
+        // On Linux the daemon marks itself not dumpable, which also makes its
+        // environment unreadable to the same user: the check that matters there.
+        let err = std::fs::read(format!("/proc/{pid}/environ")).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied, "{err}");
+    } else {
+        let out = std::process::Command::new("ps")
+            .args(["eww", "-o", "command=", "-p", &pid])
+            .output()
+            .unwrap();
+        let env = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(
+            env.contains("KNOGGIN_HOME="),
+            "ps shows no environment: {env}"
+        );
+        assert!(!env.contains("KNOGGIN_API_KEY"), "{env}");
+    }
     assert_eq!(home.run(&["stop"]).code, 0);
     let log = std::fs::read_to_string(home.root().join("logs/daemon.log")).unwrap();
     assert!(
