@@ -275,4 +275,41 @@ mod tests {
         assert!(matches!(read, Ok(0) | Err(_)), "{read:?}");
         assert!(started.elapsed() >= HEADER_READ_TIMEOUT);
     }
+
+    /// After the TLS handshake an HTTP/2 client that sends no request is closed within the
+    /// same 30 seconds; HTTP/2 itself would wait for its first frames without a limit.
+    #[tokio::test]
+    async fn a_silent_http2_connection_is_closed() {
+        let id = Uuid::now_v7();
+        let identity = ServerIdentity::for_container(id).unwrap();
+        let (addr, _stop) = listen(server_config(&identity).unwrap(), Router::new(), |_| {
+            Some(())
+        })
+        .await;
+        let mut config = hello_client_config().unwrap();
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        let tcp = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let name = rustls::pki_types::ServerName::try_from(id.to_string()).unwrap();
+        let mut tls = tokio_rustls::TlsConnector::from(Arc::new(config))
+            .connect(name, tcp)
+            .await
+            .unwrap();
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(&b"h2"[..]));
+        // The handshake ran in real time; the wait for a request runs on paused time.
+        tokio::time::pause();
+        let started = tokio::time::Instant::now();
+        let mut buf = [0u8; 256];
+        let closed = tokio::time::timeout(HEADER_READ_TIMEOUT * 2, async {
+            // The server's own settings frame comes first; then the end.
+            loop {
+                match tokio::io::AsyncReadExt::read(&mut tls, &mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+            }
+        })
+        .await;
+        assert!(closed.is_ok(), "the connection stayed open");
+        assert!(started.elapsed() >= HEADER_READ_TIMEOUT);
+    }
 }

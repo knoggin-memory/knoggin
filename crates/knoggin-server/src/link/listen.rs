@@ -8,10 +8,12 @@
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use axum::middleware::AddExtension;
 use axum::{Extension, Router};
+use hyper::Request;
+use hyper::body::Incoming;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::server::graceful::{GracefulShutdown, Watcher};
@@ -20,7 +22,7 @@ use rustls::ServerConfig;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
 use tokio_rustls::TlsAcceptor;
-use tower::Layer;
+use tower::{Layer, ServiceExt};
 
 /// The header read timeout of every link listener, which also bounds the TLS handshake.
 pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(30);
@@ -85,7 +87,8 @@ pub async fn serve_tls<G, A>(
                     connections.spawn(connection(
                         stream,
                         acceptor.clone(),
-                        service(router.clone(), PeerAddr(peer)),
+                        router.clone(),
+                        PeerAddr(peer),
                         builders.clone(),
                         graceful.watcher(),
                         guard,
@@ -104,16 +107,11 @@ pub async fn serve_tls<G, A>(
     connections.abort_all();
 }
 
-type Service = TowerToHyperService<AddExtension<Router, PeerAddr>>;
-
-fn service(router: Router, peer: PeerAddr) -> Service {
-    TowerToHyperService::new(Extension(peer).layer(router))
-}
-
 async fn connection<G>(
     stream: TcpStream,
     acceptor: TlsAcceptor,
-    service: Service,
+    router: Router,
+    peer: PeerAddr,
     builders: Arc<[Builder<TokioExecutor>; 2]>,
     watcher: Watcher,
     guard: G,
@@ -124,10 +122,31 @@ async fn connection<G>(
         return;
     };
     let http2 = tls.get_ref().1.alpn_protocol() == Some(b"h2");
+    // HTTP/1 bounds its first request with the header read timeout; HTTP/2 has no such
+    // timer before the client's first frames, so the first request must come within it.
+    let started = Arc::new(AtomicBool::new(false));
+    let seen = started.clone();
+    let service = TowerToHyperService::new(Extension(peer).layer(router).map_request(
+        move |req: Request<Incoming>| {
+            seen.store(true, Ordering::Relaxed);
+            req
+        },
+    ));
     let conn = builders[usize::from(http2)]
         .serve_connection_with_upgrades(TokioIo::new(tls), service)
         .into_owned();
-    if watcher.watch(conn).await.is_err() {
+    let mut conn = std::pin::pin!(watcher.watch(conn));
+    let ended = tokio::select! {
+        ended = &mut conn => ended,
+        () = tokio::time::sleep(HEADER_READ_TIMEOUT), if http2 => {
+            if !started.load(Ordering::Relaxed) {
+                // Dropping the connection closes it.
+                return;
+            }
+            conn.await
+        }
+    };
+    if ended.is_err() {
         tracing::debug!(kind = "connection", "a link connection ended with an error");
     }
     drop(guard);
