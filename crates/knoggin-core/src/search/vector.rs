@@ -137,6 +137,11 @@ impl VectorTable {
         *self = Self::new(dimensions);
     }
 
+    /// The table from ID to slot that lookups read. For index comparisons.
+    pub fn slots(&self) -> &BTreeMap<MemoryId, usize> {
+        &self.slots
+    }
+
     /// Every vector in slot order.
     pub fn iter(&self) -> impl Iterator<Item = (MemoryId, &[f32])> {
         self.ids

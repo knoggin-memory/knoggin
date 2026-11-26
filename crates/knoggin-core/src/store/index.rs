@@ -11,7 +11,7 @@
 //! - `counts` has one entry per namespace;
 //! - `estimated_bytes` is what [`Store::estimate_from_scratch`] computes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::embed::ModelIdentity;
@@ -453,10 +453,9 @@ impl Store {
             graph.insert(*edge);
         }
         self.graph = graph;
-        let mut by_id: Vec<(MemoryId, &[f32])> = self.vectors.iter().collect();
-        by_id.sort_by_key(|(id, _)| *id);
+        // Slot order is kept, so the ID-to-slot table of the live index compares.
         let mut vectors = VectorTable::new(self.vectors.dimensions());
-        for (id, v) in by_id {
+        for (id, v) in self.vectors.iter() {
             vectors.insert(id, v);
         }
         self.vectors = vectors;
@@ -507,6 +506,11 @@ impl Store {
                 .entries()
                 .map(|(key, keys)| (*key, keys.iter().map(|k| hash(k)).collect()))
                 .collect(),
+            entity_postings: self
+                .entities
+                .postings()
+                .map(|(ns, key, ids)| (ns, hash(key), ids.iter().copied().collect()))
+                .collect(),
             fts_docs: self.fts.docs().iter().map(|(id, d)| (*id, *d)).collect(),
             fts_answers,
             adjacency: self
@@ -515,18 +519,89 @@ impl Store {
                 .iter()
                 .map(|(id, keys)| (*id, keys.iter().copied().collect()))
                 .collect(),
-            vectors: {
-                let mut v: Vec<(MemoryId, Vec<u32>)> = self
-                    .vectors
-                    .iter()
-                    .map(|(id, v)| (id, v.iter().map(|x| x.to_bits()).collect()))
-                    .collect();
-                v.sort_by_key(|(id, _)| *id);
-                v
-            },
+            vectors: self
+                .vectors
+                .iter()
+                .map(|(id, v)| (id, v.iter().map(|x| x.to_bits()).collect()))
+                .collect(),
+            vector_slots: self
+                .vectors
+                .slots()
+                .iter()
+                .map(|(id, slot)| (*id, *slot, self.vectors.get(*id).map(<[f32]>::len)))
+                .collect(),
             counts: self.counts.iter().map(|(id, c)| (*id, *c)).collect(),
             estimated_bytes: self.estimated_bytes,
         }
+    }
+}
+
+impl Store {
+    /// The invariants that a rebuild cannot restore, because a rebuild starts from the
+    /// memories and edges themselves: a vector exactly for `Ready` memories, nothing
+    /// left of a ghost but its numbers and edges, both ends of every edge, and one
+    /// count entry per namespace and no memory outside one. Each broken rule is one
+    /// line, naming only IDs.
+    #[doc(hidden)]
+    pub fn invariant_violations_for_test(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        let tagged: BTreeSet<MemoryId> = self
+            .tags
+            .entries()
+            .flat_map(|(_, _, ids)| ids.iter().copied())
+            .collect();
+        let with_keys: BTreeSet<MemoryId> =
+            self.entities.entries().map(|((_, id), _)| *id).collect();
+        let posted: BTreeSet<MemoryId> = self
+            .entities
+            .postings()
+            .flat_map(|(_, _, ids)| ids.iter().copied())
+            .collect();
+        for m in self.memories.values() {
+            let id = m.id;
+            if self.vectors.contains(id) != (m.embedding == EmbeddingState::Ready) {
+                out.push(format!(
+                    "{id}: vector present = {}, embedding {:?}",
+                    self.vectors.contains(id),
+                    m.embedding
+                ));
+            }
+            if !self.namespaces.contains_key(&m.namespace) {
+                out.push(format!("{id}: namespace {:?} does not exist", m.namespace));
+            }
+            let ghost = m.phase == Phase::Ghost;
+            if ghost != (m.embedding == EmbeddingState::None) {
+                out.push(format!(
+                    "{id}: phase {:?} with embedding {:?}",
+                    m.phase, m.embedding
+                ));
+            }
+            if ghost {
+                if !m.summary.is_empty()
+                    || m.full_text.is_some()
+                    || !m.tags.is_empty()
+                    || m.labels != Labels::default()
+                {
+                    out.push(format!("{id}: a ghost keeps text, tags or labels"));
+                }
+                if tagged.contains(&id)
+                    || with_keys.contains(&id)
+                    || posted.contains(&id)
+                    || self.fts.contains(id)
+                {
+                    out.push(format!("{id}: a ghost has index entries"));
+                }
+            }
+        }
+        for e in self.graph.iter() {
+            if !self.memories.contains_key(&e.source) || !self.memories.contains_key(&e.target) {
+                out.push(format!("edge {:?}: an end is missing", e.key()));
+            }
+        }
+        if !self.counts.keys().eq(self.namespaces.keys()) {
+            out.push("counts do not have exactly one entry per namespace".to_owned());
+        }
+        out
     }
 }
 
@@ -537,10 +612,12 @@ impl Store {
 pub struct IndexSnapshot {
     tags: Vec<(NamespaceId, u64, Vec<MemoryId>)>,
     entities: Vec<((NamespaceId, MemoryId), Vec<u64>)>,
+    entity_postings: Vec<(NamespaceId, u64, Vec<MemoryId>)>,
     fts_docs: Vec<(MemoryId, FtsDoc)>,
     fts_answers: Vec<(NamespaceId, u64, Result<Vec<MemoryId>, ()>)>,
     adjacency: Vec<(MemoryId, Vec<EdgeKey>)>,
     vectors: Vec<(MemoryId, Vec<u32>)>,
+    vector_slots: Vec<(MemoryId, usize, Option<usize>)>,
     counts: Vec<(NamespaceId, NamespaceCounts)>,
     estimated_bytes: u64,
 }
@@ -610,6 +687,7 @@ mod tests {
         s.rebuild_indexes_for_test();
         let rebuilt = s.index_snapshot_for_test(&QUERIES);
         assert_eq!(live, rebuilt);
+        assert_eq!(s.invariant_violations_for_test(), Vec::<String>::new());
     }
 
     fn second_namespace(s: &mut Store) -> NamespaceId {

@@ -251,6 +251,14 @@ impl EntityIndex {
     pub fn entries(&self) -> impl Iterator<Item = (&(NamespaceId, MemoryId), &BTreeSet<String>)> {
         self.keys_by_memory.iter()
     }
+
+    /// Every `(namespace, key, memories)` of the postings that lookups read, in order.
+    /// For index comparisons.
+    pub fn postings(&self) -> impl Iterator<Item = (NamespaceId, &String, &BTreeSet<MemoryId>)> {
+        self.index
+            .iter()
+            .flat_map(|(ns, by_key)| by_key.iter().map(move |(k, ids)| (*ns, k, ids)))
+    }
 }
 
 #[cfg(test)]

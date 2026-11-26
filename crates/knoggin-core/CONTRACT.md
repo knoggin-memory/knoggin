@@ -56,8 +56,10 @@ per-namespace counts, `estimated_bytes` and the idempotency purge in step.
 
 Invariants: a vector exists exactly when the embedding is `Ready`; a ghost has no text, tags,
 labels, vector or index entries; an edge joins two existing memories; `counts` has an entry
-per namespace. The index-equivalence test takes `index_snapshot_for_test(queries)`, calls
-`rebuild_indexes_for_test()`, takes another and asserts equality.
+per namespace. The index-equivalence test takes `index_snapshot_for_test(queries)` (which
+includes the entity postings and the vector table's ID-to-slot map), calls
+`rebuild_indexes_for_test()`, takes another and asserts equality; then it asserts that
+`invariant_violations_for_test()` is empty, since a rebuild cannot restore those rules.
 
 Not done by the helpers: change counters, `last_write_at`/`last_write_client`, and the
 automatic links. The operations set those.

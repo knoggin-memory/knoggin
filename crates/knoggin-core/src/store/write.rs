@@ -566,6 +566,7 @@ pub(crate) mod tests {
         let live = s.index_snapshot_for_test(&q);
         s.rebuild_indexes_for_test();
         assert_eq!(live, s.index_snapshot_for_test(&q));
+        assert_eq!(s.invariant_violations_for_test(), Vec::<String>::new());
     }
 
     pub(crate) fn namespace(s: &mut Store, name: &str) {

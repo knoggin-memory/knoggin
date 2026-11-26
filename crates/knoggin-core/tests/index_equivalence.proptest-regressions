@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 82514fb9e5c1d827669d559b1e96ef7fd847fb5664ff2a885d6066005241cfce # shrinks to ops = [(Batch([(0, 0, Content { summary: [0], full: None, tags: [], entities: [40], created_days_ago: None })]), 0), (Save { slot: 1, ns: 0, content: Content { summary: [0], full: None, tags: [], entities: [40], created_days_ago: None }, parent: None, vector: false, check: false }, 0), (Sweep { days: 18 }, 0), (Sweep { days: 156 }, 0)]

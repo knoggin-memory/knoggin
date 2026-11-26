@@ -608,6 +608,8 @@ proptest! {
             h.store.rebuild_indexes_for_test();
             let rebuilt = h.store.index_snapshot_for_test(&QUERIES);
             prop_assert_eq!(live, rebuilt, "step {}: {:?}", step, op);
+            let broken = h.store.invariant_violations_for_test();
+            prop_assert!(broken.is_empty(), "step {} ({:?}) broke invariants: {:?}", step, op, broken);
         }
     }
 }
