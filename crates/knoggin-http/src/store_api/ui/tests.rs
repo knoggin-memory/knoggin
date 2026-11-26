@@ -79,21 +79,24 @@ fn committed() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ui/src/lib/api/types")
 }
 
-/// The `.ts` files of `dir`, by name.
+/// The `.ts` files under `dir`, nested folders included, by path relative to `dir`.
 fn files(dir: &Path) -> BTreeMap<String, String> {
-    std::fs::read_dir(dir)
-        .map(|entries| {
-            entries
-                .flatten()
-                .filter_map(|e| {
-                    let name = e.file_name().to_string_lossy().into_owned();
-                    name.ends_with(".ts")
-                        .then(|| Some((name, std::fs::read_to_string(e.path()).ok()?)))
-                        .flatten()
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<String, String>) {
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = e.path();
+            if path.is_dir() {
+                walk(root, &path, out);
+            } else if path.extension().is_some_and(|x| x == "ts")
+                && let (Ok(rel), Ok(text)) =
+                    (path.strip_prefix(root), std::fs::read_to_string(&path))
+            {
+                out.insert(rel.to_string_lossy().into_owned(), text);
+            }
+        }
+    }
+    let mut out = BTreeMap::new();
+    walk(dir, dir, &mut out);
+    out
 }
 
 /// The explicit step that refreshes the committed types; the `openapi` CI job runs it
@@ -112,8 +115,13 @@ fn export_ui_types() {
 fn the_committed_ui_types_are_current() {
     let fresh = tempfile::tempdir().unwrap();
     export(fresh.path());
+    let fresh = files(fresh.path());
     assert!(
-        files(fresh.path()) == files(&committed()),
+        fresh.contains_key("serde_json/JsonValue.ts"),
+        "nested folders are compared"
+    );
+    assert!(
+        fresh == files(&committed()),
         "ui/src/lib/api/types is stale: run `cargo nextest run -p knoggin-http --run-ignored only -E 'test(export_ui_types)'`"
     );
 }
