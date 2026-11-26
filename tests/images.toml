@@ -1,0 +1,6 @@
+# Every stand-in image of the stack tests, pinned by digest (tab "Testing, CI, releases").
+# Each digest is the multi-platform index that its tag named on the day it was pinned.
+
+[images]
+# postgres:18.7-trixie, pinned 2026-11-25.
+postgres = "postgres@sha256:c699303802144847d238196173655dbbecf7a96aeca1565f2b02eb671a1f0b6b"
