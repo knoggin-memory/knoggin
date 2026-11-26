@@ -3,7 +3,7 @@
   import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
-  import { createQuery } from '@tanstack/svelte-query';
+  import { createQueries, createQuery } from '@tanstack/svelte-query';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import { DropdownMenu } from 'bits-ui';
   import Screen from '$lib/components/Screen.svelte';
@@ -78,27 +78,35 @@
     placeholderData: (prev) => prev,
   }));
   const total = $derived(first.data?.total ?? 0);
-  let pages = $state<Record<string, MemoryRow[]>>({});
-  let loading = new Set<string>();
+  // Later pages are queries like the first: the same retries, and refreshed on
+  // focus and after the user acts. They are asked for as the reader reaches them.
+  let wanted = $state<number[]>([]);
+  const asked = new Set<string>();
   $effect(() => {
     key;
-    pages = {};
-    loading = new Set();
+    wanted = [];
+    asked.clear();
   });
-  $effect(() => {
-    if (first.data) pages[`${key}:0`] = first.data.rows;
+  const later = createQueries(() => ({
+    queries: wanted.map((p) => ({ queryKey: storeKey('memories', key, p), queryFn: () => memoryPage(query, p * PAGE) })),
+  }));
+  const laterOf = (p: number) => later[wanted.indexOf(p)];
+  const pages = $derived.by(() => {
+    const m = new Map<number, MemoryRow[]>();
+    if (first.data) m.set(0, first.data.rows);
+    wanted.forEach((p, i) => later[i]?.data && m.set(p, later[i].data.rows));
+    return m;
   });
   function rowAt(i: number): MemoryRow | undefined {
     const p = Math.floor(i / PAGE);
-    const rows = pages[`${key}:${p}`];
+    const rows = pages.get(p);
     if (rows) return rows[i - p * PAGE];
     const k = `${key}:${p}`;
-    if (!loading.has(k) && p > 0) {
-      loading.add(k);
+    if (p > 0 && !asked.has(k)) {
+      asked.add(k);
+      // Not during rendering: the template reads this.
       const forKey = key;
-      memoryPage(query, p * PAGE).then((res) => {
-        if (forKey === key) pages[k] = res.rows;
-      });
+      queueMicrotask(() => forKey === key && !wanted.includes(p) && (wanted = [...wanted, p]));
     }
     return undefined;
   }
@@ -133,10 +141,9 @@
   // ── Selection and keyboard ────────────────────────────────────────────
   const selectedIndex = $derived.by(() => {
     if (!selection.id) return -1;
-    for (const [k, rows] of Object.entries(pages)) {
-      if (!k.startsWith(key)) continue;
+    for (const [p, rows] of pages) {
       const i = rows.findIndex((r) => r.id === selection.id);
-      if (i >= 0) return Number(k.slice(key.length + 1)) * PAGE + i;
+      if (i >= 0) return p * PAGE + i;
     }
     return -1;
   });
@@ -263,7 +270,13 @@
                 <td class="mono num muted">{m.namespace}</td>
                 <td class="mono num muted last">{m.retrievedAt ? ago(ms(m.retrievedAt)) : 'Never'}</td>
               {:else}
-                <td colspan="6" class="skel-cell"><span class="skeleton bar"></span></td>
+                {@const p = Math.floor(item.index / PAGE)}
+                {@const failed = laterOf(p)}
+                {#if failed?.isError && item.index === Math.max(p * PAGE, items[0].index)}
+                  <td colspan="6"><LoadFailed error={failed.error} onretry={() => failed.refetch()} /></td>
+                {:else}
+                  <td colspan="6" class="skel-cell"><span class="skeleton bar"></span></td>
+                {/if}
               {/if}
             </tr>
             {#if open && m}

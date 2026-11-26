@@ -83,3 +83,35 @@ test('a screen whose data cannot load says so, with Retry', async ({ page }) => 
   await expect(page.getByText('Could not load this.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
 });
+
+test('a later page of Explore that fails says so, retries, and is refreshed on focus', async ({ page }) => {
+  // 250 memories in two pages: the first is the real rows repeated, the second fails twice and then loads.
+  let later = 0;
+  let real: { rows: object[] } = { rows: [] };
+  await page.route(/\/v1\/ui\/memories\?/, async (r) => {
+    const url = new URL(r.request().url());
+    if (url.searchParams.has('id')) return r.fallback();
+    const offset = Number(url.searchParams.get('offset') ?? 0);
+    if (offset === 0) real = await (await r.fetch()).json();
+    const rows = (n: number, from: number) =>
+      Array.from({ length: n }, (_, i) => ({ ...real.rows[i % real.rows.length], id: `00000000-0000-7000-8000-${String(from + i).padStart(12, '0')}`, summary: `Row ${from + i}` }));
+    if (offset === 0) return r.fulfill({ json: { total: 250, offset: 0, rows: rows(200, 0) } });
+    if (++later <= 2) return r.fulfill({ status: 500, json: { error: { code: 'internal', message: 'Internal error' } } });
+    return r.fulfill({ json: { total: 250, offset, rows: rows(50, offset) } });
+  });
+  await open(page, '/explore');
+  await expect(page.getByRole('button', { name: 'Row 0', exact: true })).toBeVisible();
+  await page.locator('.table-wrap').evaluate((el) => (el.scrollTop = el.scrollHeight));
+  // The query's own retry runs once; then the page says so.
+  await expect(page.getByText('Could not load this.')).toBeVisible();
+  expect(later).toBe(2);
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByRole('button', { name: /^Row 2[0-4]\d$/ }).first()).toBeVisible();
+  await expect(page.getByText('Could not load this.')).toHaveCount(0);
+
+  // Like the first page, a loaded later page is read again when the tab regains focus (once stale).
+  const before = later;
+  await page.waitForTimeout(5_500);
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange', { bubbles: true })));
+  await expect.poll(() => later).toBeGreaterThan(before);
+});
