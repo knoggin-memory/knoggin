@@ -255,6 +255,15 @@ impl PeerLimits {
         }
     }
 
+    /// Whether `ip` is refused for failed tokens: then a connection it already holds is
+    /// served nothing more either.
+    pub fn is_refused(&self, ip: IpAddr) -> bool {
+        let now = self.clock.ms();
+        lock(&self.map)
+            .get(&ip.to_canonical())
+            .is_some_and(|p| now < p.refused_until)
+    }
+
     /// Clears the counts and any refusal of `ip`, when a new container is recorded there.
     /// Its open connections stay counted until they close.
     pub fn clear(&self, ip: IpAddr) {
@@ -335,6 +344,7 @@ mod tests {
         assert!(limits.admit(a).is_some(), "four failures are allowed");
         limits.token_failed(a.ip());
         assert!(limits.admit(a).is_none(), "refused after the fifth");
+        assert!(limits.is_refused(a.ip()) && !limits.is_refused(b.ip()));
         // A new container at that address is served at once.
         limits.clear(a.ip());
         assert!(limits.admit(a).is_some());

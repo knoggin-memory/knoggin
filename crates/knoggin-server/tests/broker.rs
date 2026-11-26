@@ -896,11 +896,20 @@ async fn a_peer_with_bad_tokens_is_cut_off() {
         );
         async move { client.request(req).await.map(|r| r.status()) }
     };
+    // A connection opened before the refusal.
+    let (status, _) = open(&rig, id, a, "").await;
+    assert_eq!(status, StatusCode::OK);
     for _ in 0..5 {
         assert_eq!(call(Uuid::now_v7()).await.unwrap(), StatusCode::CONFLICT);
     }
     assert!(
         call(id).await.is_err(),
         "the address is refused for a minute, even with a valid token"
+    );
+    // The connection it already holds is served nothing more either.
+    let (status, body) = open(&rig, id, a, "").await;
+    assert_eq!(
+        (status, code(&body).0.as_str()),
+        (StatusCode::TOO_MANY_REQUESTS, "rate_limited")
     );
 }

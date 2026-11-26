@@ -281,7 +281,7 @@ struct Checked {
     slot: CallSlot,
 }
 
-/// The checks of every call: protocol, container token, the lease (it names this
+/// The checks of every call: the peer address is not refused, protocol, container token, the lease (it names this
 /// container, is `claiming` or `warm`, and has the caller's IP), then the per-container
 /// limits.
 async fn check(
@@ -289,6 +289,10 @@ async fn check(
     peer: PeerAddr,
     headers: &HeaderMap,
 ) -> Result<Checked, BrokerError> {
+    // An address refused for failed tokens gets nothing on a connection it already holds.
+    if broker.config.peers.is_refused(peer.ip()) {
+        return Err(BrokerError::api(Code::RateLimited));
+    }
     let caller = match verify_container_call(&broker.config.secret, headers) {
         Ok(caller) => caller,
         Err(CallRefused::Protocol) => return Err(BrokerError::internal()),
