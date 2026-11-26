@@ -275,12 +275,30 @@ pub async fn set_aside_newest(dir: &Path) -> Result<Option<PathBuf>, StateError>
         let Some((_, path)) = list(&d)?.files.pop() else {
             return Ok(None);
         };
-        let mut bad = path.clone().into_os_string();
-        bad.push(".bad");
-        let bad = PathBuf::from(bad);
-        fs::rename(&path, &bad)?;
-        File::open(&d)?.sync_all()?;
-        Ok(Some(bad))
+        // A file set aside before keeps its name: `.bad`, else `.bad.2`, `.bad.3` and on.
+        // The hard link fails rather than replace a name that exists.
+        for n in 1..=MAX_SET_ASIDE {
+            let mut bad = path.clone().into_os_string();
+            bad.push(if n == 1 {
+                ".bad".to_owned()
+            } else {
+                format!(".bad.{n}")
+            });
+            let bad = PathBuf::from(bad);
+            match fs::hard_link(&path, &bad) {
+                Ok(()) => {
+                    fs::remove_file(&path)?;
+                    File::open(&d)?.sync_all()?;
+                    return Ok(Some(bad));
+                }
+                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Err(
+            StateError::Unavailable("every name to set the state file aside is taken".into())
+                .into(),
+        )
     })
     .await
 }
@@ -499,6 +517,9 @@ fn prune(dir: &Path) -> io::Result<()> {
     }
     Ok(())
 }
+
+/// How many files `set_aside_newest` keeps of one name: `.bad` and `.bad.2` to this.
+const MAX_SET_ASIDE: u32 = 1000;
 
 /// Makes `prune` fail, for the test that a failed prune does not fail the write.
 #[cfg(test)]

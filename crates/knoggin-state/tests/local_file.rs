@@ -360,6 +360,19 @@ async fn use_previous_sets_the_newest_file_aside() {
         files(tmp.path()),
         [name(1), name(2), name(3), format!("{}.bad", name(3))]
     );
+    // Setting aside again keeps the file set aside before.
+    drop(db);
+    let again = set_aside_newest(tmp.path()).await.unwrap().unwrap();
+    assert_eq!(again, tmp.path().join(format!("{}.bad.2", name(3))));
+    assert_eq!(
+        files(tmp.path()),
+        [
+            name(1),
+            name(2),
+            format!("{}.bad", name(3)),
+            format!("{}.bad.2", name(3))
+        ]
+    );
 }
 
 #[tokio::test]
