@@ -108,17 +108,9 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/nextest.tar.gz" https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-aarch64-unknown-linux-gnu.tar.gz
           echo "ca1f81a5b86533eb45ab97e0064aa88e925e53aab9a698ca6331a7cad1f85f07  $RUNNER_TEMP/nextest.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/nextest.tar.gz" -C "$HOME/.cargo/bin" cargo-nextest
-      # Until crates/knoggin-core/tests/budgets.rs exists, the filter matches no
-      # test and nextest fails with "no tests to run". The guard skips the run
-      # only while the file is missing; once it exists, nextest's default
-      # (--no-tests=fail) applies, so a filter that stops matching still fails.
+      # --no-capture prints the M9 table on a pass too, so the numbers can be recorded.
       - name: Budget tier
-        run: |
-          if [ ! -f crates/knoggin-core/tests/budgets.rs ]; then
-            echo "::notice::crates/knoggin-core/tests/budgets.rs does not exist yet; budget tier skipped"
-            exit 0
-          fi
-          cargo nextest run -p knoggin-core --release --locked --run-ignored only -E 'binary(budgets)'
+        run: cargo nextest run -p knoggin-core --release --locked --run-ignored only -E 'binary(budgets)' --no-capture
 
   doc:
     runs-on: ubuntu-24.04
