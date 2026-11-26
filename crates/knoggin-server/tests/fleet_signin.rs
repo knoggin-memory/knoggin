@@ -148,6 +148,14 @@ async fn the_routers_start_up_guards() {
     let d = Deployment::new(true).await;
     let r = d.router("0.1.0").await;
     assert_eq!(save(&r, Some(&d.token(&r.url, "dave")), "x").await.0, 201);
+    let logs = Logs::capture();
+    // Each refusal exits 1 and logs the guard that refused.
+    let refused = |result: Result<_, i32>, why: &str| {
+        assert_eq!(result.err(), Some(1), "{why}");
+        let log = logs.take();
+        assert!(log.contains("the router refuses to start"), "{log}");
+        assert!(log.contains(why), "expected {why:?} in {log}");
+    };
     // Sign-in off over a database that holds another user than the local one.
     let none = d
         .router_with("0.1.0", |t| {
@@ -155,7 +163,10 @@ async fn the_routers_start_up_guards() {
             t.edge.oauth = None;
         })
         .await;
-    assert_eq!(none.err(), Some(1));
+    refused(
+        none,
+        "sign-in is off, but the state database holds 1 users besides the local one",
+    );
     // An `http` public address outside test mode, in both modes.
     for oauth in [true, false] {
         let plain = d
@@ -167,26 +178,45 @@ async fn the_routers_start_up_guards() {
                 }
             })
             .await;
-        assert_eq!(plain.err(), Some(1));
+        refused(plain, "server.public_url must be https");
     }
     // One host: no trusted proxy, or one inside the user network.
     let bare = d
         .router_with("0.1.0", |t| t.settings.trusted_proxies.clear())
         .await;
-    assert_eq!(bare.err(), Some(1));
+    refused(bare, "on one host server.trusted_proxies must name");
     let overlap = d
         .router_with("0.1.0", |t| {
             t.settings.trusted_proxies = vec!["127.0.0.9/32".parse().unwrap()];
         })
         .await;
-    assert_eq!(overlap.err(), Some(1));
+    refused(
+        overlap,
+        "server.trusted_proxies must not overlap containers.user_net_cidr",
+    );
     // Both admin emails and an email claim.
     let both = d
         .router_with("0.1.0", |t| {
             t.edge.oauth.as_mut().unwrap().email_claim = Some("email".into());
         })
         .await;
-    assert_eq!(both.err(), Some(1));
+    refused(
+        both,
+        "auth.admin_emails and auth.email_claim cannot both be set",
+    );
+}
+
+#[tokio::test]
+async fn a_router_with_sign_in_off_warns_at_every_start() {
+    let d = Deployment::new(false).await;
+    let logs = Logs::capture();
+    let _r = d.router("0.1.0").await;
+    let log = logs.take();
+    assert!(
+        log.contains("WARN")
+            && log.contains("anyone who can reach this server can read and write its memories"),
+        "{log}"
+    );
 }
 
 #[tokio::test]
