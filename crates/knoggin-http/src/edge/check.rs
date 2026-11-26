@@ -30,7 +30,7 @@ use crate::error::{ApiError, Code};
 use crate::local::SESSION_PREFIX;
 use crate::store_api::export_file_name;
 
-/// How often an export or import re-runs the credential check.
+/// How often an export, an import or an event stream re-runs the credential check.
 const RECHECK_EVERY: Duration = Duration::from_secs(60);
 
 /// A key that expires within this many milliseconds gets `Knoggin-Key-Expires`.
@@ -693,6 +693,7 @@ async fn prepare(
     let transfer = match route {
         "/v1/export" => Some(Cap::Export),
         "/v1/import" => Some(Cap::Import),
+        "/v1/ui/events" => Some(Cap::Events),
         _ => None,
     };
     let store_param = match transfer {
@@ -788,15 +789,19 @@ async fn run(edge: &EdgeState, mut request: Request, next: Next, prepared: Prepa
     }
     let mut response = next.run(request).await;
     let now = edge.now();
-    if transfer == Some(Cap::Export) && response.status() == StatusCode::OK {
-        let date = Timestamp::from_millis(now).utc_date().unwrap_or_default();
-        let name = export_file_name(store.value.name.expose(), &date);
-        if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
-            response
-                .headers_mut()
-                .insert(header::CONTENT_DISPOSITION, value);
+    let streams = matches!(transfer, Some(Cap::Export | Cap::Events));
+    if streams && response.status() == StatusCode::OK {
+        if transfer == Some(Cap::Export) {
+            let date = Timestamp::from_millis(now).utc_date().unwrap_or_default();
+            let name = export_file_name(store.value.name.expose(), &date);
+            if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{name}\"")) {
+                response
+                    .headers_mut()
+                    .insert(header::CONTENT_DISPOSITION, value);
+            }
         }
-        // The caps stay taken while the body streams, and the credential is checked again.
+        // The caps stay taken while the body streams (an export or an event stream), and
+        // the credential is checked again.
         let (parts, body) = response.into_parts();
         let body = rechecked(body, recheck, RECHECK_EVERY);
         let body = Body::from_stream(body.into_data_stream().map(move |frame| {
@@ -972,6 +977,85 @@ mod tests {
             edge.recheck(&p, personal).await.is_err(),
             "24 hours after the last request the session is idle, re-checks or not"
         );
+    }
+
+    /// An event stream through the whole edge, with a stub in place of the store layer:
+    /// it ends within a minute of the session ending (a logout).
+    #[tokio::test(start_paused = true)]
+    async fn an_event_stream_ends_when_its_session_ends() {
+        use knoggin_crypto::KeyProvider;
+        use knoggin_state::testing::{TestClock, test_field_keys};
+        use knoggin_state::{LocalFileDb, StateDb, Users};
+        use tower::ServiceExt;
+
+        use crate::edge::{EdgeConfig, EdgeParts};
+        use crate::local::LocalSessions;
+
+        let clock = TestClock::new();
+        let db: Arc<dyn StateDb> = Arc::new(LocalFileDb::in_memory(clock.clock()));
+        let fields = Arc::new(test_field_keys());
+        let keys: Arc<dyn KeyProvider> = Arc::new(knoggin_crypto::testing::test_provider());
+        let users = Users::new(db.clone(), fields.clone());
+        crate::local::ensure_local_user(&users, &*keys, clock.now())
+            .await
+            .unwrap();
+        let local = Arc::new(LocalSessions::new("http://127.0.0.1:1".into()));
+        let parts = EdgeParts {
+            db,
+            field_keys: fields,
+            keys,
+            clock: clock.clock(),
+            host: None,
+            local: Some(local.clone()),
+        };
+        let config = EdgeConfig::local("http://127.0.0.1:7690".into(), "0.1.0".into());
+        let edge = EdgeState::new(config, parts).await.unwrap();
+        // The stub stream sends one frame, then stays open.
+        let stub = axum::Router::new().route(
+            "/v1/ui/events",
+            axum::routing::get(|| async {
+                let first = futures_util::stream::once(async {
+                    Ok::<_, std::io::Error>(Bytes::from_static(b": hello\n\n"))
+                });
+                Body::from_stream(first.chain(futures_util::stream::pending()))
+            }),
+        );
+        let app = crate::edge::edge_layer(edge, stub, axum::Router::new());
+        let code = local.new_code(clock.now()).unwrap();
+        let token = local.redeem(&code, clock.now()).unwrap().unwrap();
+        let request = || {
+            let mut r = Request::builder()
+                .uri("/v1/ui/events")
+                .header("host", "127.0.0.1:1")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap();
+            r.extensions_mut().insert(Arrival::Web {
+                authority: "127.0.0.1:1".into(),
+            });
+            r
+        };
+        let mut streams = Vec::new();
+        for _ in 0..10 {
+            let r = app.clone().oneshot(request()).await.unwrap();
+            assert_eq!(r.status(), StatusCode::OK);
+            streams.push(r.into_body().into_data_stream());
+        }
+        let refused = app.clone().oneshot(request()).await.unwrap();
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
+        let mut body = streams.pop().unwrap();
+        assert_eq!(body.next().await.unwrap().unwrap(), ": hello\n\n");
+        // A check that passes keeps the stream open.
+        tokio::time::advance(Duration::from_secs(61)).await;
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), body.next())
+                .await
+                .is_err()
+        );
+        local.forget_all_but(None);
+        let next = body.next().await.unwrap();
+        assert!(next.is_err(), "the stream ends at the next check");
+        assert!(body.next().await.is_none());
     }
 
     fn tokio_stream_from(

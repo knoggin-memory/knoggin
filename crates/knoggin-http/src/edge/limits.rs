@@ -90,6 +90,8 @@ pub(crate) enum Cap {
     Export,
     /// Open imports: 2.
     Import,
+    /// Open event streams: 10.
+    Events,
 }
 
 impl Cap {
@@ -97,6 +99,7 @@ impl Cap {
         match self {
             Self::InFlight => 128,
             Self::Export | Self::Import => 2,
+            Self::Events => 10,
         }
     }
 }
