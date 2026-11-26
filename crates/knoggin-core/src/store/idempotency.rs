@@ -99,17 +99,23 @@ impl Store {
         op: impl FnOnce(&mut Store) -> Result<(T, Vec<MemoryId>), EngineError>,
     ) -> Result<Idempotent<T>, EngineError> {
         check_key(key)?;
+        let mut expired = false;
         if let Some(entry) = self.idempotency.get(key) {
             if is_expired(entry.created_at, now) {
-                self.remove_idempotency(key);
-                self.changes.bookkeeping = self.changes.bookkeeping.saturating_add(1);
+                expired = true;
             } else if entry.request_hash == request_hash {
                 return Ok(Idempotent::Replayed(entry.response.clone()));
             } else {
                 return Err(EngineError::IdempotencyConflict);
             }
         }
+        // The expired entry goes only once the operation has succeeded, so that a
+        // failed write leaves the store as it was.
         let (answer, text_ids) = op(self)?;
+        if expired {
+            self.remove_idempotency(key);
+            self.changes.bookkeeping = self.changes.bookkeeping.saturating_add(1);
+        }
         // An answer that cannot be written as JSON is returned but not kept: a retry
         // then runs again, which is what happens without a key.
         if let Ok(response) = serde_json::to_vec(&answer) {
@@ -255,6 +261,16 @@ mod tests {
             "an expired entry counts as absent"
         );
         assert_eq!(s.idempotency.get("k").unwrap().request_hash, [2; 32]);
+        // A failure after an expired lookup leaves the expired entry and the counters.
+        let changes = s.changes();
+        let entry = s.idempotency.get("k").cloned();
+        assert!(
+            s.run_idempotent("k", [9; 32], t(T0 + 3 * DAY), save_op(1))
+                .is_err()
+        );
+        assert_eq!(s.idempotency.get("k").cloned(), entry);
+        assert_eq!(s.changes(), changes);
+        assert_eq!(s.estimated_bytes(), s.estimate_from_scratch());
         // A failure (the ID exists) is not recorded, so a retry runs again.
         assert!(s.run_idempotent("f", [3; 32], t(T0), save_op(1)).is_err());
         assert!(!s.idempotency.contains_key("f"));
