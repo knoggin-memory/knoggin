@@ -14,25 +14,28 @@ use crate::error::LockReason;
 use crate::host::{StoreState, StoreStatus};
 
 /// `personal` or `app`.
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename = "StoreKind")]
 pub(crate) enum Kind {
     Personal,
     App,
 }
 
 /// `active` or `deleted`.
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename = "StoreLifecycle")]
 pub(crate) enum Status {
     Active,
     Deleted,
 }
 
 /// An account-level store record, not its memories.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = Store)]
+#[ts(rename = "Store")]
 pub(crate) struct StoreView {
     pub(crate) id: StoreId,
     pub(crate) kind: Kind,
@@ -79,9 +82,10 @@ pub(crate) fn delete_after(at_ms: i64, soft_delete_days: u32) -> Timestamp {
 }
 
 /// An API key, without its secret.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = ApiKey)]
+#[ts(rename = "ApiKey")]
 pub(crate) struct KeyView {
     pub(crate) id: Uuid,
     pub(crate) name: String,
@@ -118,9 +122,10 @@ impl KeyView {
 }
 
 /// A new key and its secret, which only this answer carries.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = CreatedApiKey)]
+#[ts(rename = "CreatedApiKey")]
 pub(crate) struct CreatedKey {
     pub(crate) key: KeyView,
     /// `knoggin_live_...`.
@@ -128,17 +133,19 @@ pub(crate) struct CreatedKey {
 }
 
 /// The body of `POST /v1/stores` and `PATCH /v1/stores/{id}`.
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[schema(as = StoreName)]
+#[ts(rename = "StoreName")]
 pub(crate) struct NameBody {
     pub(crate) name: String,
 }
 
 /// The body of `POST /v1/stores/{id}/keys`.
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, ts_rs::TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[schema(as = CreateApiKey)]
+#[ts(rename = "CreateApiKey")]
 pub(crate) struct CreateKey {
     pub(crate) name: String,
     /// `["memory:read"]` or both (the default).
@@ -148,72 +155,82 @@ pub(crate) struct CreateKey {
 }
 
 /// The optional body of a rotation.
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, ts_rs::TS)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 #[schema(as = RotateApiKey)]
+#[ts(rename = "RotateApiKey")]
 pub(crate) struct RotateKey {
     pub(crate) expires_in_days: Option<u32>,
 }
 
 /// The body of `DELETE /v1/account`.
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[schema(as = DeleteAccount)]
+#[ts(rename = "DeleteAccount")]
 pub(crate) struct DeleteAccount {
     /// Exactly `delete my data`.
     pub(crate) confirm: String,
 }
 
 /// The answer of `DELETE /v1/account`.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = AccountDeleted)]
+#[ts(rename = "AccountDeleted")]
 pub(crate) struct AccountDeleted {
     pub(crate) deleted_at: Timestamp,
     pub(crate) delete_after: Timestamp,
 }
 
 /// `GET /healthz`.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 pub(crate) struct Health {
     pub(crate) status: &'static str,
     pub(crate) version: String,
 }
 
 /// `GET /readyz`.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 pub(crate) struct Ready {
     pub(crate) status: &'static str,
 }
 
 /// The identity provider, when sign-in is on.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 pub(crate) struct Provider {
     pub(crate) name: String,
 }
 
 /// The user of a session answer.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = SessionUser)]
+#[ts(rename = "SessionUser")]
 pub(crate) struct SessionUser {
     pub(crate) id: UserId,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) name: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) email: Option<Option<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) is_admin: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) deleted_at: Option<Option<Timestamp>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) delete_after: Option<Option<Timestamp>>,
 }
 
 /// The credential of a session answer.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = SessionCredential)]
+#[ts(rename = "SessionCredential")]
 pub(crate) struct SessionCredential {
     /// `session`, `oauth`, `api_key`, `local` or `none`.
     pub(crate) kind: &'static str,
@@ -223,9 +240,10 @@ pub(crate) struct SessionCredential {
 }
 
 /// `GET /v1/session`.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = Session)]
+#[ts(rename = "Session")]
 pub(crate) struct SessionView {
     /// `local` or `server`.
     pub(crate) mode: &'static str,
@@ -239,6 +257,7 @@ pub(crate) struct SessionView {
     pub(crate) signed_in: bool,
     /// `expired`, `account_removed` or `not_allowed`, when a credential was refused.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub(crate) signed_out_reason: Option<&'static str>,
     pub(crate) provider: Option<Provider>,
     pub(crate) user: Option<SessionUser>,
@@ -251,8 +270,9 @@ pub(crate) struct SessionView {
 }
 
 /// `parked`, `waking`, `ready` or `locked`.
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "snake_case")]
+#[ts(rename = "StoreState")]
 pub(crate) enum StoreStateView {
     Parked,
     Waking,
@@ -261,9 +281,10 @@ pub(crate) enum StoreStateView {
 }
 
 /// `GET /v1/stores/{id}/status`.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = StoreStatus)]
+#[ts(rename = "StoreStatus")]
 pub(crate) struct StoreStatusView {
     pub(crate) state: StoreStateView,
     #[schema(value_type = Option<String>)]
@@ -292,7 +313,7 @@ impl StoreStatusView {
 }
 
 /// `{ state, since }` of a user's container.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ContainerView {
     /// `active` or `parked`.
@@ -301,9 +322,10 @@ pub(crate) struct ContainerView {
 }
 
 /// One user of `GET /v1/users`.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = User)]
+#[ts(rename = "User")]
 pub(crate) struct UserView {
     pub(crate) id: UserId,
     pub(crate) name: Option<String>,
@@ -317,4 +339,24 @@ pub(crate) struct UserView {
     /// `self`, `admin` or `null`.
     pub(crate) deleted_by: Option<&'static str>,
     pub(crate) delete_after: Option<Timestamp>,
+}
+
+/// One snapshot of `GET /v1/admin/stores/{id}/snapshots`, which a server serves
+/// (milestone 6); its shape is here for the web UI's types.
+#[derive(Serialize, ts_rs::TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(rename = "Snapshot")]
+#[allow(
+    dead_code,
+    reason = "a server serves it from milestone 6; the UI's types need it now"
+)]
+pub(crate) struct SnapshotView {
+    /// `<generation>-<sequence>`, what `knoggin admin restore` takes.
+    pub(crate) name: String,
+    pub(crate) generation: u64,
+    pub(crate) sequence: u64,
+    pub(crate) size_bytes: u64,
+    pub(crate) last_modified: Timestamp,
+    /// `newest`, `restore`, `last_hour`, `hourly`, `daily`, or `null`.
+    pub(crate) kept_because: Option<String>,
 }

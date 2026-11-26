@@ -22,23 +22,27 @@ use super::control;
 use crate::error::{Code, LockReason};
 
 /// Every error answer: `{ "error": { ... } }`.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[schema(as = Error)]
+#[ts(rename = "ApiError")]
 pub(crate) struct ErrorEnvelope {
     error: ErrorBody,
 }
 
 /// The fields of an error.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ErrorBody {
     code: Code,
     message: String,
     /// Present only when one request field is at fault.
+    #[ts(optional)]
     field: Option<String>,
     /// A fixed word, where the code has one (`store_locked`, `permission_denied`, `unavailable`).
+    #[ts(optional)]
     reason: Option<String>,
     /// Only on `store_locked` from `GET /v1/session` on a locked local install.
+    #[ts(optional)]
     docs_url: Option<String>,
     request_id: Uuid,
 }

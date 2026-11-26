@@ -305,3 +305,6 @@ async fn events(State(host): Host, Ctx(ctx): Ctx, q: QueryMap) -> Answer {
         .keep_alive(KeepAlive::new().interval(KEEP_ALIVE))
         .into_response())
 }
+
+#[cfg(test)]
+mod tests;

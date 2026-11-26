@@ -205,7 +205,7 @@ pub(crate) async fn store_status(
 }
 
 /// The backends of this process.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Backends {
     /// `local_file`, `postgres` or `dynamodb`.
@@ -219,16 +219,17 @@ pub(crate) struct Backends {
 }
 
 /// `{ total, deleting }` users.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 pub(crate) struct UserCounts {
     total: u64,
     deleting: u64,
 }
 
 /// `GET /v1/admin/status`. On a local install the server-only parts are `null`.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = AdminStatus)]
+#[ts(rename = "AdminStatus")]
 pub(crate) struct AdminStatus {
     version: String,
     image_digest: Option<String>,
@@ -290,9 +291,10 @@ pub(crate) async fn snapshots() -> Answer {
 }
 
 /// `POST /v1/local/browser-code`'s answer.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = BrowserCode)]
+#[ts(rename = "BrowserCode")]
 pub(crate) struct BrowserCode {
     /// `<web origin>/?t=<code>`.
     url: String,
@@ -318,18 +320,20 @@ pub(crate) async fn browser_code(
 }
 
 /// `POST /v1/local/session`'s body.
-#[derive(Deserialize, ToSchema)]
+#[derive(Deserialize, ToSchema, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 #[schema(as = LocalSessionRequest)]
+#[ts(rename = "LocalSessionRequest")]
 pub(crate) struct CodeBody {
     #[schema(inline)]
     code: Sensitive<String>,
 }
 
 /// `POST /v1/local/session`'s answer.
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[schema(as = LocalSession)]
+#[ts(rename = "LocalSession")]
 pub(crate) struct SessionToken {
     /// The whole bearer value, `knoggin_session_...`.
     session_token: String,
