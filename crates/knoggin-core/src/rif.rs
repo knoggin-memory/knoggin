@@ -263,6 +263,22 @@ mod tests {
     }
 
     #[test]
+    fn only_the_hundred_most_activated_neighbors_are_evaluated() {
+        // 1 retrieved; 100 neighbors at weight 1.0 (activation 0.3) and one more, the
+        // smallest ID, at weight 0.5 (0.15). Both would be suppressed if evaluated.
+        let mut edges = vec![edge(1, 2, EdgeType::Associative, 0.5)];
+        edges.extend((3..=102).map(|n| edge(1, n, EdgeType::Associative, 1.0)));
+        let s = store(102, &edges);
+        assert!(plasticity_multiplier(0.15) < 1.0);
+        let out = s.rif_suppressions(&[mid(1)], Timestamp::from_millis(0));
+        assert_eq!(out.len(), MAX_NEIGHBORS);
+        assert!(
+            out.iter().all(|(id, _)| *id != mid(2)),
+            "the 101st by activation is not evaluated"
+        );
+    }
+
+    #[test]
     fn a_neighbor_shared_by_two_retrieved_memories_is_listed_for_each() {
         // 3 is a neighbor of both 1 and 2.
         let s = store(

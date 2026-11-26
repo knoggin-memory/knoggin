@@ -536,6 +536,38 @@ fn entity_only_candidates_are_scored_by_shared_keys() {
 }
 
 #[test]
+fn retrieval_induced_forgetting_lowers_an_entity_only_candidate() {
+    // Three entity-only candidates with equal entity scores; 1 and 2 share an edge, so
+    // each suppresses the other, and 3, otherwise last by ID, comes first.
+    let mut s = store(
+        &[(1, NS, "alpha"), (2, NS, "beta"), (3, NS, "gamma")],
+        &[edge(1, 2, EdgeType::Associative)],
+    );
+    for n in 1..=3 {
+        s.update_memory(mid(n), |m| m.labels.entities = vec!["Maya".into()]);
+    }
+    let mut req = full(recall("zzz"));
+    req.entities = vec!["Maya".into()];
+    let now = t(T0 + 60_000);
+    let r = s.recall(&req, None, true, now).unwrap();
+    assert_eq!(ids(&r), [mid(3), mid(1), mid(2)]);
+    assert_eq!(r.trace.suppressed, [mid(1), mid(2)]);
+    let hits = full_hits(&r);
+    let strength = |n: u8| s.raw_strength(s.memory(mid(n)).unwrap(), now);
+    let multiplier = crate::rif::plasticity_multiplier(0.3 * strength(2));
+    assert!(multiplier < 1.0);
+    // The suppressed score uses effective strength times the multiplier.
+    let effective = s.strengths(s.memory(mid(1)).unwrap(), now).1;
+    let expected = 0.40 + 0.20 + 0.10 * effective * multiplier;
+    assert!(
+        (hits[1].score - expected).abs() < 1e-6,
+        "{} vs {expected}",
+        hits[1].score
+    );
+    assert!(hits[0].score - hits[1].score > 0.01);
+}
+
+#[test]
 fn a_superseded_hit_is_replaced_by_its_successor() {
     let s = store(
         &[(1, NS, "alpha old"), (2, NS, "zulu new")],
