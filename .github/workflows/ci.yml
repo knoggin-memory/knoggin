@@ -3,7 +3,6 @@ name: CI
 # Tab "Testing, CI, releases", CI. Jobs whose code lands in later milestones
 # are not here yet; each is added with its milestone and to `ci-ok.needs`:
 #   sdk      (milestone 8) ubuntu-24.04, the SDK tier and `uv build`
-#   deploy   (milestone 7) ubuntu-24.04, the deploy tier
 
 on:
   pull_request:
@@ -239,6 +238,38 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  # The deploy tier: the AWS module checked offline. `tofu test` runs against a mock
+  # provider; nothing here has or needs an AWS credential. The provider comes from the
+  # registry and must match the hashes in the committed lock files.
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install OpenTofu
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/tofu.tar.gz" https://github.com/opentofu/opentofu/releases/download/v1.13.9/tofu_1.13.9_linux_amd64.tar.gz
+          echo "b34b327cc1ef07178207b6f2cd1f5276537d3e5b7be316500f6dac50d4c0a857  $RUNNER_TEMP/tofu.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "$RUNNER_TEMP/tofu.tar.gz" -C "$RUNNER_TEMP/bin" tofu
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: tofu fmt -check -recursive
+        working-directory: deploy/aws
+      - run: tofu init -backend=false -input=false -lockfile=readonly
+        working-directory: deploy/aws
+      - run: tofu validate
+        working-directory: deploy/aws
+      - run: tofu test
+        working-directory: deploy/aws
+      - run: tofu init -backend=false -input=false -lockfile=readonly
+        working-directory: deploy/aws/examples/complete
+      - run: tofu validate
+        working-directory: deploy/aws/examples/complete
+
   web:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -337,7 +368,7 @@ jobs:
   # The one required check. Skipped jobs (deps and dco on a push) count as passed.
   ci-ok:
     if: always()
-    needs: [fmt, clippy, test, stack, budgets, doc, deny, machete, openapi, workflows, web, web-e2e, deps, dco]
+    needs: [fmt, clippy, test, stack, budgets, doc, deny, machete, openapi, workflows, web, web-e2e, deploy, deps, dco]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
