@@ -3,7 +3,7 @@
 // read with fetch and a streamed body, not EventSource. Reconnects with
 // back-off from 0.5 to 15 seconds. A 204 (the store is not open) stops it until
 // the next successful store request; `rate_limited` stops it for good.
-import { holdsToken, observe, parseError, storeHasAnswered, token } from './api/client';
+import { observe, parseError, storeHasAnswered, token } from './api/client';
 import type { WireEvent } from './api/shapes';
 
 export type Listener = (e: WireEvent, receivedAt: number) => void;
@@ -69,7 +69,7 @@ export function connectEvents(
     if (closed) return;
     abort = new AbortController();
     const headers = new Headers();
-    const t = holdsToken() ? token.get() : null;
+    const t = token.get();
     if (t) headers.set('Authorization', `Bearer ${t}`);
     const id = storeId();
     if (id) headers.set('Knoggin-Store', id);

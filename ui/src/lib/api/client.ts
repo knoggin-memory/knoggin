@@ -51,7 +51,8 @@ function read(key: string): string | null {
   }
 }
 export const token = {
-  get: () => read(TOKEN),
+  /** The stored token, or the one this page holds when storage is blocked. */
+  get: () => read(TOKEN) ?? memoryToken,
   set(value: string) {
     try {
       localStorage.setItem(TOKEN, value);
@@ -70,7 +71,7 @@ export const token = {
   },
 };
 let memoryToken: string | null = null;
-const credential = () => token.get() ?? memoryToken;
+const credential = () => token.get();
 export const holdsToken = () => credential() !== null;
 
 // ── The current store, sent on store routes as Knoggin-Store ───────────────
