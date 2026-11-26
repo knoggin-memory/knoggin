@@ -15,7 +15,7 @@
 
 use std::collections::HashMap;
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -723,6 +723,8 @@ pub struct FlakyDb {
     inner: Arc<dyn StateDb>,
     /// The partition prefix whose writes fail, if any.
     pub fail: Mutex<Option<&'static str>>,
+    /// How many queries (listings) were made.
+    pub queries: AtomicUsize,
 }
 
 impl FlakyDb {
@@ -731,6 +733,7 @@ impl FlakyDb {
         Arc::new(Self {
             inner,
             fail: Mutex::new(None),
+            queries: AtomicUsize::new(0),
         })
     }
 }
@@ -748,6 +751,7 @@ impl StateDb for FlakyDb {
         limit: usize,
         after: Option<&str>,
     ) -> Result<Vec<Item>, StateError> {
+        self.queries.fetch_add(1, Ordering::Relaxed);
         self.inner.query(pk, sk_prefix, limit, after).await
     }
 

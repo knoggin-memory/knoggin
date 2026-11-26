@@ -235,6 +235,22 @@ async fn while_the_launcher_starts_another_build_a_waiting_request_launches_once
 }
 
 #[tokio::test]
+async fn waiting_requests_share_one_listing_of_the_container_records() {
+    let w = World::new().await;
+    let f = w.fleet(BUILD, true, |_| {});
+    // No container comes: every request looks again every 250 ms for 2 seconds.
+    w.launcher.refuse.store(true, Ordering::Relaxed);
+    let before = w.flaky.queries.load(Ordering::Relaxed);
+    let waits = (0..20).map(|_| f.acquire(user(), Duration::from_secs(2)));
+    for r in futures_util::future::join_all(waits).await {
+        assert_eq!(r.unwrap_err().code, Code::Unavailable);
+    }
+    // 20 requests looking 8 times each would list 160 times.
+    let lists = w.flaky.queries.load(Ordering::Relaxed) - before;
+    assert!(lists <= 20, "{lists} listings");
+}
+
+#[tokio::test]
 async fn a_failed_claim_marks_the_container_gone_and_does_not_count_against_the_user() {
     let w = World::new().await;
     let f = w.fleet(BUILD, true, |c| c.containers.claim_wait_ms = 1_500);

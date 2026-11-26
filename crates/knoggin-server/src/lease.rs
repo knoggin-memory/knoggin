@@ -81,6 +81,9 @@ pub struct FleetConfig {
     pub allow_downgrade: bool,
 }
 
+/// One read of every container record, shared.
+type Records = Arc<Vec<Versioned<Container>>>;
+
 /// What one router knows of the fleet: the state database's leases and container
 /// records, the launcher, the pinned clients to containers and the router's own tasks.
 pub struct Fleet {
@@ -101,6 +104,8 @@ pub struct Fleet {
     pub(crate) limits: Arc<PeerLimits>,
     /// Request bodies buffered for a resend: all of them and per user.
     pub(crate) buffered: Mutex<(u64, HashMap<UserId, u64>)>,
+    /// The last read of the container records for claims, and when it was made.
+    claim_records: Mutex<Option<(Instant, Records)>>,
 }
 
 impl std::fmt::Debug for Fleet {
@@ -270,6 +275,7 @@ impl Fleet {
             gate: Mutex::new(LaunchGate::default()),
             limits,
             buffered: Mutex::new((0, HashMap::new())),
+            claim_records: Mutex::new(None),
             config,
         }))
     }
@@ -386,7 +392,7 @@ impl Fleet {
             return Err(ApiError::unavailable(60).with_reason("crashed"));
         }
         let (build, retire_before) = self.claim_build().await.map_err(db_error)?;
-        let records = self.containers.list().await.map_err(db_error)?;
+        let records = self.claim_records().await.map_err(db_error)?;
         let candidate = records.iter().find(|c| {
             c.value.state == ContainerState::Ready
                 && c.value.build == build.build
@@ -406,10 +412,13 @@ impl Fleet {
             }
             // While the launcher's containers report another build than this router's,
             // no launch can bring a claimable container: one a minute, as the pool does.
-            if self.launches_mismatch() {
-                self.launch_slowly(build).await.map_err(db_error)?;
+            let launched = if self.launches_mismatch() {
+                self.launch_slowly(build).await
             } else {
-                self.launch(build).await.map_err(db_error)?;
+                self.launch(build).await
+            };
+            if launched.map_err(db_error)? {
+                self.forget_records();
             }
             return Ok(Step::Wait);
         };
@@ -429,7 +438,9 @@ impl Fleet {
         let mut writes = Leases::writes(user, &next, cond_of(read)).map_err(db_error)?;
         writes.push(Containers::write(&container, found.cond()).map_err(db_error)?);
         let started = Instant::now();
-        match self.db.write(writes).await {
+        let written = self.db.write(writes).await;
+        self.forget_records();
+        match written {
             Ok(()) => {
                 let fleet = self.clone();
                 self.spawn(async move {
@@ -443,6 +454,24 @@ impl Fleet {
             Err(StateError::Conflict) => Ok(Step::Again),
             Err(e) => Err(db_error(e)),
         }
+    }
+
+    /// The container records for claims: one read serves every request of this router for
+    /// up to 250 ms (each waiting request looks every 250 ms), and a claim or a launch
+    /// drops it.
+    async fn claim_records(&self) -> Result<Records, StateError> {
+        if let Some((at, records)) = &*crate::lock(&self.claim_records)
+            && at.elapsed() < POLL
+        {
+            return Ok(records.clone());
+        }
+        let records = Arc::new(self.containers.list().await?);
+        *crate::lock(&self.claim_records) = Some((Instant::now(), records.clone()));
+        Ok(records)
+    }
+
+    fn forget_records(&self) {
+        *crate::lock(&self.claim_records) = None;
     }
 
     /// Whether `containers.max` is reached by the records that are not `gone`.
