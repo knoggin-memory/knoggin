@@ -397,17 +397,6 @@ impl Store {
         inserted
     }
 
-    /// Removes one edge.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no operation removes a single edge yet")
-    )]
-    pub(crate) fn remove_edge(&mut self, key: &EdgeKey) -> Option<Edge> {
-        let edge = self.graph.remove(key)?;
-        self.estimated_bytes = self.estimated_bytes.saturating_sub(EDGE_BYTES);
-        Some(edge)
-    }
-
     /// Removes every edge for which `drop` holds (automatic `Associative` edges on a
     /// model change, for example).
     pub(crate) fn remove_edges_where(&mut self, drop: impl FnMut(&Edge) -> bool) -> Vec<Edge> {
@@ -790,8 +779,10 @@ mod tests {
         assert_eq!((c.memories, c.full, c.ready, c.pending), (2, 2, 1, 1));
         assert_eq!(
             s.tag_index()
-                .memories_with_all(ns, &[Tag::new("travel").unwrap()]),
-            [mid(1), mid(2)]
+                .entries()
+                .map(|(n, t, ids)| (n, t.as_str().to_owned(), ids.len()))
+                .collect::<Vec<_>>(),
+            [(ns, "travel".to_owned(), 2)]
         );
         assert_eq!(
             s.entity_index()
@@ -994,7 +985,6 @@ mod tests {
                 .len(),
             1
         );
-        assert!(s.remove_edge(&e.key()).is_none());
         s.remove_memory(mid(1));
         s.remove_memory(mid(2));
         assert!(s.remove_namespace(work).is_some());

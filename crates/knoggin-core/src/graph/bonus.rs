@@ -62,13 +62,6 @@ impl Store {
         (raw, effective_retrievability(raw, bonus))
     }
 
-    /// Effective strength `R + bonus * (1 - R)` of one memory at `now`, for the recall
-    /// pipeline and the sweep alike.
-    pub fn effective_strength(&self, id: MemoryId, now: Timestamp) -> Option<f32> {
-        let memory = self.memories.get(&id)?;
-        Some(self.strengths(memory, now).1)
-    }
-
     /// The connection bonus of one memory at `now`, 0 to 0.15.
     ///
     /// One edge away, in either direction: `fan_strength(fan_j) * R_j * weight *
@@ -264,8 +257,6 @@ mod tests {
         let bonus = s.connection_bonus(mid(1), later);
         assert!(bonus > 0.0);
         assert_eq!(eff, effective_retrievability(raw, bonus));
-        assert_eq!(s.effective_strength(mid(1), later), Some(eff));
-        assert_eq!(s.effective_strength(mid(99), later), None);
         // A ghost has no bonus.
         let ghost = s.memory(mid(5)).unwrap();
         let (raw, eff) = s.strengths(ghost, later);

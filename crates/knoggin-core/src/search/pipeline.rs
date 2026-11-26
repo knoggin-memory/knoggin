@@ -163,13 +163,13 @@ fn composite_score(c: &Candidate) -> f32 {
     match (c.relevance, c.activation) {
         (Some(rel), _) => 0.90 * rel + 0.05 * c.entity_score + 0.05 * fts_signal,
         (None, Some(activation)) => 0.70 * activation + 0.30 * c.entity_score,
-        (None, None) if c.entity_recall > 0.0 => {
+        // Only the entity channel makes a candidate without relevance or activation.
+        (None, None) => {
             0.40 * c.entity_recall
                 + 0.20 * c.entity_score
                 + 0.10 * c.effective_r
                 + 0.10 * fts_signal
         }
-        (None, None) => c.effective_r * 0.1,
     }
 }
 

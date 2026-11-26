@@ -53,11 +53,6 @@ pub fn effective_retrievability(raw: f32, bonus: f32) -> f32 {
     (raw + bonus * (1.0 - raw)).clamp(0.0, 1.0)
 }
 
-/// Days until raw strength falls to `target`: the inverse of the curve.
-pub fn days_until_threshold(stability: f32, target: f32) -> f32 {
-    stability / FACTOR * (target.powf(1.0 / DECAY) - 1.0)
-}
-
 /// The stability after a reinforcement of `quality` 1 to 4.
 ///
 /// Quality 2 to 4: `S' = S * (1 + (SInc - 1) * g)` with `g` = 0.7, 1.0, 1.3.
@@ -95,11 +90,12 @@ mod tests {
     // Ported from recalld `fsrs::timeline_tests::default_stability_timeline_matches_the_docs`.
     #[test]
     fn default_stability_timeline_matches_the_docs() {
-        let days = |r| days_until_threshold(DEFAULT_INITIAL_STABILITY, r);
-        assert!((days(0.9) - 3.7145).abs() < 0.01);
-        assert!((days(0.7) - 16.5).abs() < 0.1);
-        assert!((days(0.3) - 160.0).abs() < 0.5);
-        assert!((days(0.05) - 6318.0).abs() < 5.0);
+        // The documented days at which the default stability reaches each threshold.
+        let r = |days| retrievability(days, DEFAULT_INITIAL_STABILITY, 1.0);
+        assert!((r(3.7145) - 0.9).abs() < 1e-3);
+        assert!((r(16.5) - 0.7).abs() < 1e-3);
+        assert!((r(160.0) - 0.3).abs() < 1e-3);
+        assert!((r(6318.0) - 0.05).abs() < 1e-3);
     }
 
     #[test]

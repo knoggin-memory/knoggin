@@ -56,35 +56,6 @@ impl TagIndex {
         }
     }
 
-    /// The memories of `namespace` that carry `tag`.
-    pub fn memories_with(&self, namespace: NamespaceId, tag: &Tag) -> Option<&BTreeSet<MemoryId>> {
-        self.index.get(&namespace)?.get(tag)
-    }
-
-    /// The memories of `namespace` that carry every tag in `tags`, ascending ID.
-    /// Empty when `tags` is empty: a caller with no tag filter skips this call.
-    pub fn memories_with_all(&self, namespace: NamespaceId, tags: &[Tag]) -> Vec<MemoryId> {
-        let Some(by_tag) = self.index.get(&namespace) else {
-            return Vec::new();
-        };
-        let mut sets = Vec::with_capacity(tags.len());
-        for tag in tags {
-            match by_tag.get(tag) {
-                Some(ids) => sets.push(ids),
-                None => return Vec::new(),
-            }
-        }
-        sets.sort_by_key(|s| s.len());
-        let Some((smallest, rest)) = sets.split_first() else {
-            return Vec::new();
-        };
-        smallest
-            .iter()
-            .copied()
-            .filter(|id| rest.iter().all(|s| s.contains(id)))
-            .collect()
-    }
-
     /// Every tag of `namespace` with its number of memories, in tag order.
     pub fn counts(&self, namespace: NamespaceId) -> impl Iterator<Item = (&Tag, u64)> {
         self.index
@@ -123,9 +94,13 @@ mod tests {
         idx.add(ns, mid(2), &tags(&["a", "b"]));
         idx.add(ns, mid(1), &tags(&["a"]));
         idx.add(other, mid(3), &tags(&["a"]));
-        assert_eq!(idx.memories_with_all(ns, &tags(&["a"])), [mid(1), mid(2)]);
-        assert_eq!(idx.memories_with_all(ns, &tags(&["a", "b"])), [mid(2)]);
-        assert!(idx.memories_with_all(ns, &tags(&["a", "zzz"])).is_empty());
+        let a = Tag::new("a").unwrap();
+        let holders: Vec<_> = idx.entries().filter(|e| e.0 == ns && *e.1 == a).collect();
+        assert_eq!(holders.len(), 1);
+        assert_eq!(
+            holders[0].2.iter().copied().collect::<Vec<_>>(),
+            [mid(1), mid(2)]
+        );
         let counts: Vec<_> = idx
             .counts(ns)
             .map(|(t, c)| (t.as_str().to_owned(), c))
@@ -133,7 +108,7 @@ mod tests {
         assert_eq!(counts, [("a".to_owned(), 2), ("b".to_owned(), 1)]);
         idx.remove(ns, mid(2), &tags(&["a", "b"]));
         idx.remove(ns, mid(1), &tags(&["a"]));
-        assert!(idx.memories_with(ns, &Tag::new("a").unwrap()).is_none());
+        assert_eq!(idx.counts(ns).count(), 0);
         assert_eq!(idx.entries().count(), 1);
         idx.remove(other, mid(3), &tags(&["a"]));
         assert_eq!(idx, TagIndex::new());

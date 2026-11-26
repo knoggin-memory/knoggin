@@ -16,9 +16,9 @@ crates") is the authority; this file says how the code meets it.
 | `model::markup` | `scan_client_markup`, `reject_client_markup` |
 | `ops` | Request and result types of every operation (see the file header for the rules) |
 | `embed` | `EmbeddingProvider`, `ModelIdentity`, `EmbedError`, `document_text`, `document_text_from_parts`, `QUERY_PREFIX`, `query_text` |
-| `decay::fsrs` | `retrievability`, `stability_increase`, `review_stability` (quality 1 rule included), `effective_retrievability`, `days_until_threshold` |
+| `decay::fsrs` | `retrievability`, `stability_increase`, `review_stability` (quality 1 rule included), `effective_retrievability` |
 | `graph` | `Graph` (edges by key, adjacency, `degree`, `joined`), `spreading_edge_factor`, `fan_strength` |
-| `graph::bonus` | `Store::raw_strength`, `strengths`, `effective_strength`, `connection_bonus` |
+| `graph::bonus` | `Store::raw_strength`, `strengths` (raw and effective, used by the pipeline and the sweep), `connection_bonus` |
 | `graph::activation` | `Store::spreading_activation` (seeds, namespace, depth, now) -> `Spread` (activated, trace seeds and spreads) |
 | `rif` | `rif_edge_factor`, `rif_activation`, `plasticity_multiplier`; `Store::rif_suppressions` |
 | `search::pipeline` | `Store::recall`, `resolve_namespace` (name or `default`), `successors` (supersedes walk), `compact_hits`, `HardFilter` |
@@ -26,7 +26,7 @@ crates") is the authority; this file says how the code meets it.
 | `search::vector` | `VectorTable` (`insert`, `remove` = swap-remove, `get`, `iter`, `top_k`), `dot`, `is_valid_vector` |
 | `search::fts` | `FtsIndex` (`upsert`, `remove`, `set_namespace`, `search`, `docs`), `match_query`, `FtsError`. The tags column holds plain tags only, no label terms (as recalld's native path; the ranking fixture needs it) |
 | `search::entity` | `canonicalize_entity`, `entity_overlap` (Jaccard), `EntityIndex` |
-| `search::tags` | `TagIndex` (plain tags only; `memories_with_all`, `counts`) |
+| `search::tags` | `TagIndex` (plain tags only; `counts`) |
 | `store` | `Store` (fields `pub(crate)`), `Store::create(id, model, now)`, accessors, `memory_view`, `summary`, `changes`, `estimated_bytes`, `IdempotencyEntry`, `NamespaceCounts` |
 | `store::index` | The index-maintenance helpers below, `rebuild_indexes_for_test`, `index_snapshot_for_test` |
 | `store::write` | `store_memory`, `store_memories`, `supersede_memory`, `reinforce_memory`, `forget_memory(s)`, `move_memories`, `record_access`; `pub(crate) note_client_write` |
@@ -50,7 +50,7 @@ the graph, the per-namespace counts, `estimated_bytes` and the idempotency purge
   vector when the embedding is no longer `Ready`, purges idempotency when it becomes a ghost
 - `fade_to_summary(id, now)`, `fade_to_ghost(id, now)`, `move_memory(id, ns)`, `remove_memory(id) -> (Memory, edges)`
 - `attach_vector(id, &[f32])` (sets `Ready`, failures 0), `reset_vectors(model)` (model change: all vectors go, non-ghosts `Pending`)
-- `insert_edge(edge)`, `remove_edge(&key)`, `remove_edges_where(pred)`
+- `insert_edge(edge)`, `remove_edges_where(pred)`
 - `allocate_namespace_id()`, `insert_namespace(ns)`, `remove_namespace(id)` (empty only)
 - `insert_idempotency(key, entry)`, `remove_idempotency(key)`
 - `rebuild_indexes()` (load path), `estimate_from_scratch()`
@@ -76,4 +76,3 @@ Reads record nothing. `recall` returns `hits` (kind per hit) for `record_access`
 `associative`. Every read takes `now` as its last argument.
 
 Every write takes `now` (and a client write `ctx: &WriteContext`) as its last arguments.
-`remove_edge` keeps its `expect(dead_code)`: no operation removes a single edge yet.
