@@ -156,20 +156,12 @@ pub fn request_hash<T: Serialize>(op: &str, request: &T) -> Result<[u8; 32], Api
 /// At most this many client names per open store.
 const MAX_CLIENTS: usize = 32;
 
-/// Notes `client` as seen `at`; a full list drops the name seen longest ago.
+/// Notes `client` as seen `at`. The list is kept oldest first, so ties in `at` keep the
+/// order of arrival; a full list drops the name seen longest ago.
 fn note_client(list: &mut Vec<(String, Timestamp)>, client: &str, at: Timestamp) {
-    if let Some(entry) = list.iter_mut().find(|(name, _)| name == client) {
-        entry.1 = at;
-        return;
-    }
-    if list.len() >= MAX_CLIENTS
-        && let Some(oldest) = list
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, (_, seen))| *seen)
-            .map(|(i, _)| i)
-    {
-        list.swap_remove(oldest);
+    list.retain(|(name, _)| name != client);
+    if list.len() >= MAX_CLIENTS {
+        list.remove(0);
     }
     list.push((client.to_owned(), at));
 }
@@ -506,7 +498,7 @@ impl StoreHost {
     pub fn clients(&self, id: StoreId) -> Vec<(String, Timestamp)> {
         let open = lock(&self.entries).get(&id).and_then(|e| e.open());
         let mut list = open.map(|o| lock(&o.clients).clone()).unwrap_or_default();
-        list.sort_by_key(|(_, seen)| std::cmp::Reverse(*seen));
+        list.reverse();
         list
     }
 
