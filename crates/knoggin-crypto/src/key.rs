@@ -4,6 +4,7 @@
 use std::fmt;
 
 use async_trait::async_trait;
+use aws_lc_rs::hkdf::{HKDF_SHA256, Salt};
 use aws_lc_rs::rand::{SecureRandom, SystemRandom};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -43,6 +44,22 @@ impl DataKey {
     /// The key bytes, for the one call that needs them.
     pub fn expose(&self) -> &[u8; KEY_LEN] {
         &self.0
+    }
+
+    /// A 32-byte key derived from this one: HKDF-SHA-256 with an empty salt and `info`.
+    /// Gives the field-seal, field-index and login keys, and the Postgres state key.
+    #[expect(
+        clippy::expect_used,
+        reason = "HKDF-SHA-256 refuses only outputs over 255 * 32 bytes; this one is 32"
+    )]
+    pub fn derive(&self, info: &[u8]) -> Self {
+        let mut out = Self([0; KEY_LEN]);
+        Salt::new(HKDF_SHA256, &[])
+            .extract(&self.0)
+            .expand(&[info], HKDF_SHA256)
+            .and_then(|okm| okm.fill(&mut out.0))
+            .expect("a 32-byte HKDF-SHA-256 output");
+        out
     }
 }
 
@@ -129,6 +146,24 @@ mod tests {
         let key = DataKey::from_bytes([0xAB; KEY_LEN]);
         let text = format!("{key:?}");
         assert_eq!(text, "DataKey([redacted])");
+    }
+
+    #[test]
+    fn derive_is_hkdf_sha256_with_an_empty_salt() {
+        use aws_lc_rs::hmac::{HMAC_SHA256, Key, sign};
+        let ikm = DataKey::from_bytes([7; KEY_LEN]);
+        // RFC 5869 by hand: PRK = HMAC(zero salt, IKM), T(1) = HMAC(PRK, info || 0x01).
+        let prk = sign(&Key::new(HMAC_SHA256, &[0; 32]), ikm.expose());
+        let t1 = sign(
+            &Key::new(HMAC_SHA256, prk.as_ref()),
+            b"knoggin-field-seal-v1\x01",
+        );
+        let derived = ikm.derive(b"knoggin-field-seal-v1");
+        assert_eq!(derived.expose().as_slice(), t1.as_ref());
+        assert_ne!(
+            ikm.derive(b"knoggin-field-index-v1").expose(),
+            derived.expose()
+        );
     }
 
     #[test]
