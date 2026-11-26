@@ -34,5 +34,7 @@ utoipa = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+rmcp = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber = { workspace = true }
