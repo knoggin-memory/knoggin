@@ -1,2 +1,15 @@
 [registry]
 global-min-publish-age = "7 days"
+
+# No test may reach AWS (tab "Testing, CI, releases"). Every process cargo starts, tests
+# included, gets dummy keys and no shared config or credentials file, so that no AWS SDK
+# default chain can pick up an account's real ones; the stack tests point their clients
+# at moto explicitly.
+[env]
+AWS_CONFIG_FILE = { value = "/dev/null", force = true }
+AWS_SHARED_CREDENTIALS_FILE = { value = "/dev/null", force = true }
+AWS_EC2_METADATA_DISABLED = { value = "true", force = true }
+AWS_ACCESS_KEY_ID = { value = "testing", force = true }
+AWS_SECRET_ACCESS_KEY = { value = "testing", force = true }
+AWS_SESSION_TOKEN = { value = "testing", force = true }
+AWS_PROFILE = { value = "default", force = true }
