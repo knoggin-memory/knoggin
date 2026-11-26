@@ -25,10 +25,12 @@ hyper = { workspace = true }
 hyper-rustls = { workspace = true }
 hyper-util = { workspace = true }
 knoggin-core = { path = "../knoggin-core" }
+knoggin-crypto = { path = "../knoggin-crypto" }
 knoggin-http = { path = "../knoggin-http" }
 knoggin-state = { path = "../knoggin-state" }
 metrics = { workspace = true }
 rcgen = { workspace = true }
+reqwest = { workspace = true }
 rustls = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

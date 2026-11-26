@@ -7,6 +7,7 @@
 //! built on top of these; `CONTRACT.md` says where each goes.
 
 pub mod aws;
+pub mod broker;
 mod hex;
 pub mod launcher;
 pub mod lease;

@@ -2566,6 +2566,7 @@ dependencies = [
  "knoggin-state",
  "metrics",
  "rcgen",
+ "reqwest",
  "rustls",
  "serde",
  "serde_json",
