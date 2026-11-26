@@ -49,7 +49,9 @@ async fn claim_serve_park_crash_and_restore() {
     // Claim and serve.
     let saved = s.save(&u.token, None, "first memory").await;
     assert_eq!(saved.status, 201, "{}", saved.body);
-    let first = s.container_of(&u).expect("a container claimed for the user");
+    let first = s
+        .container_of(&u)
+        .expect("a container claimed for the user");
 
     // Idle: the container parks, exits 0, and the launcher removes it and its network.
     assert!(
@@ -62,7 +64,11 @@ async fn claim_serve_park_crash_and_restore() {
         .await,
         "the idle container was not parked and removed"
     );
-    assert_eq!(snapshots(&s, &u.personal).len(), 1, "the park saved one snapshot");
+    assert_eq!(
+        snapshots(&s, &u.personal).len(),
+        1,
+        "the park saved one snapshot"
+    );
 
     // The next request claims a new container, which loads the snapshot.
     assert_eq!(
@@ -74,12 +80,17 @@ async fn claim_serve_park_crash_and_restore() {
 
     // A crash after the snapshot loses nothing.
     let before = snapshots(&s, &u.personal).len();
+    let alive = s.keep_alive(vec![u.token.clone()]);
     assert_eq!(s.save(&u.token, None, "second memory").await.status, 201);
     assert!(
-        eventually(limit, || async { snapshots(&s, &u.personal).len() > before }).await,
+        eventually(limit, || async {
+            snapshots(&s, &u.personal).len() > before
+        })
+        .await,
         "the write was never saved"
     );
     docker_ok(&["kill", &second.docker_id]);
+    drop(alive);
     assert_eq!(
         s.summaries(&u.token, None).await,
         (
@@ -110,13 +121,28 @@ async fn claim_serve_park_crash_and_restore() {
         "--snapshot",
         &oldest,
     ]);
-    assert!(restore.status.success(), "admin restore: {}", text(&restore));
+    assert!(
+        restore.status.success(),
+        "admin restore: {}",
+        text(&restore)
+    );
     assert_eq!(
         s.summaries(&u.token, None).await,
         (200, vec!["first memory".to_owned()])
     );
     let names = snapshots(&s, &u.personal);
     assert!(names.contains(&oldest), "a restore deletes nothing");
+
+    // The router's Compose health check (`knoggin healthcheck --url .../readyz`) passes.
+    let router = s.service_id("router");
+    assert!(
+        eventually(limit, || async {
+            docker_ok(&["inspect", "--format", "{{.State.Health.Status}}", &router]).trim()
+                == "healthy"
+        })
+        .await,
+        "the router's health check never passed"
+    );
 
     // The lifecycle task runs once and exits 0.
     let run = s.compose(&["run", "--rm", "--no-deps", "lifecycle", "lifecycle"]);

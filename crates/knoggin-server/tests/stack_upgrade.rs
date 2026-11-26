@@ -30,6 +30,8 @@ async fn stopping_and_starting_the_router_parks_and_serves_everyone_again() {
         let a = s.save(&u.token, None, text).await;
         assert_eq!(a.status, 201, "{}", a.body);
     }
+    // Busy, so that they are still claimed when the router stops (idle time is 5 s).
+    let alive = s.keep_alive(vec![ana.token.clone(), ben.token.clone()]);
     let claimed: Vec<_> = [&ana, &ben]
         .iter()
         .map(|u| s.container_of(u).expect("a claimed container"))
@@ -51,6 +53,7 @@ async fn stopping_and_starting_the_router_parks_and_serves_everyone_again() {
     assert!(!pool.is_empty());
 
     // Stop: the router parks the claimed containers and waits while they save.
+    drop(alive);
     let started = Instant::now();
     s.compose_ok(&["stop", "--timeout", "150", "router"]);
     println!("the router stopped in {:?}", started.elapsed());

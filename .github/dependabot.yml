@@ -1,6 +1,6 @@
 # Tab "Testing, CI, releases": weekly, a 7-day cooldown, one group per ecosystem.
-# The npm, uv and docker directories arrive with milestones 4, 8 and 6; until
-# then Dependabot reports those three entries as having no manifest.
+# The uv directory arrives with milestone 8; until then Dependabot reports that
+# entry as having no manifest. The docker entry reads deploy/Dockerfile.
 version: 2
 updates:
   - package-ecosystem: cargo

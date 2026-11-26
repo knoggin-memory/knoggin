@@ -22,8 +22,8 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use knoggin_crypto::MasterKeySet;
 use knoggin_crypto::source::create_key_file;
-use reqwest::header::{HeaderMap, LOCATION, SET_COOKIE};
 use reqwest::Method;
+use reqwest::header::{HeaderMap, LOCATION, SET_COOKIE};
 use serde_json::{Value, json};
 
 /// The repository root.
@@ -89,7 +89,13 @@ pub fn build_image() {
         }
         let mut build = Command::new("docker");
         build
-            .args(["build", "-f", "deploy/Dockerfile", "--build-arg", "SKIP_MODEL=1"])
+            .args([
+                "build",
+                "-f",
+                "deploy/Dockerfile",
+                "--build-arg",
+                "SKIP_MODEL=1",
+            ])
             .args(["-t", IMAGE, "."])
             .current_dir(ROOT)
             .stdin(Stdio::null());
@@ -154,7 +160,7 @@ fn write_secrets(dir: &Path) -> Vec<String> {
     std::fs::create_dir(dir).unwrap();
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)).unwrap();
     let mut values = Vec::new();
-    let mut write = |name: &str, content: String| {
+    let write = |name: &str, content: String| {
         std::fs::write(dir.join(name), content).unwrap();
     };
     let superuser = random_hex(32);
@@ -220,8 +226,11 @@ fn write_secrets(dir: &Path) -> Vec<String> {
         );
     }
     for entry in std::fs::read_dir(dir).unwrap() {
-        std::fs::set_permissions(entry.unwrap().path(), std::fs::Permissions::from_mode(0o444))
-            .unwrap();
+        std::fs::set_permissions(
+            entry.unwrap().path(),
+            std::fs::Permissions::from_mode(0o444),
+        )
+        .unwrap();
     }
     values
 }
@@ -567,7 +576,10 @@ impl Stack {
     pub async fn session(&self, sub: &str) -> String {
         let login = self
             .http
-            .get(format!("{}/auth/login?return_to=/&login_hint={sub}", self.base))
+            .get(format!(
+                "{}/auth/login?return_to=/&login_hint={sub}",
+                self.base
+            ))
             .send()
             .await
             .unwrap();
@@ -677,6 +689,26 @@ impl Stack {
         (a.status, items)
     }
 
+    /// Keeps the claimed containers of `creds` busy until the guard is dropped, so that
+    /// they do not park (the test stack parks after 5 idle seconds).
+    pub fn keep_alive(&self, creds: Vec<Cred>) -> KeepAlive {
+        let (base, http) = (self.base.clone(), self.http.clone());
+        KeepAlive(tokio::spawn(async move {
+            loop {
+                for c in &creds {
+                    if let Cred::Bearer(t) = c {
+                        let _ = http
+                            .get(format!("{base}/v1/tags"))
+                            .bearer_auth(t)
+                            .send()
+                            .await;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+            }
+        }))
+    }
+
     /// Removes everything this stack made. Safe to call twice.
     pub fn teardown(&self) {
         let label = format!("label=knoggin.deployment={}", self.project);
@@ -714,6 +746,16 @@ impl Drop for Stack {
             }
         }
         self.teardown();
+    }
+}
+
+/// Stops the requests of [`Stack::keep_alive`] when dropped.
+#[derive(Debug)]
+pub struct KeepAlive(tokio::task::JoinHandle<()>);
+
+impl Drop for KeepAlive {
+    fn drop(&mut self) {
+        self.0.abort();
     }
 }
 

@@ -155,6 +155,8 @@ services:
     <<: *hardened
     image: chrislusf/seaweedfs:4.54@sha256:4b42c212543a0acd4c0e675215ecdcaf62a186ef98def76c7e12701871222d15
     profiles: [local-s3]
+    # The image's own user, which owns /data.
+    user: "1000:1000"
     networks: [store]
     volumes:
       - s3-data:/data
@@ -164,7 +166,7 @@ services:
     command:
       - |
         until [ -s /config/s3.json ]; do sleep 1; done
-        exec weed server -dir=/data -ip.bind=0.0.0.0 -s3 -s3.port=8333 -s3.config=/config/s3.json
+        exec weed server -dir=/data -ip.bind=0.0.0.0 -master.telemetry=false -s3 -s3.port=8333 -s3.config=/config/s3.json
     healthcheck:
       test: [CMD-SHELL, "wget -q -O /dev/null http://127.0.0.1:9333/cluster/status"]
       interval: 5s
@@ -176,6 +178,8 @@ services:
     image: chrislusf/seaweedfs:4.54@sha256:4b42c212543a0acd4c0e675215ecdcaf62a186ef98def76c7e12701871222d15
     profiles: [local-s3]
     cap_drop: [ALL]
+    # To hand the identity file to the user that s3 runs as.
+    cap_add: [CHOWN]
     security_opt: [no-new-privileges:true]
     restart: "no"
     networks: [store]
@@ -199,15 +203,18 @@ services:
           identity lifecycle /run/secrets/s3_credentials_lifecycle '"Admin","Read","Write","List","Tagging"'
           printf ']}\n'
         } > /config/s3.json.part
+        chown 1000:1000 /config/s3.json.part
         mv /config/s3.json.part /config/s3.json
         tries=0
-        until echo "s3.bucket.list" | timeout 10 weed shell -master=s3:9333 >/dev/null 2>&1; do
-          tries=$$((tries + 1)); [ "$$tries" -lt 120 ] || { echo "s3 did not start" >&2; exit 1; }
+        until wget -q -O /dev/null http://s3:8888/; do
+          tries=$$((tries + 1)); [ "$$tries" -lt 180 ] || { echo "s3 did not start" >&2; exit 1; }
           sleep 1
         done
-        if ! echo "s3.bucket.list" | timeout 10 weed shell -master=s3:9333 2>/dev/null | grep -qw knoggin; then
-          echo "s3.bucket.create -name knoggin" | timeout 30 weed shell -master=s3:9333
+        # Compose runs this again whenever it starts the router or the lifecycle task.
+        if ! echo "s3.bucket.list" | timeout 60 weed shell -master=s3:9333 | grep -qw knoggin; then
+          echo "s3.bucket.create -name knoggin" | timeout 60 weed shell -master=s3:9333
         fi
+        echo "s3.bucket.list" | timeout 60 weed shell -master=s3:9333 | grep -qw knoggin
 
 networks:
   edge:

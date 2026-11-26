@@ -21,32 +21,14 @@ use std::time::Duration;
 use knoggin_server::router::forward::STORE_ROUTES;
 use reqwest::Method;
 use serde_json::{Value, json};
-use stack::{
-    Answer, Cred, ROOT, Stack, docker, docker_ok, eventually, pinned_image, text,
-};
+use stack::{Answer, Cred, ROOT, Stack, docker, docker_ok, eventually, pinned_image, text};
 
 fn suffix() -> String {
-    format!("{:x}{}", std::process::id(), &uuid::Uuid::now_v7().simple().to_string()[24..])
-}
-
-/// Keeps the claimed containers of `creds` busy, so that they do not park while the
-/// probes run (the test stack parks after 5 idle seconds).
-fn keep_alive(base: String, creds: Vec<Cred>) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(async move {
-        let http = reqwest::Client::new();
-        loop {
-            for c in &creds {
-                if let Cred::Bearer(t) = c {
-                    let _ = http
-                        .get(format!("{base}/v1/tags"))
-                        .bearer_auth(t)
-                        .send()
-                        .await;
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(1500)).await;
-        }
-    })
+    format!(
+        "{:x}{}",
+        std::process::id(),
+        &uuid::Uuid::now_v7().simple().to_string()[24..]
+    )
 }
 
 /// A container's addresses on its networks, by network name.
@@ -88,7 +70,11 @@ async fn isolation_on_the_one_host_stack() {
     let ay = s.app(&a, &ay_name).await;
     let _bx = s.app(&b, &bx_name).await;
     let (key_names, keys) = {
-        let names = [format!("keyx{sfx}"), format!("keyy{sfx}"), format!("keyb{sfx}")];
+        let names = [
+            format!("keyx{sfx}"),
+            format!("keyy{sfx}"),
+            format!("keyb{sfx}"),
+        ];
         let kx = s.key(&a, &ax, &names[0]).await;
         let ky = s.key(&a, &ay, &names[1]).await;
         let kb = s.key(&b, &b.personal, &names[2]).await;
@@ -103,10 +89,7 @@ async fn isolation_on_the_one_host_stack() {
     assert_eq!(s.save(&a.token, None, &texts[0]).await.status, 201);
     assert_eq!(s.save(&ax_key, None, &texts[1]).await.status, 201);
     assert_eq!(s.save(&b.token, None, &texts[2]).await.status, 201);
-    let alive = keep_alive(
-        s.base.clone(),
-        vec![a.token.clone(), b.token.clone(), ax_key.clone()],
-    );
+    let alive = s.keep_alive(vec![a.token.clone(), b.token.clone(), ax_key.clone()]);
 
     // I1, I2, I3, I13: every store route, with a credential of A (or the admin) and a
     // store that is not theirs to name, is refused and shows nothing of B's.
@@ -114,22 +97,43 @@ async fn isolation_on_the_one_host_stack() {
         ("A's session, B's store", &a.session, b.personal.as_str()),
         ("A's token, B's store", &a.token, b.personal.as_str()),
         ("A's app key, B's store", &ax_key, b.personal.as_str()),
-        ("A's app key, A's personal store", &ax_key, a.personal.as_str()),
+        (
+            "A's app key, A's personal store",
+            &ax_key,
+            a.personal.as_str(),
+        ),
         ("A's app key, A's other app", &ax_key, ay.as_str()),
-        ("the admin's session, B's store", &admin.session, b.personal.as_str()),
+        (
+            "the admin's session, B's store",
+            &admin.session,
+            b.personal.as_str(),
+        ),
     ];
     let id = uuid::Uuid::now_v7().to_string();
     for pattern in STORE_ROUTES {
         let path = pattern.replace("{id}", &id).replace("{name}", "default");
         for method in [Method::GET, Method::POST, Method::DELETE] {
             for (what, cred, store) in &foreign {
-                let body = (method == Method::POST).then(|| json!({ "summary": "x", "jsonrpc": "2.0", "id": 1, "method": "tools/list" }));
+                let body = (method == Method::POST).then(
+                    || json!({ "summary": "x", "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
+                );
                 let r = s
-                    .call(method.clone(), &path, cred, &[("knoggin-store", store)], body)
+                    .call(
+                        method.clone(),
+                        &path,
+                        cred,
+                        &[("knoggin-store", store)],
+                        body,
+                    )
                     .await;
                 not_success(&r, &format!("{what}: {method} {path}"));
-                assert!(!r.body.contains(&texts[2]), "{what}: {method} {path} shows B's memory");
-                if matches!(cred, Cred::Session(_)) {
+                assert!(
+                    !r.body.contains(&texts[2]),
+                    "{what}: {method} {path} shows B's memory"
+                );
+                // I2: a session naming another user's store gets not_found (a body
+                // check of the route may refuse first; that is a refusal too).
+                if matches!(cred, Cred::Session(_)) && method == Method::GET {
                     assert_eq!(r.code(), "not_found", "{what}: {method} {path}: {}", r.body);
                 }
             }
@@ -147,20 +151,62 @@ async fn isolation_on_the_one_host_stack() {
     for (who, cred) in [("A", &a.session), ("the admin", &admin.session)] {
         for (method, path, body) in [
             (Method::GET, format!("/v1/stores/{}", b.personal), None),
-            (Method::PATCH, format!("/v1/stores/{}", b.personal), Some(json!({ "name": "y" }))),
+            (
+                Method::PATCH,
+                format!("/v1/stores/{}", b.personal),
+                Some(json!({ "name": "y" })),
+            ),
             (Method::DELETE, format!("/v1/stores/{}", b.personal), None),
-            (Method::POST, format!("/v1/stores/{}/undelete", b.personal), None),
-            (Method::GET, format!("/v1/stores/{}/status", b.personal), None),
+            (
+                Method::POST,
+                format!("/v1/stores/{}/undelete", b.personal),
+                None,
+            ),
+            (
+                Method::GET,
+                format!("/v1/stores/{}/status", b.personal),
+                None,
+            ),
             (Method::GET, format!("/v1/stores/{}/keys", b.personal), None),
-            (Method::POST, format!("/v1/stores/{}/keys", b.personal), Some(new_key.clone())),
-            (Method::POST, format!("/v1/stores/{}/keys/{b_key_id}/rotate", b.personal), None),
-            (Method::DELETE, format!("/v1/stores/{}/keys/{b_key_id}", b.personal), None),
-            (Method::POST, format!("/v1/stores/{}/keys/{b_key_id}/rotate", a.personal), None),
-            (Method::DELETE, format!("/v1/stores/{}/keys/{b_key_id}", a.personal), None),
-            (Method::DELETE, format!("/v1/stores/{ax}/keys/{b_key_id}"), None),
+            (
+                Method::POST,
+                format!("/v1/stores/{}/keys", b.personal),
+                Some(new_key.clone()),
+            ),
+            (
+                Method::POST,
+                format!("/v1/stores/{}/keys/{b_key_id}/rotate", b.personal),
+                None,
+            ),
+            (
+                Method::DELETE,
+                format!("/v1/stores/{}/keys/{b_key_id}", b.personal),
+                None,
+            ),
+            (
+                Method::POST,
+                format!("/v1/stores/{}/keys/{b_key_id}/rotate", a.personal),
+                None,
+            ),
+            (
+                Method::DELETE,
+                format!("/v1/stores/{}/keys/{b_key_id}", a.personal),
+                None,
+            ),
+            (
+                Method::DELETE,
+                format!("/v1/stores/{ax}/keys/{b_key_id}"),
+                None,
+            ),
         ] {
             let r = s.call(method.clone(), &path, cred, &[], body).await;
-            assert_eq!(r.code(), "not_found", "{who}: {method} {path}: {} {}", r.status, r.body);
+            assert_eq!(
+                r.code(),
+                "not_found",
+                "{who}: {method} {path}: {} {}",
+                r.status,
+                r.body
+            );
         }
     }
     assert_eq!(
@@ -176,11 +222,30 @@ async fn isolation_on_the_one_host_stack() {
         (Method::POST, "/internal/v1/park"),
         (Method::POST, "/v1/%2e%2e/internal/v1/park"),
         (Method::GET, "/v1/../internal/v1/status"),
-        (Method::GET, "/internal/v1/blob/stores/x/snap/0000000001-0000000001.kgs"),
+        (
+            Method::GET,
+            "/internal/v1/blob/stores/x/snap/0000000001-0000000001.kgs",
+        ),
     ] {
         let r = s.call(method.clone(), path, &a.token, &[], None).await;
-        not_success(&r, &format!("{method} {path}"));
-        assert_ne!(r.status, 503, "{method} {path} reached the store layer: {}", r.body);
+        // A GET that is no API path gets the web UI's page; nothing reaches a container.
+        let page = r.status == 200
+            && r.headers
+                .get("content-type")
+                .is_some_and(|v| v.to_str().unwrap().starts_with("text/html"));
+        if !page {
+            not_success(&r, &format!("{method} {path}"));
+        }
+        assert_ne!(
+            r.status, 503,
+            "{method} {path} reached the store layer: {}",
+            r.body
+        );
+        assert!(
+            !r.body.contains("\"state\""),
+            "{method} {path} answered a status: {}",
+            r.body
+        );
     }
 
     // I16: an access token reaches memories and the session route, nothing else.
@@ -191,10 +256,23 @@ async fn isolation_on_the_one_host_stack() {
         (Method::GET, "/v1/users".to_owned()),
         (Method::GET, "/v1/admin/status".to_owned()),
     ] {
-        let r = s.call(method.clone(), &path, &a.token, &[], Some(json!({ "name": "z" }))).await;
+        let r = s
+            .call(
+                method.clone(),
+                &path,
+                &a.token,
+                &[],
+                Some(json!({ "name": "z" })),
+            )
+            .await;
         assert_eq!(r.code(), "permission_denied", "token: {method} {path}");
     }
-    assert_eq!(s.call(Method::GET, "/v1/session", &a.token, &[], None).await.status, 200);
+    assert_eq!(
+        s.call(Method::GET, "/v1/session", &a.token, &[], None)
+            .await
+            .status,
+        200
+    );
 
     // I9: from inside A's container, only the router's internal port answers.
     let ca = s.container_of(&a).expect("A's container");
@@ -208,12 +286,14 @@ async fn isolation_on_the_one_host_stack() {
     for c in s.user_containers() {
         user_logs.push_str(&text(&docker(&["logs", &c.docker_id])));
     }
-    alive.abort();
+    drop(alive);
 
     // I10: once idle, A's container parks; it no longer runs and its network is gone.
     assert!(
         eventually(Duration::from_secs(90), || async {
-            !s.user_containers().iter().any(|c| c.docker_id == ca.docker_id)
+            !s.user_containers()
+                .iter()
+                .any(|c| c.docker_id == ca.docker_id)
                 && !s.user_networks().contains(&ca.network)
         })
         .await,
@@ -222,10 +302,20 @@ async fn isolation_on_the_one_host_stack() {
 
     // I12: a revoked key is refused on its next request.
     let r = s
-        .call(Method::DELETE, &format!("/v1/stores/{ax}/keys/{ax_key_id}"), &a.session, &[], None)
+        .call(
+            Method::DELETE,
+            &format!("/v1/stores/{ax}/keys/{ax_key_id}"),
+            &a.session,
+            &[],
+            None,
+        )
         .await;
     assert_eq!(r.status, 204, "{}", r.body);
-    not_success(&s.call(Method::GET, "/v1/memories", &ax_key, &[], None).await, "revoked key");
+    not_success(
+        &s.call(Method::GET, "/v1/memories", &ax_key, &[], None)
+            .await,
+        "revoked key",
+    );
 
     // I14: nothing at rest is plaintext, and no log holds a marker or a secret.
     let mut markers: Vec<String> = texts.to_vec();
@@ -244,15 +334,31 @@ async fn isolation_on_the_one_host_stack() {
     for m in markers.iter().chain(&secrets) {
         assert!(!logs.contains(m.as_str()), "a log holds `{m}`");
     }
-    assert!(!logs.contains("X-Amz-Signature"), "a log holds a signed link");
+    assert!(
+        !logs.contains("X-Amz-Signature"),
+        "a log holds a signed link"
+    );
 
     // I17: once an admin removes B, B's key, session and token are refused at once.
     let r = s
-        .call(Method::DELETE, &format!("/v1/users/{}", b.id), &admin.session, &[], None)
+        .call(
+            Method::DELETE,
+            &format!("/v1/users/{}", b.id),
+            &admin.session,
+            &[],
+            None,
+        )
         .await;
     assert!((200..300).contains(&r.status), "{} {}", r.status, r.body);
-    for (what, cred) in [("key", &b_key), ("session", &b.session), ("token", &b.token)] {
-        not_success(&s.call(Method::GET, "/v1/memories", cred, &[], None).await, what);
+    for (what, cred) in [
+        ("key", &b_key),
+        ("session", &b.session),
+        ("token", &b.token),
+    ] {
+        not_success(
+            &s.call(Method::GET, "/v1/memories", cred, &[], None).await,
+            what,
+        );
     }
 }
 
@@ -267,7 +373,10 @@ fn compose_file_checks(s: &Stack) {
         v.as_array()
             .map(|a| {
                 a.iter()
-                    .map(|x| x.as_str().map_or_else(|| x["source"].as_str().unwrap().to_owned(), str::to_owned))
+                    .map(|x| {
+                        x.as_str()
+                            .map_or_else(|| x["source"].as_str().unwrap().to_owned(), str::to_owned)
+                    })
                     .collect()
             })
             .unwrap_or_default()
@@ -276,18 +385,40 @@ fn compose_file_checks(s: &Stack) {
         (
             "router",
             &[
-                "postgres_url", "master_key", "state_key", "s3_credentials", "internal_secret",
-                "internal_cert.pem", "internal_key.pem", "launcher_token", "web_client_secret",
+                "postgres_url",
+                "master_key",
+                "state_key",
+                "s3_credentials",
+                "internal_secret",
+                "internal_cert.pem",
+                "internal_key.pem",
+                "launcher_token",
+                "web_client_secret",
             ][..],
         ),
         ("launcher", &["launcher_token"][..]),
-        ("lifecycle", &["postgres_url_lifecycle", "s3_credentials_lifecycle", "state_key"][..]),
+        (
+            "lifecycle",
+            &[
+                "postgres_url_lifecycle",
+                "s3_credentials_lifecycle",
+                "state_key",
+            ][..],
+        ),
         (
             "db",
-            &["postgres_superuser_password", "postgres_url", "postgres_url_lifecycle", "postgres_url_backup"][..],
+            &[
+                "postgres_superuser_password",
+                "postgres_url",
+                "postgres_url_lifecycle",
+                "postgres_url_backup",
+            ][..],
         ),
         ("backup", &["postgres_url_backup"][..]),
-        ("s3-init", &["s3_credentials", "s3_credentials_lifecycle"][..]),
+        (
+            "s3-init",
+            &["s3_credentials", "s3_credentials_lifecycle"][..],
+        ),
         ("proxy", &[][..]),
         ("s3", &[][..]),
         ("test-issuer", &[][..]),
@@ -298,7 +429,10 @@ fn compose_file_checks(s: &Stack) {
         "the services"
     );
     for (name, svc) in services {
-        assert!(names(&svc["cap_drop"]).contains("ALL"), "{name} drops every capability");
+        assert!(
+            names(&svc["cap_drop"]).contains("ALL"),
+            "{name} drops every capability"
+        );
         let added = names(&svc["cap_add"]);
         assert!(
             !added.contains("NET_RAW") && !added.contains("CAP_NET_RAW"),
@@ -306,18 +440,32 @@ fn compose_file_checks(s: &Stack) {
         );
         assert_eq!(
             names(&svc["secrets"]),
-            expected[name.as_str()].iter().map(|s| (*s).to_owned()).collect(),
+            expected[name.as_str()]
+                .iter()
+                .map(|s| (*s).to_owned())
+                .collect(),
             "{name}'s secret files"
         );
     }
     let networks = |n: &str| -> BTreeSet<String> {
-        services[n]["networks"].as_object().unwrap().keys().cloned().collect()
+        services[n]["networks"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect()
     };
-    assert!(networks("db").is_disjoint(&networks("s3")), "db and s3 share a network");
+    assert!(
+        networks("db").is_disjoint(&networks("s3")),
+        "db and s3 share a network"
+    );
 
     let caddy = std::fs::read_to_string(format!("{ROOT}/deploy/docker/Caddyfile")).unwrap();
     assert!(caddy.contains("exclude http.log.error"));
-    let site = caddy.split("{$KNOGGIN_DOMAIN} {").nth(1).expect("the site block");
+    let site = caddy
+        .split("{$KNOGGIN_DOMAIN} {")
+        .nth(1)
+        .expect("the site block");
     assert!(
         !site.lines().any(|l| l.trim_start().starts_with("log")),
         "the site block has a log directive"
@@ -328,11 +476,20 @@ fn compose_file_checks(s: &Stack) {
 fn network_probes(s: &Stack, a: &stack::UserContainer, b: &stack::UserContainer) {
     let router = s.service_id("router");
     let router_here = addresses(&router)[&a.network].clone();
-    let ip = |service: &str| addresses(&s.service_id(service)).into_values().next().unwrap();
+    let ip = |service: &str| {
+        addresses(&s.service_id(service))
+            .into_values()
+            .next()
+            .unwrap()
+    };
     let gateway = {
-        let net: Value = serde_json::from_str(&docker_ok(&["network", "inspect", &a.network])).unwrap();
+        let net: Value =
+            serde_json::from_str(&docker_ok(&["network", "inspect", &a.network])).unwrap();
         assert_eq!(net[0]["Internal"], true, "the user network is internal");
-        let subnet = net[0]["IPAM"]["Config"][0]["Subnet"].as_str().unwrap().to_owned();
+        let subnet = net[0]["IPAM"]["Config"][0]["Subnet"]
+            .as_str()
+            .unwrap()
+            .to_owned();
         let base = subnet.split('/').next().unwrap();
         let (head, last) = base.rsplit_once('.').unwrap();
         format!("{head}.{}", last.parse::<u8>().unwrap() + 1)
@@ -340,7 +497,11 @@ fn network_probes(s: &Stack, a: &stack::UserContainer, b: &stack::UserContainer)
     let edge_host = format!("{}.0.1", s.prefix);
     let port = s.port.to_string();
     let closed: Vec<(String, String, String)> = vec![
-        ("B's container".into(), b.ip.clone(), "8443".into()),
+        (
+            "the other user container".into(),
+            b.ip.clone(),
+            "8443".into(),
+        ),
         ("db".into(), ip("db"), "5432".into()),
         ("launcher".into(), ip("launcher"), "7070".into()),
         ("s3".into(), ip("s3"), "8333".into()),
@@ -370,12 +531,27 @@ fn network_probes(s: &Stack, a: &stack::UserContainer, b: &stack::UserContainer)
     let out = s.probe(&format!("container:{}", a.docker_id), &script);
     println!("probe from A's container:\n{out}");
     for (label, _, _) in &closed {
-        assert!(out.contains(&format!("{label}: closed")), "{label} is reachable:\n{out}");
+        assert!(
+            out.contains(&format!("{label}: closed")),
+            "{label} is reachable:\n{out}"
+        );
     }
-    assert!(out.contains("internal: open"), "the router's internal port:\n{out}");
-    assert!(out.contains("router 8080: 0 bytes"), "the public port answered:\n{out}");
-    assert!(out.contains("router 9091: 0 bytes"), "the metrics port answered:\n{out}");
-    assert!(out.contains("lookup: failed"), "an outside name resolved:\n{out}");
+    assert!(
+        out.contains("internal: open"),
+        "the router's internal port:\n{out}"
+    );
+    assert!(
+        out.contains("router 8080: 0 bytes"),
+        "the public port answered:\n{out}"
+    );
+    assert!(
+        out.contains("router 9091: 0 bytes"),
+        "the metrics port answered:\n{out}"
+    );
+    assert!(
+        out.contains("lookup: failed"),
+        "an outside name resolved:\n{out}"
+    );
 
     // From the host, the networks that give it no address cannot be reached (Linux only:
     // elsewhere Docker runs in a VM whose own routing decides).
@@ -399,25 +575,51 @@ fn container_description(s: &Stack, c: &stack::UserContainer) {
     let v = &v[0];
     let h = &v["HostConfig"];
     assert_eq!(h["ReadonlyRootfs"], true);
-    assert!(v["Mounts"].as_array().is_none_or(Vec::is_empty), "no mounts");
+    assert!(
+        v["Mounts"].as_array().is_none_or(Vec::is_empty),
+        "no mounts"
+    );
     assert_eq!(v["Config"]["User"], "65532:65532");
     assert!(h["CapDrop"].as_array().unwrap().iter().any(|c| c == "ALL"));
-    assert!(h["CapAdd"].as_array().is_none_or(Vec::is_empty), "no added capability");
     assert!(
-        h["SecurityOpt"].as_array().unwrap().iter().any(|o| o.as_str().unwrap().starts_with("no-new-privileges")),
+        h["CapAdd"].as_array().is_none_or(Vec::is_empty),
+        "no added capability"
+    );
+    assert!(
+        h["SecurityOpt"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o.as_str().unwrap().starts_with("no-new-privileges")),
         "no-new-privileges"
     );
     assert_eq!(h["Privileged"], false);
     assert!(h["Memory"].as_i64().unwrap() > 0);
-    assert_eq!(h["MemorySwap"], h["Memory"], "swap equal to the memory limit");
+    assert_eq!(
+        h["MemorySwap"], h["Memory"],
+        "swap equal to the memory limit"
+    );
     assert_eq!(h["PidsLimit"], 256);
     assert!(
-        h["Ulimits"].as_array().unwrap().iter().any(|u| u["Name"] == "core" && u["Soft"] == 0 && u["Hard"] == 0),
+        h["Ulimits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|u| u["Name"] == "core" && u["Soft"] == 0 && u["Hard"] == 0),
         "core limit 0"
     );
-    assert!(h["PortBindings"].as_object().is_none_or(serde_json::Map::is_empty), "no published port");
+    assert!(
+        h["PortBindings"]
+            .as_object()
+            .is_none_or(serde_json::Map::is_empty),
+        "no published port"
+    );
     assert_eq!(h["RestartPolicy"]["Name"], "no");
-    assert_eq!(v["NetworkSettings"]["Networks"].as_object().unwrap().len(), 1, "one network");
+    assert_eq!(
+        v["NetworkSettings"]["Networks"].as_object().unwrap().len(),
+        1,
+        "one network"
+    );
     for id in s.compose_ok(&["ps", "-aq"]).split_whitespace() {
         let v: Value = serde_json::from_str(&docker_ok(&["inspect", id])).unwrap();
         let added = v[0]["HostConfig"]["CapAdd"].to_string();
@@ -432,10 +634,16 @@ fn service_probes(s: &Stack) {
     let script = "n=$(printf 'x\\r\\n' | nc -w 3 router 8443 2>/dev/null | wc -c); echo \"internal: $n bytes\"";
     for service in ["db", "s3", "launcher"] {
         let out = s.probe(&format!("container:{}", s.service_id(service)), script);
-        assert!(out.contains("internal: 0 bytes"), "{service} reached the internal port: {out}");
+        assert!(
+            out.contains("internal: 0 bytes"),
+            "{service} reached the internal port: {out}"
+        );
     }
     let out = s.probe(&s.network("edge"), script);
-    assert!(out.contains("internal: 0 bytes"), "the edge network reached the internal port: {out}");
+    assert!(
+        out.contains("internal: 0 bytes"),
+        "the edge network reached the internal port: {out}"
+    );
 }
 
 /// Rule I9: a second stack on the same Docker host, under another project name and
@@ -453,7 +661,11 @@ async fn second_stack_leaves_this_one_alone(s: &Stack, mine: &[&stack::UserConta
         &format!("wget -q -O- --header '{auth}' http://launcher:7070/v1/containers"),
     );
     let listed: Value = serde_json::from_str(list.trim()).unwrap_or(Value::Null);
-    assert_eq!(listed["items"], json!([]), "the other launcher lists only its own: {list}");
+    assert_eq!(
+        listed["items"],
+        json!([]),
+        "the other launcher lists only its own: {list}"
+    );
     let stop = other.probe(
         &other.network("ctl"),
         &format!(
@@ -461,14 +673,20 @@ async fn second_stack_leaves_this_one_alone(s: &Stack, mine: &[&stack::UserConta
             mine[0].docker_id
         ),
     );
-    assert!(!stop.contains("exit 0"), "the other launcher stopped this stack's container: {stop}");
+    assert!(
+        !stop.contains("exit 0"),
+        "the other launcher stopped this stack's container: {stop}"
+    );
     let now = s.user_containers();
     for c in mine {
         assert!(
             now.iter().any(|x| x.docker_id == c.docker_id && x.running),
             "a container of this stack was touched"
         );
-        assert!(s.user_networks().contains(&c.network), "a network of this stack was touched");
+        assert!(
+            s.user_networks().contains(&c.network),
+            "a network of this stack was touched"
+        );
     }
     drop(other);
 }
@@ -476,7 +694,16 @@ async fn second_stack_leaves_this_one_alone(s: &Stack, mine: &[&stack::UserConta
 /// Rules I8 and I14: the bucket and a dump of the state database hold no marker and no
 /// key secret, and no `doc` value in the dump parses as JSON.
 fn at_rest_checks(s: &Stack, markers: &[String], secrets: &[String]) {
-    let dump = s.compose(&["exec", "-T", "db", "pg_dump", "-U", "postgres", "--data-only", "knoggin"]);
+    let dump = s.compose(&[
+        "exec",
+        "-T",
+        "db",
+        "pg_dump",
+        "-U",
+        "postgres",
+        "--data-only",
+        "knoggin",
+    ]);
     assert!(dump.status.success(), "pg_dump: {}", text(&dump));
     let dump = String::from_utf8_lossy(&dump.stdout).into_owned();
     let mut rows = 0;
@@ -497,7 +724,10 @@ fn at_rest_checks(s: &Stack, markers: &[String], secrets: &[String]) {
                 .step_by(2)
                 .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
                 .collect();
-            assert!(serde_json::from_slice::<Value>(&bytes).is_err(), "a doc parses as JSON");
+            assert!(
+                serde_json::from_slice::<Value>(&bytes).is_err(),
+                "a doc parses as JSON"
+            );
             decoded.push(bytes);
             rows += 1;
         }
@@ -506,7 +736,9 @@ fn at_rest_checks(s: &Stack, markers: &[String], secrets: &[String]) {
     for m in markers.iter().chain(secrets) {
         assert!(!dump.contains(m.as_str()), "the dump holds `{m}`");
         assert!(
-            !decoded.iter().any(|d| d.windows(m.len()).any(|w| w == m.as_bytes())),
+            !decoded
+                .iter()
+                .any(|d| d.windows(m.len()).any(|w| w == m.as_bytes())),
             "a sealed doc holds `{m}`"
         );
     }
@@ -567,6 +799,8 @@ async fn the_caddyfile_logs_no_request_address() {
     assert_eq!(status, 502, "no router behind the proxy");
     tokio::time::sleep(Duration::from_secs(1)).await;
     let logs = text(&docker(&["logs", &name.0]));
-    assert!(!logs.contains(&marker), "Caddy logged the request address:\n{logs}");
+    assert!(
+        !logs.contains(&marker),
+        "Caddy logged the request address:\n{logs}"
+    );
 }
-

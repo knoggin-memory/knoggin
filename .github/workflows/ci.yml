@@ -90,10 +90,12 @@ jobs:
       - run: cargo test --doc --workspace --locked
 
   # The stack tier: tests named stack_*.rs, against stand-in containers that
-  # tests/images.toml pins by digest. The runner image has Docker.
+  # tests/images.toml pins by digest, and the one-host stack, whose image the first
+  # stack test builds from deploy/Dockerfile. The runner image has Docker.
   stack:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # The one-host stack tests build the knoggin:test image first.
+    timeout-minutes: 75
     permissions:
       contents: read
     steps:
