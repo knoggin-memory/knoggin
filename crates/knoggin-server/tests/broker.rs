@@ -722,6 +722,46 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
     assert_eq!(status, StatusCode::CONFLICT);
 }
 
+/// I5 on the blob route: another user's container, with its own valid lease, holding
+/// valid links to A's objects, is refused with `not_found` before anything reaches the
+/// bucket, for a download and an upload alike.
+#[tokio::test]
+async fn i5_the_blob_route_refuses_another_users_objects_before_the_bucket() {
+    let rig = Rig::start(Options::default()).await;
+    let (a, b) = (rig.account().await, rig.account().await);
+    let g = rig.generation();
+    let id_a = holder(&rig, a.user, g).await;
+    let id_b = holder(&rig, b.user, g).await;
+    let key = put(&rig, a.store, g, 1, b"a's snapshot");
+    let (_, body) = open(&rig, id_a, a, "").await;
+    let get = serde_json::from_slice::<OpenAnswer>(&body)
+        .unwrap()
+        .snapshot
+        .unwrap();
+    let (_, body) = upload_link(&rig, id_a, a, 2, 3).await;
+    let up: UploadLink = serde_json::from_slice(&body).unwrap();
+    let keys = rig.storage.keys();
+    let seen = rig.storage.seen().len();
+    for (method, url, headers, bytes) in [
+        (Method::GET, &get.url, &get.headers, &b""[..]),
+        (Method::PUT, &up.url, &up.headers, &b"b's"[..]),
+    ] {
+        let (status, body) =
+            send_link(&rig, id_b, b.user, method.clone(), url, headers, bytes).await;
+        assert_eq!(
+            (status, code(&body)),
+            (StatusCode::NOT_FOUND, ("not_found".to_owned(), None)),
+            "{method}"
+        );
+    }
+    assert_eq!(rig.storage.seen().len(), seen, "nothing reached the bucket");
+    assert_eq!(rig.storage.keys(), keys, "no object was written");
+    assert_eq!(
+        rig.storage.get(&key).unwrap(),
+        Bytes::from_static(b"a's snapshot")
+    );
+}
+
 #[tokio::test]
 async fn the_blob_route_answers_a_bucket_refusal_as_unavailable() {
     let rig = Rig::start(Options::default()).await;

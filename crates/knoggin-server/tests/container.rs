@@ -499,6 +499,80 @@ async fn a_deleted_store_is_dropped_and_the_container_still_parks() {
     assert_eq!(status, StatusCode::OK);
 }
 
+/// A deleted store that its owner's container still holds is erased by the lifecycle
+/// task; the container's next save is refused by the broker, it drops the store, and
+/// nothing of the store is left.
+#[tokio::test]
+async fn erasing_a_store_that_a_container_still_holds_leaves_nothing() {
+    const DAY: i64 = 24 * 3600 * 1000;
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let app = rig.app(a.user, "erased").await;
+    let in_app = support::Account {
+        user: a.user,
+        store: app,
+    };
+    let mut c = rig.container(quick()).await;
+    let g = rig.generation();
+    rig.lease(a.user, &c, g).await;
+    c.claim(a.user, g, settings(600, GIB)).await;
+    assert_eq!(
+        c.save(in_app, "unsaved in the app").await,
+        StatusCode::CREATED
+    );
+    // An older snapshot of the app in the bucket.
+    rig.storage.insert(
+        &names::snapshot_key(app, SnapshotName::new(g - 1, 1).unwrap()),
+        vec![1u8; 4],
+        knoggin_core::Timestamp::from_millis(rig.clock.now()),
+    );
+    let now = rig.clock.now();
+    rig.stores
+        .update(a.user, app, |r| {
+            r.deleted_at_ms = Some(now);
+            Ok::<(), knoggin_state::StateError>(())
+        })
+        .await
+        .unwrap();
+    // Past the undo period and its ten minutes: the lifecycle task erases the app.
+    rig.clock.advance(7 * DAY + 11 * 60_000);
+    let lifecycle = knoggin_server::lifecycle::Lifecycle {
+        db: rig.db.clone(),
+        postgres: None,
+        storage: rig.storage.clone(),
+        retention: knoggin_server::settings::RetentionSettings {
+            days: 3,
+            soft_delete_days: 7,
+        },
+    };
+    let report = lifecycle
+        .run_once(knoggin_core::Timestamp::from_millis(rig.clock.now()))
+        .await
+        .unwrap();
+    assert_eq!(report.stores_erased, 1);
+    assert!(
+        c.status()
+            .await
+            .stores
+            .iter()
+            .any(|s| s.store_id == app && s.unsaved),
+        "the container still holds the app"
+    );
+    c.park(ParkReason::Drain).await;
+    let end = c.end(SECONDS).await;
+    assert_eq!((end.reason, end.exit_code), (EndReason::Parked, 0));
+    let prefix = names::store_prefix(app);
+    assert!(rig.storage.keys().iter().all(|k| !k.starts_with(&prefix)));
+    assert!(
+        !rig.storage
+            .seen()
+            .iter()
+            .any(|s| s.method == "PUT" && s.key.starts_with(&prefix)),
+        "nothing of the app was uploaded"
+    );
+    assert!(rig.stores.get(app).await.unwrap().is_none());
+}
+
 #[tokio::test]
 async fn a_park_refuses_new_requests_ends_streams_and_cuts_what_outlives_the_wait() {
     let rig = Rig::start(Options::default()).await;
