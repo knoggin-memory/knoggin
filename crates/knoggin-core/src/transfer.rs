@@ -369,7 +369,7 @@ impl Store {
                 records.push(TransferRecord::Memory(Box::new(memory_record(
                     memory, namespace,
                 ))));
-                taken += 1;
+                taken = taken.saturating_add(1);
                 next = Some(ExportCursor::Memory(memory.id));
             }
         }
@@ -388,7 +388,7 @@ impl Store {
                 return ExportPage { records, next };
             }
             records.push(TransferRecord::Edge(edge_record(edge)));
-            taken += 1;
+            taken = taken.saturating_add(1);
             next = Some(ExportCursor::Edge(edge.key()));
         }
         ExportPage {

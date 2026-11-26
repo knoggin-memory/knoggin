@@ -75,9 +75,13 @@ impl Store {
                 continue;
             }
             match step {
-                PhaseStep::ToSummary => report.full_to_summary += 1,
-                PhaseStep::ToGhost => report.summary_to_ghost += 1,
-                PhaseStep::Delete => report.deleted += 1,
+                PhaseStep::ToSummary => {
+                    report.full_to_summary = report.full_to_summary.saturating_add(1);
+                }
+                PhaseStep::ToGhost => {
+                    report.summary_to_ghost = report.summary_to_ghost.saturating_add(1);
+                }
+                PhaseStep::Delete => report.deleted = report.deleted.saturating_add(1),
             }
             if step == PhaseStep::Delete {
                 report.removed.push(id);
