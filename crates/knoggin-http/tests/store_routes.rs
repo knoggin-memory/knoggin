@@ -892,8 +892,8 @@ async fn idempotency() {
 
 #[tokio::test]
 async fn the_same_save_over_rest_and_over_the_host_happens_once() {
-    // MCP calls the same host operation with the same resolved request; this stands in
-    // for it until the MCP layer exists.
+    // The host call is what the MCP tool makes with the resolved request; the test over
+    // the MCP endpoint itself is `mcp::the_same_key_over_rest_and_mcp_saves_once`.
     let env = Env::new(true).await;
     let ctx = env.t.ctx(RW);
     let key = [("idempotency-key", "shared")];
