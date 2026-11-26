@@ -53,28 +53,56 @@ Outside the crate: `knoggin_http::ctx::headers::{CONTAINER_ID, INTERNAL_STATUS}`
 - **Memory budget.** `settings::store_budget(memory_limit_bytes)` on both sides; the broker's
   `sizeBytes` bound is twice `store_budget(containers.memory_limit_bytes())`.
 
-## The router side (milestone 6, branch `m6-router`)
+## The router side
+
+**The role, for `main`** (`knoggin router`): build the pieces, bind the listeners, then
+
+```rust
+let code: i32 = router::run_router(RouterStart {
+    edge,                      // EdgeConfig from server.*, auth.*, limits.* (per_address/per_user filled from settings)
+    settings,                  // RouterSettings
+    one_host: (launcher.kind == "docker").then(|| "https://router:8443".into()),
+    build: BuildInfo::new(env!("CARGO_PKG_VERSION")),
+    spec,                      // launcher.ecs.task_definition, or "" on one host
+    db,                        // already connected (60 s of tries) and, on Postgres, migrated
+    keys, storage, launcher, clock,
+    listeners: Listeners { public, internal, metrics },  // bound by main
+    metrics: Some(edge::metrics_router(handle)),
+    before_rollout: Some(Box::pin(async { self_test().await?; attach().await })), // steps 7, 8
+    backends: Backends { state_db, key_provider, launcher },
+    timing: Timing::default(),
+}, shutdown_signal).await;
+```
+
+`run_router` runs start-up steps 1, 3 to 6 and 9 (config guards with the one-host checks, schema,
+field key, the mode-`none` users check and the local user, discovery, the rollout record), then
+serves the public API, the broker on the internal listener and the reconcile loop until `stop`,
+and returns 1 when a step refuses, 0 after a stop (on one host it first parks its containers and
+keeps the internal listener open up to 110 s). **The container role** is `container::serve(addr,
+ServeConfig, stop) -> ServeEnd` on `container::runtime()`; `main` exits with `end.exit_code`.
 
 | Module | Offers |
 | --- | --- |
-| `lease` | `Fleet::new(FleetConfig, db, field_keys, launcher, storage, clock)`; `acquire(user, wait)` (the request loop: warm lease or `unavailable`/`upgrading`), `mark_gone(id, Option<StopReason>, Caller)`, `finish_parked(id)` (the broker's `parked`: steps 2 to 4, then a stop), `request_park(user, reason)`, `status`, `park`, `bounds()`, `shutdown()` |
+| `lease` | `Fleet::new(FleetConfig, db, field_keys, launcher, storage, clock)`; `acquire(user, wait)`, `mark_gone(id, Option<StopReason>, Caller)`, `finish_parked(id)`, `request_park(user, reason)`, `status`, `park`, `limits()` (the internal listener's `PeerLimits`), `shutdown()` |
 | `pool` | `Fleet::launch(BuildSpec)` (record `starting` first, the rest as an owned task) |
 | `reconcile` | `run(fleet, stop)`, `Fleet::take_leadership`, `Fleet::pass(&mut Reconciler)` |
-| `rollout` | `at_start(meta, own, allow_downgrade)` (start-up step 9) |
-| `router` | `guards(edge, settings, one_host)`, `public_router(edge, fleet, mode_routes, request_timeout, trusted_proxies, Timing)`, `guarded(app)` (the panic guard), `client_address`, `run(RouterRole, Listeners, stop)`; `router::forward::{forwarder, STORE_ROUTES, Timing}`; `router::status::{mode_routes, StatusInfo}`; `router::internal::{PeerBounds, internal_router}` |
-| `testing` | `FakeLauncher::new(Runner, clock)` with `forget`, `drain`, `kill`, `unreachable`, `refuse`, `fail_stop`, `fixed_address`, `set_runner`; `stub_runner(build, test_mode, StubControl)` |
+| `rollout` | `at_start(meta, own, allow_downgrade)` |
+| `router` | `run_router`, `RouterStart`, `Backends`, `guards`, `broker(fleet, keys, settings, one_host)`, `internal_admit`, `public_router`, `guarded`, `client_address`, `run(RouterRole, Listeners, stop)`; `router::forward::{forwarder, STORE_ROUTES, Timing}`; `router::status::{mode_routes, StatusInfo}` |
+| `testing` | `FakeLauncher::new(Runner, clock)` with `forget`, `drain`, `kill`, `unreachable`, `refuse`, `fail_stop`, `fixed_address`, `stop_grace`, `set_runner`; `serve_runner(build, test_mode, ServeTimings)` (the real role); `stub_runner(build, test_mode, StubControl)` |
 
-- **The broker** is mounted by `router::run` as `RouterRole::broker` (an `axum::Router` whose
-  routes are all under `/internal/v1/`); `internal_router` adds the 404 for everything else, and
-  `serve_tls` runs it with the per-address bounds. A failed token check is reported with
-  `fleet.bounds().failed_token(peer_ip)`. The lease check reads `knoggin_state::Leases` directly.
-  `parked` calls `fleet.finish_parked(container_id)`.
-- **The fake launcher's `Runner`** is `Fn(ContainerEnv, TcpListener, oneshot::Receiver<()>) ->
-  BoxFuture<'static, i64>`: the container's environment, a listener already bound to its
-  `127.0.0.x` address (127.0.0.1 off Linux), and the launcher's stop. It returns the exit code;
-  `describe` and `list` report `endReason` (`exited`, `memory`, `stopped`) and `exitCode`. A fleet
-  test wraps the container role in such a runner (its local address for the client to the router
-  is the listener's IP).
+- **One set of per-address bounds**: the broker's `PeerLimits`, held by the fleet
+  (`fleet.limits()`), is the internal listener's `admit` (`router::internal_admit`, with the
+  one-host `user_net_cidr` check first), takes the broker's failed tokens, and is cleared when an
+  address passes to a new container.
+- **The broker** is built by `router::broker` over the fleet; its `parked` runs
+  `Fleet::finish_parked` ("Mark gone" steps 2 to 4 and a stop).
+- **The fake launcher** runs each container on a Tokio runtime of its own thread, so `kill` ends
+  it with every task it spawned. A `Runner` gets the environment, a listener bound to the
+  container's `127.0.0.x` (127.0.0.1 off Linux) and the stop; it returns the exit code, and
+  `describe`/`list` report `endReason` and `exitCode`.
+- **The fleet tests** (`tests/fleet_*.rs`, helpers in `tests/fleet_support`) start routers with
+  `run_router` on loopback and real containers through `serve_runner`.
+
 ## Container and broker (built)
 
 **Run a container in process** (fleet tests' fake launcher, and `main` for `knoggin serve`):
@@ -97,7 +125,8 @@ The role answers `hello` (needs `Knoggin-Protocol`; a nonce is answered once), `
 other path as a forwarded store request (`RequestContext::write_internal_headers` plus
 `write_router_call`). While parking it answers 503 with `Knoggin-Internal-Status: parking`.
 
-**Mount the broker** on the router's internal listener:
+**Mount the broker** on the router's internal listener (the router does this in
+`router::broker` and `router::run`):
 
 ```rust
 let peers = PeerLimits::new(clock.clone());          // keep it: the listener's admit uses it too
@@ -140,4 +169,4 @@ serve_tls(listener, tls, router, move |peer| {
 | `kms` (`KmsKeyProvider`), `launcher::ecs` (`EcsLauncher`) | milestone 7 | use `aws::sdk_config` and `behavior_version` |
 
 Settings for `knoggin_http::edge` (public URL, auth, per-credential limits) stay in `EdgeConfig`;
-the per-address and per-user rates are in `RouterLimits` until the edge takes them.
+the per-address and per-user rates are read from `RouterLimits` by `run_router` into the edge.
