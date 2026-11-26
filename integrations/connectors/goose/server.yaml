@@ -1,0 +1,9 @@
+# Merge into ~/.config/goose/config.yaml. The bridge sends the key in KNOGGIN_API_KEY.
+extensions:
+  knoggin:
+    name: knoggin
+    type: stdio
+    cmd: knoggin
+    args: [mcp, --url, "https://memory.example.com/mcp"]
+    enabled: true
+    timeout: 300

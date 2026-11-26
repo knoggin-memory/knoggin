@@ -1,0 +1,8 @@
+{
+  "servers": {
+    "knoggin": {
+      "type": "http",
+      "url": "https://memory.example.com/mcp"
+    }
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "knoggin": {
+      "type": "stdio",
+      "command": "knoggin",
+      "args": ["mcp"]
+    }
+  }
+}

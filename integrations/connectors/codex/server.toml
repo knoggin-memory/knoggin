@@ -1,0 +1,5 @@
+# Add to ~/.codex/config.toml, then run: codex mcp login knoggin
+[mcp_servers.knoggin]
+url = "https://memory.example.com/mcp"
+# To use an API key instead of signing in, name the variable that holds it:
+# bearer_token_env_var = "KNOGGIN_API_KEY"

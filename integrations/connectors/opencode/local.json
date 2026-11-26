@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "knoggin": {
+      "type": "local",
+      "command": ["knoggin", "mcp"],
+      "enabled": true
+    }
+  }
+}

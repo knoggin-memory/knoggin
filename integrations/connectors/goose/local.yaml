@@ -1,0 +1,9 @@
+# Merge into ~/.config/goose/config.yaml
+extensions:
+  knoggin:
+    name: knoggin
+    type: stdio
+    cmd: knoggin
+    args: [mcp]
+    enabled: true
+    timeout: 300

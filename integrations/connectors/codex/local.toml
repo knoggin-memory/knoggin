@@ -1,0 +1,4 @@
+# Add to ~/.codex/config.toml
+[mcp_servers.knoggin]
+command = "knoggin"
+args = ["mcp"]

@@ -1,0 +1,7 @@
+# Merge into librechat.yaml. LibreChat reads KNOGGIN_API_KEY from its environment.
+mcpServers:
+  knoggin:
+    type: streamable-http
+    url: https://memory.example.com/mcp
+    headers:
+      Authorization: "Bearer ${KNOGGIN_API_KEY}"
