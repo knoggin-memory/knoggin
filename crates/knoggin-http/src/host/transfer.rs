@@ -441,6 +441,19 @@ impl StoreHost {
         batch: Vec<Parsed>,
         result: &mut ImportResult,
     ) -> Result<(), ApiError> {
+        if open.restoring.load(Ordering::Relaxed) {
+            for p in batch {
+                let number = match p {
+                    Parsed::Record(n, _) | Parsed::Error(n, _) => n,
+                };
+                result.error(
+                    number,
+                    Code::Unavailable,
+                    "the restored store takes no writes until it has been saved".into(),
+                );
+            }
+            return Ok(());
+        }
         if open.upload_blocked.load(Ordering::Relaxed) {
             for p in batch {
                 let number = match p {

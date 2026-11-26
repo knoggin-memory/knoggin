@@ -49,7 +49,11 @@ pub(super) async fn store_task(host: Weak<StoreHost>, open: Arc<OpenStore>) {
         return;
     };
     let mut next_sweep = Instant::now() + SWEEP_EVERY;
-    let mut retry: Option<(Instant, Duration)> = None;
+    // A restored store is saved at once: its first commit records the restore.
+    let mut retry: Option<(Instant, Duration)> = open
+        .restoring
+        .load(Ordering::Relaxed)
+        .then(|| (Instant::now(), Duration::from_millis(500)));
     let mut idle_not_before = Instant::now();
     loop {
         let now = Instant::now();
@@ -149,11 +153,13 @@ pub(super) async fn snapshot(host: &StoreHost, open: &Arc<OpenStore>) -> Result<
         let key = open.key.clone();
         let wrapped = open.wrapped.clone();
         let (id, saved) = (open.id, state.saved);
+        // A restore is saved even without a change, so that its commit is recorded.
+        let restoring = state.restored.is_some();
         let started = std::time::Instant::now();
         let prepared = tokio::task::spawn_blocking(move || {
             let guard = store.read().map_err(|_| ())?;
             let counters = guard.changes();
-            if counters == saved {
+            if counters == saved && !restoring {
                 return Ok(None);
             }
             // The one plaintext copy; the sealer owns it and wipes it after the last chunk.
@@ -206,6 +212,7 @@ pub(super) async fn snapshot(host: &StoreHost, open: &Arc<OpenStore>) -> Result<
                 *lock(&open.snapshot_bytes) = Some(len);
                 state.next_sequence += 1;
                 state.restored = None;
+                open.restoring.store(false, Ordering::Relaxed);
                 open.last_sequence.store(name.sequence(), Ordering::Relaxed);
                 open.upload_blocked.store(false, Ordering::Relaxed);
                 let elapsed = started.elapsed();
