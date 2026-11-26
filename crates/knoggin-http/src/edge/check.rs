@@ -148,8 +148,15 @@ impl Presented {
         let mut values = map.get_all(header::AUTHORIZATION).iter();
         let (bearer, malformed) = match (values.next(), values.next()) {
             (None, _) => (None, false),
-            (Some(v), None) => match v.to_str().ok().and_then(|t| t.strip_prefix("Bearer ")) {
-                Some(t) if !t.is_empty() => (Some(Sensitive::new(t.trim().to_owned())), false),
+            // The scheme is case-insensitive (RFC 9110, section 11.1).
+            (Some(v), None) => match v
+                .to_str()
+                .ok()
+                .and_then(|t| t.split_once(' '))
+                .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("bearer"))
+                .map(|(_, t)| t.trim())
+            {
+                Some(t) if !t.is_empty() => (Some(Sensitive::new(t.to_owned())), false),
                 _ => (None, true),
             },
             (Some(_), Some(_)) => (None, true),
@@ -867,6 +874,16 @@ mod tests {
         );
         let p = Presented::read(Arrival::Public, &map, AuthMode::None);
         assert_eq!(p.bearer.unwrap().expose(), "abc");
+        for scheme in ["bearer", "BEARER", "bEaReR"] {
+            let value = HeaderValue::from_str(&format!("{scheme} abc")).unwrap();
+            map.insert(header::AUTHORIZATION, value);
+            let p = Presented::read(Arrival::Public, &map, AuthMode::None);
+            assert_eq!(p.bearer.unwrap().expose(), "abc", "{scheme}");
+        }
+        map.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer "));
+        assert!(Presented::read(Arrival::Public, &map, AuthMode::None).malformed);
+        map.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearerabc"));
+        assert!(Presented::read(Arrival::Public, &map, AuthMode::None).malformed);
         map.append(
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer def"),
