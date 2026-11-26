@@ -377,6 +377,16 @@ run "router_permissions" {
     condition     = !contains(flatten([for s in jsondecode(aws_iam_role_policy.router.policy).Statement : s.Action]), "dynamodb:PutItem")
     error_message = "The router has no PutItem."
   }
+  assert {
+    condition = toset(flatten([
+      for s in jsondecode(aws_iam_role_policy.router.policy).Statement : [
+        for a in flatten([s.Action]) : jsonencode([s.Effect, a, s.Resource]) if startswith(a, "dynamodb:")
+      ]
+      ])) == toset([for a in ["GetItem", "Query", "UpdateItem", "DeleteItem", "ConditionCheckItem"] :
+      jsonencode(["Allow", "dynamodb:${a}", aws_dynamodb_table.state.arn])
+    ])
+    error_message = "The router's DynamoDB actions are exactly GetItem, Query, UpdateItem, DeleteItem and ConditionCheckItem, on the table."
+  }
 }
 
 run "lifecycle_permissions" {
