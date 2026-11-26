@@ -41,8 +41,9 @@ crates") is the authority; this file says how the code meets it.
 ## Index maintenance (`store/index.rs`, all `pub(crate)`)
 
 Change memories, edges, vectors, namespaces and idempotency entries only through these.
-They keep the tag, entity and full-text indexes, the vector table, the graph, the
-per-namespace counts, `estimated_bytes` and the idempotency purge in step.
+They keep the tag, entity and full-text indexes, the per-namespace creation-time index
+(`by_created`: the candidates of automatic links and duplicate reports), the vector table,
+the graph, the per-namespace counts, `estimated_bytes` and the idempotency purge in step.
 
 - `insert_memory(memory, Option<&[f32]>) -> bool`
 - `update_memory(id, |m| ...) -> Option<R>`: any change; reindexes what changed, drops the

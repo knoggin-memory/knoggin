@@ -11,7 +11,7 @@ mod queue;
 mod read;
 pub(crate) mod write;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::embed::ModelIdentity;
 use crate::graph::Graph;
@@ -92,6 +92,9 @@ pub struct Store {
     pub(crate) tags: TagIndex,
     pub(crate) entities: EntityIndex,
     pub(crate) fts: FtsIndex,
+    /// Per namespace, `(created_at, id)` of every memory that is not a ghost: the
+    /// candidates of automatic links and duplicate reports, in time order.
+    pub(crate) by_created: BTreeMap<NamespaceId, BTreeSet<(Timestamp, MemoryId)>>,
     pub(crate) counts: BTreeMap<NamespaceId, NamespaceCounts>,
     pub(crate) changes: ChangeCounters,
     pub(crate) idempotency: BTreeMap<String, IdempotencyEntry>,
@@ -127,6 +130,7 @@ impl Store {
             tags: TagIndex::new(),
             entities: EntityIndex::new(),
             fts: FtsIndex::new(),
+            by_created: BTreeMap::new(),
             counts: BTreeMap::new(),
             changes: ChangeCounters::default(),
             idempotency: BTreeMap::new(),

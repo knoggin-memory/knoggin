@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Index maintenance. Every change to a memory, an edge, a vector or a namespace goes
-//! through these helpers, which update the tag, entity and full-text indexes, the
-//! vector table, the graph, the per-namespace counts, the size estimate and the
+//! through these helpers, which update the tag, entity, full-text and creation-time
+//! indexes, the vector table, the graph, the per-namespace counts, the size estimate and the
 //! idempotency purge in one step. Nothing rebuilds an index after a change.
 //!
 //! Invariants they keep:
@@ -96,14 +96,40 @@ fn index_text(fts: &mut FtsIndex, memory: &Memory) {
     );
 }
 
-/// Adds a memory that is not a ghost to the tag, entity and full-text indexes.
-fn index_content(tags: &mut TagIndex, entities: &mut EntityIndex, fts: &mut FtsIndex, m: &Memory) {
+type ByCreated = BTreeMap<NamespaceId, BTreeSet<(Timestamp, MemoryId)>>;
+
+fn add_created(by_created: &mut ByCreated, m: &Memory) {
+    by_created
+        .entry(m.namespace)
+        .or_default()
+        .insert((m.created_at, m.id));
+}
+
+fn remove_created(by_created: &mut ByCreated, m: &Memory) {
+    if let Some(set) = by_created.get_mut(&m.namespace) {
+        set.remove(&(m.created_at, m.id));
+        if set.is_empty() {
+            by_created.remove(&m.namespace);
+        }
+    }
+}
+
+/// Adds a memory that is not a ghost to the tag, entity, full-text and creation-time
+/// indexes.
+fn index_content(
+    tags: &mut TagIndex,
+    entities: &mut EntityIndex,
+    fts: &mut FtsIndex,
+    by_created: &mut ByCreated,
+    m: &Memory,
+) {
     if m.phase == Phase::Ghost {
         return;
     }
     tags.add(m.namespace, m.id, &m.tags);
     entities.add(m.namespace, m.id, &m.labels.entities);
     index_text(fts, m);
+    add_created(by_created, m);
 }
 
 fn purge_idempotency(
@@ -145,7 +171,13 @@ impl Store {
         } else if memory.embedding == EmbeddingState::Ready {
             memory.embedding = EmbeddingState::Pending;
         }
-        index_content(&mut self.tags, &mut self.entities, &mut self.fts, &memory);
+        index_content(
+            &mut self.tags,
+            &mut self.entities,
+            &mut self.fts,
+            &mut self.by_created,
+            &memory,
+        );
         count(
             self.counts.entry(memory.namespace).or_default(),
             &memory,
@@ -176,6 +208,7 @@ impl Store {
             tags,
             entities,
             fts,
+            by_created,
             vectors,
             counts,
             estimated_bytes,
@@ -209,6 +242,14 @@ impl Store {
             entities.remove(before.namespace, id);
             if after.phase != Phase::Ghost {
                 entities.add(after.namespace, id, &after.labels.entities);
+            }
+        }
+        if moved || ghost_changed || before.created_at != after.created_at {
+            if before.phase != Phase::Ghost {
+                remove_created(by_created, &before);
+            }
+            if after.phase != Phase::Ghost {
+                add_created(by_created, after);
             }
         }
         let text_changed = before.summary != after.summary
@@ -282,6 +323,7 @@ impl Store {
         let dimensions = self.vectors.dimensions();
         if memory.phase != Phase::Ghost {
             self.tags.remove(memory.namespace, id, &memory.tags);
+            remove_created(&mut self.by_created, &memory);
         }
         self.entities.remove(memory.namespace, id);
         self.fts.remove(id);
@@ -445,8 +487,15 @@ impl Store {
         self.tags = TagIndex::new();
         self.entities = EntityIndex::new();
         self.fts.reset();
+        self.by_created = BTreeMap::new();
         for memory in self.memories.values() {
-            index_content(&mut self.tags, &mut self.entities, &mut self.fts, memory);
+            index_content(
+                &mut self.tags,
+                &mut self.entities,
+                &mut self.fts,
+                &mut self.by_created,
+                memory,
+            );
         }
         let mut graph = Graph::new();
         for edge in self.graph.iter() {
@@ -512,6 +561,11 @@ impl Store {
                 .map(|(ns, key, ids)| (ns, hash(key), ids.iter().copied().collect()))
                 .collect(),
             fts_docs: self.fts.docs().iter().map(|(id, d)| (*id, *d)).collect(),
+            by_created: self
+                .by_created
+                .iter()
+                .map(|(ns, set)| (*ns, set.iter().copied().collect()))
+                .collect(),
             fts_answers,
             adjacency: self
                 .graph
@@ -614,6 +668,7 @@ pub struct IndexSnapshot {
     entities: Vec<((NamespaceId, MemoryId), Vec<u64>)>,
     entity_postings: Vec<(NamespaceId, u64, Vec<MemoryId>)>,
     fts_docs: Vec<(MemoryId, FtsDoc)>,
+    by_created: Vec<(NamespaceId, Vec<(Timestamp, MemoryId)>)>,
     fts_answers: Vec<(NamespaceId, u64, Result<Vec<MemoryId>, ()>)>,
     adjacency: Vec<(MemoryId, Vec<EdgeKey>)>,
     vectors: Vec<(MemoryId, Vec<u32>)>,

@@ -5,19 +5,21 @@
 //! selection, the duplicate advisory) and `src/storage/native_store.rs`
 //! (`select_temporal_links`). Entity and temporal links are chosen at save time;
 //! semantic links when the memory's vector lands, with every memory of the namespace
-//! that has a vector then as a candidate.
+//! that has a vector then as a candidate. Candidates come from the indexes, which hold
+//! only memories that are not ghosts: the entity index for entity links, the
+//! per-namespace creation-time index for the rest.
 
 use std::collections::BTreeSet;
 
-use crate::id::MemoryId;
+use crate::id::{MemoryId, NamespaceId};
 use crate::model::limits::{
     AUTO_LINK_SHARED_TAG_THRESHOLD, AUTO_LINK_THRESHOLD, DUPLICATE_THRESHOLD, MAX_AUTO_LINKS,
     MAX_ENTITY_LINKS, MAX_NEAR_DUPLICATES, MAX_TEMPORAL_LINKS, MIN_TEMPORAL_WEIGHT,
     NEAR_DUPLICATE_SUMMARY_MAX_BYTES, TEMPORAL_WINDOW_MS, truncate_summary,
 };
-use crate::model::{Edge, EdgeType, Memory, Phase};
+use crate::model::{Edge, EdgeType};
 use crate::ops::{NearDuplicate, NearDuplicates};
-use crate::search::entity::canonicalize_entity;
+use crate::search::entity::{EntityIndex, canonicalize_entity};
 use crate::search::vector::dot;
 use crate::store::Store;
 use crate::time::Timestamp;
@@ -38,33 +40,29 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     dot(a, b).clamp(-1.0, 1.0)
 }
 
-/// `Full` or `Summary`: the phases that take part in links and duplicate reports.
-fn has_content(m: &Memory) -> bool {
-    matches!(m.phase, Phase::Full | Phase::Summary)
-}
-
-/// Entity links: candidates sharing at least one canonical key, by shared count
-/// descending then ID, weight shared / union, at most `MAX_ENTITY_LINKS`.
-pub(crate) fn select_entity_links<'a>(
+/// Entity links of memory `id` with `entities` in `namespace`: the other memories of
+/// the index sharing at least one canonical key, by shared count descending then ID,
+/// weight shared / union of both key sets, at most `MAX_ENTITY_LINKS`.
+pub(crate) fn select_entity_links(
+    index: &EntityIndex,
+    namespace: NamespaceId,
+    id: MemoryId,
     entities: &[String],
-    candidates: impl Iterator<Item = &'a Memory>,
 ) -> Vec<(MemoryId, f32)> {
-    let new_keys = entity_keys(entities);
-    if new_keys.is_empty() {
+    let new_keys = entity_keys(entities).len();
+    if new_keys == 0 {
         return Vec::new();
     }
-    let mut scored: Vec<(MemoryId, usize, usize)> = candidates
-        .filter_map(|c| {
-            let keys = entity_keys(&c.labels.entities);
-            let shared = new_keys.intersection(&keys).count();
-            (shared > 0).then(|| (c.id, shared, new_keys.union(&keys).count()))
-        })
-        .collect();
-    scored.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    scored
+    // Already ordered by shared count descending, then ID.
+    index
+        .find_by_entities(namespace, entities, id)
         .into_iter()
         .take(MAX_ENTITY_LINKS)
-        .map(|(id, shared, union)| (id, shared as f32 / union as f32))
+        .map(|(other, shared)| {
+            let keys = index.keys_of(namespace, other).map_or(0, BTreeSet::len);
+            let union = new_keys.saturating_add(keys).saturating_sub(shared).max(1);
+            (other, shared as f32 / union as f32)
+        })
         .collect()
 }
 
@@ -127,11 +125,14 @@ fn auto_edge(
 }
 
 impl Store {
-    /// The other memories of `memory`'s namespace that links may join.
-    fn link_candidates<'a>(&'a self, memory: &'a Memory) -> impl Iterator<Item = &'a Memory> + 'a {
-        self.memories
-            .values()
-            .filter(move |c| c.id != memory.id && c.namespace == memory.namespace && has_content(c))
+    /// The memories of `namespace` that links and duplicate reports may use (`Full`
+    /// or `Summary`), oldest first.
+    fn content_members(&self, namespace: NamespaceId) -> impl Iterator<Item = MemoryId> + '_ {
+        self.by_created
+            .get(&namespace)
+            .into_iter()
+            .flatten()
+            .map(|(_, id)| *id)
     }
 
     /// Adds the entity and temporal links of a memory that was just saved. Returns
@@ -140,12 +141,27 @@ impl Store {
         let Some(memory) = self.memories.get(&id) else {
             return Vec::new();
         };
-        let entity = select_entity_links(&memory.labels.entities, self.link_candidates(memory));
+        let namespace = memory.namespace;
+        let entity = select_entity_links(&self.entities, namespace, id, &memory.labels.entities);
+        let created = memory.created_at.millis();
+        let window = TEMPORAL_WINDOW_MS.abs();
+        let from = (
+            Timestamp::from_millis(created.saturating_sub(window)),
+            MemoryId::from_bytes([0; 16]),
+        );
+        let to = (
+            Timestamp::from_millis(created.saturating_add(window)),
+            MemoryId::from_bytes([0xff; 16]),
+        );
         let times: Vec<(MemoryId, i64)> = self
-            .link_candidates(memory)
-            .map(|c| (c.id, c.created_at.millis()))
+            .by_created
+            .get(&namespace)
+            .into_iter()
+            .flat_map(|set| set.range(from..=to))
+            .filter(|(_, other)| *other != id)
+            .map(|(at, other)| (*other, at.millis()))
             .collect();
-        let temporal = select_temporal_links(&times, memory.created_at.millis());
+        let temporal = select_temporal_links(&times, created);
         let planned: Vec<Edge> = entity
             .into_iter()
             .map(|(t, w)| auto_edge(id, t, EdgeType::Entity, w, now))
@@ -164,15 +180,35 @@ impl Store {
         let (Some(memory), Some(vector)) = (self.memories.get(&id), self.vectors.get(id)) else {
             return Vec::new();
         };
-        let terms: BTreeSet<String> = memory.tag_terms().into_iter().collect();
-        let scored: Vec<(MemoryId, f32, bool)> = self
-            .link_candidates(memory)
-            .filter_map(|c| {
-                let other = self.vectors.get(c.id)?;
-                let shared = c.tag_terms().iter().any(|t| terms.contains(t));
-                Some((c.id, cosine(vector, other), shared))
-            })
-            .collect();
+        let threshold = AUTO_LINK_THRESHOLD.max(SEMANTIC_FLOOR);
+        let shared_threshold = AUTO_LINK_SHARED_TAG_THRESHOLD.max(SEMANTIC_FLOOR);
+        let (low, high) = (
+            threshold.min(shared_threshold),
+            threshold.max(shared_threshold),
+        );
+        // Tag terms decide only a cosine between the two thresholds, so they are
+        // built only for such a candidate.
+        let mut terms: Option<BTreeSet<String>> = None;
+        let mut scored: Vec<(MemoryId, f32, bool)> = Vec::new();
+        for other in self.content_members(memory.namespace) {
+            if other == id {
+                continue;
+            }
+            let Some(other_vector) = self.vectors.get(other) else {
+                continue;
+            };
+            let score = cosine(vector, other_vector);
+            if score < low {
+                continue;
+            }
+            let shared = score < high && {
+                let terms = terms.get_or_insert_with(|| memory.tag_terms().into_iter().collect());
+                self.memories
+                    .get(&other)
+                    .is_some_and(|c| c.tag_terms().iter().any(|t| terms.contains(t)))
+            };
+            scored.push((other, score, shared));
+        }
         let planned = select_semantic_links(scored)
             .into_iter()
             .map(|(t, w)| auto_edge(id, t, EdgeType::Associative, w, now))
@@ -193,15 +229,14 @@ impl Store {
     /// memory is inserted. `exclude` is left out (the memory a supersede replaces).
     pub(crate) fn duplicate_report(
         &self,
-        namespace: crate::id::NamespaceId,
+        namespace: NamespaceId,
         vector: &[f32],
         exclude: Option<MemoryId>,
     ) -> Option<NearDuplicates> {
         let mut matches: Vec<(MemoryId, f32)> = self
-            .memories
-            .values()
-            .filter(|m| m.namespace == namespace && has_content(m) && Some(m.id) != exclude)
-            .filter_map(|m| Some((m.id, cosine(vector, self.vectors.get(m.id)?))))
+            .content_members(namespace)
+            .filter(|id| Some(*id) != exclude)
+            .filter_map(|id| Some((id, cosine(vector, self.vectors.get(id)?))))
             .filter(|&(_, score)| score >= DUPLICATE_THRESHOLD)
             .collect();
         matches.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
@@ -287,48 +322,27 @@ mod tests {
         assert_eq!(picked.last().unwrap().0, mid(15));
     }
 
-    fn with_entities(n: u8, entities: &[&str]) -> Memory {
-        Memory {
-            id: mid(n),
-            namespace: crate::id::NamespaceId::new(1),
-            created_at: Timestamp::from_millis(0),
-            summary: "s".into(),
-            full_text: None,
-            tags: Vec::new(),
-            labels: crate::model::Labels {
-                entities: entities.iter().map(|s| (*s).to_owned()).collect(),
-                ..Default::default()
-            },
-            phase: Phase::Full,
-            stability: 1.0,
-            difficulty: 5.0,
-            is_permastore: false,
-            decay_anchor_at: Timestamp::from_millis(0),
-            retrieved_at: None,
-            reinforced_at: None,
-            phase_changed_at: Timestamp::from_millis(0),
-            access_count: 0,
-            access_history: Vec::new(),
-            embedding: crate::model::EmbeddingState::Pending,
-            embed_failures: 0,
-            saved_by: "local".into(),
-            client: None,
-        }
-    }
-
     #[test]
     fn entity_links_order_by_shared_keys_and_weigh_by_jaccard() {
-        let a = with_entities(1, &["Maya Smith"]);
-        let b = with_entities(2, &["Smith"]);
-        let c = with_entities(3, &["Lisbon"]);
-        let d = with_entities(4, &["Maya Smith", "Lisbon"]);
-        let picked = select_entity_links(&["Maya Smith".to_owned()], [&a, &b, &c, &d].into_iter());
-        // New keys {maya smith, smith}. a: 2/2. d: 2/3. b: 1/2.
+        let ns = NamespaceId::new(1);
+        let mut index = EntityIndex::new();
+        let names = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+        index.add(ns, mid(1), &names(&["Maya Smith"]));
+        index.add(ns, mid(2), &names(&["Smith"]));
+        index.add(ns, mid(3), &names(&["Lisbon"]));
+        index.add(ns, mid(4), &names(&["Maya Smith", "Lisbon"]));
+        index.add(NamespaceId::new(2), mid(5), &names(&["Maya Smith"]));
+        let new = names(&["Maya Smith"]);
+        index.add(ns, mid(9), &new);
+        let picked = select_entity_links(&index, ns, mid(9), &new);
+        // New keys {maya smith, smith}. 1: 2/2. 4: 2/3. 2: 1/2. 5 is in another namespace.
         assert_eq!(picked, [(mid(1), 1.0), (mid(4), 2.0 / 3.0), (mid(2), 0.5)]);
-        assert!(select_entity_links(&[], [&a].into_iter()).is_empty());
-        let many: Vec<Memory> = (10..30).map(|n| with_entities(n, &["Lisbon"])).collect();
-        let picked = select_entity_links(&["Lisbon".to_owned()], many.iter());
+        assert!(select_entity_links(&index, ns, mid(9), &[]).is_empty());
+        for n in 10..30 {
+            index.add(ns, mid(n), &names(&["Lisbon"]));
+        }
+        let picked = select_entity_links(&index, ns, mid(99), &names(&["Lisbon"]));
         assert_eq!(picked.len(), MAX_ENTITY_LINKS);
-        assert_eq!(picked[0].0, mid(10));
+        assert_eq!(picked[0].0, mid(3));
     }
 }
