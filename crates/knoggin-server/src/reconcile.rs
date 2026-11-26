@@ -234,11 +234,18 @@ impl Fleet {
         if up {
             self.gone_containers(&pass, state).await;
             self.strays(&pass).await;
-            // 4. Stuck starts.
+            // 4. Stuck starts. One the launcher has not listed twice in a row has ended (a
+            // router that died before `launch` leaves such a record on ECS).
             for c in &pass.records {
                 if c.value.state == ContainerState::Starting && now - c.value.started_ms > START_MS
                 {
-                    self.gone(c.value.id, Some(StopReason::LaunchFailed)).await;
+                    let unseen = state.unseen.get(&c.value.id).is_some_and(|n| *n >= 2);
+                    self.gone_as(
+                        c.value.id,
+                        Some(StopReason::LaunchFailed),
+                        Caller::Reconcile { unseen },
+                    )
+                    .await;
                 }
             }
             self.stuck_claims(&pass).await;
@@ -289,17 +296,23 @@ impl Fleet {
         }
     }
 
-    /// Step 2: records `ready` or `claimed` whose container does not run.
+    /// Step 2: records `ready` or `claimed` whose container does not run. The passes that
+    /// missed a record are counted for `starting` records too, which step 4 ends.
     async fn gone_containers(&self, pass: &Pass, state: &mut Reconciler) {
         let mut seen = HashSet::new();
         for c in &pass.records {
-            if !matches!(
-                c.value.state,
-                ContainerState::Ready | ContainerState::Claimed
-            ) {
+            if c.value.state == ContainerState::Gone {
                 continue;
             }
             seen.insert(c.value.id);
+            if c.value.state == ContainerState::Starting {
+                if pass.info(&c.value).is_some() {
+                    state.unseen.remove(&c.value.id);
+                } else {
+                    *state.unseen.entry(c.value.id).or_insert(0) += 1;
+                }
+                continue;
+            }
             match pass.info(&c.value) {
                 Some(i) if runs(i) => {
                     state.unseen.remove(&c.value.id);

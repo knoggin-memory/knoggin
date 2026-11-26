@@ -427,6 +427,37 @@ async fn reconcile_resolves_stuck_claims_and_leaves_a_launch_in_progress_alone()
     assert_eq!(s.state, ContainerState::Gone);
 }
 
+#[tokio::test]
+async fn a_starting_record_whose_launch_never_happened_ends_and_claims_go_on() {
+    let w = World::new().await;
+    // ECS: a task the launcher does not know is not ended on the request path.
+    let f = w.fleet(BUILD, false, |_| {});
+    // A router died between writing `starting` and calling `launch`.
+    let orphan = knoggin_state::record::Container::starting(
+        Uuid::now_v7(),
+        BUILD.into(),
+        String::new(),
+        w.clock.now(),
+        i64::MAX,
+    );
+    w.containers()
+        .put(&orphan, knoggin_state::Cond::Absent)
+        .await
+        .unwrap();
+    let u = user();
+    let e = f.acquire(u, Duration::from_millis(600)).await.unwrap_err();
+    assert_eq!(e.code, Code::Unavailable, "claims wait for the start");
+    let mut r = Reconciler::default();
+    assert!(f.take_leadership().await.unwrap());
+    f.pass(&mut r).await.unwrap();
+    w.clock.advance(121_000);
+    assert!(f.take_leadership().await.unwrap());
+    f.pass(&mut r).await.unwrap();
+    let c = w.containers().get(orphan.id).await.unwrap().unwrap().value;
+    assert_eq!(c.state, ContainerState::Gone);
+    warm(&f, u).await;
+}
+
 /// A launcher whose `list` takes `delay`; it counts the lists begun and those dropped
 /// before they finished.
 #[derive(Debug)]
