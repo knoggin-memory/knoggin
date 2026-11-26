@@ -29,7 +29,7 @@ Everything stays on your machine, encrypted at rest under `~/.knoggin/`. The emb
 docker compose up -d
 ```
 
-`deploy/docker/README.md` lists the settings to fill in first. On AWS, use the OpenTofu module in `deploy/aws/`; `docs/deploy-aws.md` covers variables, sizing and upgrades.
+`deploy/docker/README.md` lists the settings to fill in first. On AWS, use the OpenTofu module in `deploy/aws/`; [`docs/deploy-aws.md`](docs/deploy-aws.md) covers variables, sizing and upgrades.
 
 ## Connect an agent
 
@@ -37,7 +37,7 @@ docker compose up -d
 - **Server:** point the agent at `https://<your server>/mcp`. The agent signs in through your identity provider.
 - **Code:** the Python SDK (`pip install knoggin`) works against both.
 
-`docs/connect-agents.md` has a section per agent, and `integrations/connectors/` has the config snippets.
+[Connecting agents](docs/connect-agents.md) has a section per agent, and [`integrations/connectors/`](integrations/connectors) has the config snippets. Claude Code and Codex can also install the [Knoggin plugin](integrations/plugin/README.md).
 
 ## Verify a release
 
@@ -71,6 +71,7 @@ Knoggin encrypts everything at rest, but some things it does not defend against.
 - [Getting started](docs/getting-started.md)
 - [Local install](docs/local-install.md) and [moving from recalld](docs/migrate-from-recalld.md)
 - Deploying [on one host](docs/deploy-one-host.md) or [on AWS](docs/deploy-aws.md)
+- [Connecting agents](docs/connect-agents.md)
 - [Sign-in](docs/sign-in.md), [apps and keys](docs/apps-and-keys.md), [the Python SDK](docs/python-sdk.md)
 - [Security](docs/security.md) and [operations](docs/operations.md)
 - [Contributing](CONTRIBUTING.md)
