@@ -387,3 +387,12 @@ fn start_passes_the_log_level_and_not_the_api_key() {
         "an info line at warn: {log}"
     );
 }
+
+#[test]
+fn model_fetch_writes_nothing_into_model_dir_when_downloads_are_off() {
+    let home = Home::new().with("KNOGGIN_MODEL__DOWNLOAD", "false");
+    let o = home.run(&["model", "fetch"]);
+    assert_eq!(o.code, 1, "{}{}", o.stdout, o.stderr);
+    assert!(o.stderr.contains("model.download"), "{}", o.stderr);
+    assert!(!home.root().join("models").exists());
+}

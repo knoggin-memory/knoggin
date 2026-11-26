@@ -900,6 +900,13 @@ async fn key(ctx: &Ctx<'_>, config: &Config, c: KeyCommand) -> anyhow::Result<u8
 async fn model_command(ctx: &Ctx<'_>, config: &Config, c: ModelCommand) -> anyhow::Result<u8> {
     match c {
         ModelCommand::Fetch { dir } => {
+            if dir.is_none() && !config.model.download {
+                bail!(
+                    "model.download is false, so nothing is written to model.dir {}; \
+                     give `--dir <dir>` to fetch the files elsewhere",
+                    config.model.dir.display()
+                );
+            }
             let root = dir.unwrap_or_else(|| config.model.dir.clone());
             let mut last = 0u64;
             let path = model::fetch(&root, |done, total| {
