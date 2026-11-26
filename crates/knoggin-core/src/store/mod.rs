@@ -83,6 +83,7 @@ pub struct NamespaceCounts {
 /// which keep the indexes, the counts and the size estimate in step.
 pub struct Store {
     pub(crate) id: StoreId,
+    pub(crate) created_at: Timestamp,
     pub(crate) model: ModelIdentity,
     pub(crate) namespaces: BTreeMap<NamespaceId, Namespace>,
     pub(crate) next_namespace_id: u32,
@@ -121,6 +122,7 @@ impl Store {
         let dimensions = usize::try_from(model.dimensions).unwrap_or(0);
         let mut store = Store {
             id,
+            created_at: now,
             model,
             namespaces: BTreeMap::new(),
             next_namespace_id: 1,
@@ -152,6 +154,11 @@ impl Store {
     /// The store's identity.
     pub fn id(&self) -> StoreId {
         self.id
+    }
+
+    /// When the store was first made (kept in every snapshot).
+    pub fn created_at(&self) -> Timestamp {
+        self.created_at
     }
 
     /// The embedding model whose vectors the store holds.

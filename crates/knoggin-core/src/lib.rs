@@ -14,6 +14,7 @@ pub mod ops;
 pub mod rif;
 pub mod search;
 pub mod sensitive;
+pub mod snapshot;
 pub mod store;
 pub mod testing;
 pub mod time;

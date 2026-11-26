@@ -35,6 +35,7 @@ crates") is the authority; this file says how the code meets it.
 | `store::idempotency` | `run_idempotent`; `request_hash_input` (re-exported as `store::request_hash_input`: the host SHA-256es it with aws-lc-rs) |
 | `graph::links` | Automatic entity, temporal and semantic links; the duplicate report |
 | `decay::sweep` | `plan_phase`, `PhaseStep`, `Store::sweep`, `would_change` (policy dry run) |
+| `snapshot` | `Store::encode` / `encode_as` (hidden, for frozen fixtures) / `decode(content_format, bytes)` (content format 1, rebuilds every index via `rebuild_indexes`), `WRITE`/`MIN`/`MAX_CONTENT_FORMAT`, `check_content_format`, `SnapshotError` (`Corrupt`, `FormatTooNew`; `lock_reason`), `SnapshotName`, `SnapshotObject`, `KeptBecause`, `thin`. A new derived index needs no change here as long as `rebuild_indexes` builds it |
 | `transfer` | `TransferRecord` and its line types, `ExportCursor`, `ExportPage`, `OnConflict`, `ImportOutcome`, `export_page`, `import_record` |
 | `testing` | `FakeProvider` (`new` = `fake-64`, `with_dim(768)` = `fake-768`), `StoreBuilder` (namespaces, memories, vectors, edges as given; no linking), `memory` (a plain `Full` memory for tests) |
 
@@ -69,7 +70,7 @@ automatic links. The operations set those.
 
 Add files with their own `impl Store` blocks and one `mod` line in the parent:
 
-- `snapshot.rs`; the snapshot round-trip and budget tests in `tests/`
+- `snapshot/` is done; its round-trip property test is `tests/snapshot_round_trip.rs`, sharing the generator in `tests/support/`
 
 Reads record nothing. `recall` returns `hits` (kind per hit) for `record_access`; for
 `get_memory` the host passes the memory as `direct`, for `find_similar` the items as
