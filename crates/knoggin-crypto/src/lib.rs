@@ -4,6 +4,7 @@
 //!
 //! All cryptography comes from `aws-lc-rs`. Key bytes live in types that wipe themselves.
 
+pub mod container;
 pub mod key;
 pub mod local;
 pub mod testing;

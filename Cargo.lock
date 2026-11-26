@@ -368,6 +368,7 @@ dependencies = [
  "aws-lc-rs",
  "base64",
  "knoggin-core",
+ "proptest",
  "serde",
  "serde_json",
  "thiserror",
