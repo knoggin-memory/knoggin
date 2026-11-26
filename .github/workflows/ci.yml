@@ -3,8 +3,6 @@ name: CI
 # Tab "Testing, CI, releases", CI. Jobs whose code lands in later milestones
 # are not here yet; each is added with its milestone and to `ci-ok.needs`:
 #   stack    (milestone 6) ubuntu-24.04, the stack tier
-#   web      (milestone 4) ubuntu-24.04, the web UI tier
-#   web-e2e  (milestone 4) ubuntu-24.04, UI build, release daemon, end-to-end tier
 #   sdk      (milestone 8) ubuntu-24.04, the SDK tier and `uv build`
 #   deploy   (milestone 7) ubuntu-24.04, the deploy tier
 
@@ -218,6 +216,74 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Node 26 LTS and pnpm, as prebuilt archives checked against their SHA-256.
+      - name: Install Node and pnpm
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-x64.tar.xz
+          echo "5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864  $RUNNER_TEMP/node.tar.xz" | sha256sum -c -
+          curl -fsSL -o "$RUNNER_TEMP/pnpm.tar.gz" https://github.com/pnpm/pnpm/releases/download/v12.21.0/pnpm-linux-x64.tar.gz
+          echo "84c4773bcf4a217f4083cd7b2a91e4cee6103cf42426c1282ef37d308f55a410  $RUNNER_TEMP/pnpm.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/node" "$RUNNER_TEMP/pnpm"
+          tar -xJf "$RUNNER_TEMP/node.tar.xz" -C "$RUNNER_TEMP/node" --strip-components=1
+          tar -xzf "$RUNNER_TEMP/pnpm.tar.gz" -C "$RUNNER_TEMP/pnpm"
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/pnpm" >> "$GITHUB_PATH"
+      - run: pnpm -C ui install --frozen-lockfile
+      - run: pnpm -C ui lint
+      - run: pnpm -C ui check
+      - run: pnpm -C ui test
+      - run: pnpm -C ui build
+
+  # The UI is built first: a release daemon embeds ui/dist (a debug build reads it from disk).
+  web-e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Node 26 LTS and pnpm, as prebuilt archives checked against their SHA-256.
+      - name: Install Node and pnpm
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.xz" https://nodejs.org/dist/v26.13.1/node-v26.13.1-linux-x64.tar.xz
+          echo "5c063e46bab0fbc1c17cc445d7ff129cbdcd0471be6ed83b6ab864f8143bc864  $RUNNER_TEMP/node.tar.xz" | sha256sum -c -
+          curl -fsSL -o "$RUNNER_TEMP/pnpm.tar.gz" https://github.com/pnpm/pnpm/releases/download/v12.21.0/pnpm-linux-x64.tar.gz
+          echo "84c4773bcf4a217f4083cd7b2a91e4cee6103cf42426c1282ef37d308f55a410  $RUNNER_TEMP/pnpm.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/node" "$RUNNER_TEMP/pnpm"
+          tar -xJf "$RUNNER_TEMP/node.tar.xz" -C "$RUNNER_TEMP/node" --strip-components=1
+          tar -xzf "$RUNNER_TEMP/pnpm.tar.gz" -C "$RUNNER_TEMP/pnpm"
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+          echo "$RUNNER_TEMP/pnpm" >> "$GITHUB_PATH"
+      - run: pnpm -C ui install --frozen-lockfile
+      - run: pnpm -C ui build
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build --release --locked -p knoggin
+      # The browser at the version the lockfile's Playwright names, with its system libraries.
+      - run: pnpm -C ui exec playwright install --with-deps chromium
+      - run: pnpm -C ui test:e2e
+        env:
+          KNOGGIN_BIN: ${{ github.workspace }}/target/release/knoggin
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-e2e-results
+          path: ui/test-results/
+          retention-days: 7
+
   deps:
     # Dependency review needs GitHub Advanced Security on a private repository,
     # so it runs once the repository is public.
@@ -248,7 +314,7 @@ jobs:
   # The one required check. Skipped jobs (deps and dco on a push) count as passed.
   ci-ok:
     if: always()
-    needs: [fmt, clippy, test, budgets, doc, deny, machete, openapi, workflows, deps, dco]
+    needs: [fmt, clippy, test, budgets, doc, deny, machete, openapi, workflows, web, web-e2e, deps, dco]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
