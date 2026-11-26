@@ -453,6 +453,35 @@ async fn a_lost_lease_stops_everything_before_any_further_broker_call() {
     assert!(!rig.storage.seen().iter().any(|s| s.method == "PUT"));
 }
 
+/// `parked` answered `lease_lost`: the lease is lost, the container ends as such and
+/// does not try again.
+#[tokio::test]
+async fn a_lease_lost_answer_to_parked_ends_the_container_as_lease_lost() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let mut c = rig.container(quick()).await;
+    let g = rig.generation();
+    rig.lease(a.user, &c, g).await;
+    c.claim(a.user, g, settings(600, GIB)).await;
+    // Nothing to save; the lease moves on before the container reports.
+    let mut lease = rig.lease_of(a.user).await;
+    lease.container_id = Some(uuid::Uuid::now_v7());
+    rig.leases
+        .put(a.user, &lease, knoggin_state::Cond::Any)
+        .await
+        .unwrap();
+    c.park(ParkReason::Drain).await;
+    let end = c.end(SECONDS).await;
+    assert_eq!((end.reason, end.exit_code), (EndReason::LeaseLost, 1));
+    let calls = rig.broker_calls.lock().unwrap().clone();
+    assert_eq!(
+        calls,
+        [knoggin_server::broker::api::paths::PARKED],
+        "one try, not three"
+    );
+    assert!(rig.parked.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn a_deleted_store_is_dropped_and_the_container_still_parks() {
     let rig = Rig::start(Options::default()).await;

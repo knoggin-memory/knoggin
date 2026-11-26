@@ -37,6 +37,10 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const TRANSFER_IDLE: Duration = Duration::from_secs(60);
 /// Tries of a broker call that is answered 429 without a reason (too many calls).
 const BUSY_TRIES: u32 = 5;
+/// Tries of `parked`...
+const PARKED_TRIES: u32 = 3;
+/// ...each and each pause after it at most this long: 3 tries within 10 seconds.
+const PARKED_STEP: Duration = Duration::from_secs(2);
 
 /// The container's side of the link to the router: its client with the routers'
 /// certificate pinned, its identity, and the mark that the lease is lost.
@@ -165,11 +169,13 @@ impl Link {
         Err(BackendError::Unavailable)
     }
 
-    /// `parked`: tried 3 times within about 10 seconds. Returns whether it went through.
+    /// `parked`: tried 3 times within 10 seconds (each try and each pause at most
+    /// [`PARKED_STEP`]). Returns whether it went through; a `lease_lost` answer marks the
+    /// lease lost and is not tried again.
     pub(crate) async fn parked(&self, user: UserId) -> bool {
-        for attempt in 0..3 {
+        for attempt in 0..PARKED_TRIES {
             if attempt > 0 {
-                tokio::time::sleep(Duration::from_secs(3)).await;
+                tokio::time::sleep(PARKED_STEP).await;
             }
             if self.is_lost() {
                 return false;
@@ -178,11 +184,24 @@ impl Link {
             let Some(req) = self.request(user, Method::POST, &url, Body::empty()) else {
                 return false;
             };
-            let sent = tokio::time::timeout(Duration::from_secs(3), self.client.request(req));
-            if let Ok(Ok(answer)) = sent.await
-                && answer.status().is_success()
-            {
-                return true;
+            let sent = async {
+                let answer = self.client.request(req).await.ok()?;
+                let status = answer.status();
+                let body = Limited::new(answer.into_body(), MAX_ANSWER_BYTES)
+                    .collect()
+                    .await
+                    .ok()?
+                    .to_bytes();
+                Some((status, body))
+            };
+            match tokio::time::timeout(PARKED_STEP, sent).await {
+                Ok(Some((status, _))) if status.is_success() => return true,
+                Ok(Some((_, body)))
+                    if refusal(self, error_of(&body)) == BackendError::LeaseLost =>
+                {
+                    return false;
+                }
+                _ => {}
             }
         }
         false
@@ -501,5 +520,46 @@ impl StoreBackend for RouterBackend {
             },
         );
         self.commit(store, name, body).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::link::{CertPin, InternalSecret, router_client};
+
+    /// A router that takes the connection and never answers: `parked` gives up within
+    /// 10 seconds, after 3 tries.
+    #[tokio::test(start_paused = true)]
+    async fn parked_is_tried_three_times_within_ten_seconds() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = accepted.clone();
+        let held = tokio::spawn(async move {
+            let mut open = Vec::new();
+            while let Ok((stream, _)) = listener.accept().await {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                open.push(stream);
+            }
+        });
+        let id = Uuid::now_v7();
+        let link = Link {
+            client: router_client(CertPin::of(b"no certificate"), None).unwrap(),
+            bucket: reqwest::Client::new(),
+            router_url: format!("https://127.0.0.1:{}", addr.port()),
+            launch: InternalSecret::from_bytes([3u8; 32]).launch_secret(id),
+            container_id: id,
+            lost: watch::Sender::new(false),
+        };
+        let started = tokio::time::Instant::now();
+        assert!(!link.parked(UserId::from_uuid(Uuid::now_v7())).await);
+        assert!(
+            started.elapsed() <= Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        assert!(accepted.load(std::sync::atomic::Ordering::SeqCst) <= 3);
+        held.abort();
     }
 }
