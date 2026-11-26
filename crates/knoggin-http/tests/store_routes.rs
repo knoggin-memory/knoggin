@@ -13,6 +13,7 @@
 mod support;
 
 use axum::body::Body;
+use futures_util::StreamExt;
 use http::{Method, Request, StatusCode};
 use knoggin_http::Permissions;
 use knoggin_http::error::Code;
@@ -254,6 +255,65 @@ async fn shapes_of_the_main_answers() {
     );
 }
 
+/// A memory of a new namespace `name` that has faded to a ghost: saved a month in the
+/// past under thresholds that every sweep crosses, then swept twice (each open sweeps).
+async fn ghost_in(env: &Env, name: &str) -> String {
+    let ctx = env.t.ctx(RW);
+    let r = env
+        .call(
+            Some(&ctx),
+            Method::POST,
+            "/v1/namespaces",
+            Some(json!({ "name": name })),
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.json);
+    let mut policy = serde_json::to_value(knoggin_core::model::NamespacePolicy::default()).unwrap();
+    policy["phaseThresholds"] =
+        json!({ "fullToSummary": 0.99, "summaryToGhost": 0.98, "ghostToDelete": 0.000_001 });
+    let r = env
+        .call(
+            Some(&ctx),
+            Method::PUT,
+            &format!("/v1/namespaces/{name}/policy"),
+            Some(policy),
+            &[],
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    let created =
+        serde_json::to_value(knoggin_core::Timestamp::from_millis(now - 30 * 86_400_000)).unwrap();
+    let id = save(
+        env,
+        json!({ "summary": "fades", "namespace": name, "createdAt": created }),
+    )
+    .await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    for _ in 0..2 {
+        env.t.host.close(env.t.store).await.unwrap();
+        env.call(Some(&ctx), Method::GET, "/v1/namespaces", None, &[])
+            .await;
+    }
+    let r = env
+        .call(
+            Some(&ctx),
+            Method::GET,
+            &format!("/v1/memories/{id}?recordAccess=false"),
+            None,
+            &[],
+        )
+        .await;
+    assert_eq!(r.json["phase"], "ghost", "{}", r.json);
+    id
+}
+
 #[tokio::test]
 async fn listed_errors_per_route() {
     let env = Env::new(true).await;
@@ -471,6 +531,183 @@ async fn listed_errors_per_route() {
         .await;
     assert_eq!(r.status, StatusCode::METHOD_NOT_ALLOWED);
     assert!(r.headers.contains_key("allow"));
+    // A ghost can be neither reinforced nor moved.
+    let ghost = ghost_in(&env, "fade").await;
+    for (uri, body) in [
+        (format!("/v1/memories/{ghost}/reinforce"), None),
+        (
+            "/v1/memories/move".to_owned(),
+            Some(json!({ "ids": [ghost], "destinationNamespace": "default" })),
+        ),
+    ] {
+        let r = env.call(Some(&ctx), Method::POST, &uri, body, &[]).await;
+        assert_eq!(r.error(), Code::Conflict, "{uri}: {}", r.json);
+    }
+    // Supersede with content that fails a check.
+    let r = env
+        .call(
+            Some(&ctx),
+            Method::POST,
+            &format!("/v1/memories/{a}/supersede"),
+            Some(json!({ "summary": "" })),
+            &[],
+        )
+        .await;
+    assert_eq!(r.error(), Code::InvalidArgument, "{}", r.json);
+    // Every idempotent route: the same key with another request.
+    let policy = serde_json::to_value(knoggin_core::model::NamespacePolicy::default()).unwrap();
+    let mut other_policy = policy.clone();
+    other_policy["initialStability"] = json!(5.0);
+    #[expect(
+        clippy::type_complexity,
+        reason = "one row per route: a request and its rival"
+    )]
+    let keyed: Vec<(Method, String, Option<Value>, String, Option<Value>)> = vec![
+        (
+            Method::POST,
+            "/v1/memories".into(),
+            Some(memory("k1 a")),
+            "/v1/memories".into(),
+            Some(memory("k1 b")),
+        ),
+        (
+            Method::POST,
+            "/v1/memories/batch".into(),
+            Some(json!({ "memories": [memory("k2 a")] })),
+            "/v1/memories/batch".into(),
+            Some(json!({ "memories": [memory("k2 b")] })),
+        ),
+        (
+            Method::DELETE,
+            format!("/v1/memories/{missing}"),
+            None,
+            format!("/v1/memories/{a}"),
+            None,
+        ),
+        (
+            Method::POST,
+            "/v1/memories/forget".into(),
+            Some(json!({ "ids": [missing] })),
+            "/v1/memories/forget".into(),
+            Some(json!({ "ids": [a] })),
+        ),
+        (
+            Method::POST,
+            format!("/v1/memories/{a}/reinforce"),
+            Some(json!({ "quality": 2 })),
+            format!("/v1/memories/{a}/reinforce"),
+            Some(json!({ "quality": 4 })),
+        ),
+        (
+            Method::POST,
+            format!("/v1/memories/{a}/supersede"),
+            Some(memory("k6 a")),
+            format!("/v1/memories/{a}/supersede"),
+            Some(memory("k6 b")),
+        ),
+        (
+            Method::POST,
+            "/v1/memories/move".into(),
+            Some(json!({ "ids": [a], "destinationNamespace": "full" })),
+            "/v1/memories/move".into(),
+            Some(json!({ "ids": [a], "destinationNamespace": "default" })),
+        ),
+        (
+            Method::POST,
+            "/v1/namespaces".into(),
+            Some(json!({ "name": "k8a" })),
+            "/v1/namespaces".into(),
+            Some(json!({ "name": "k8b" })),
+        ),
+        (
+            Method::PUT,
+            "/v1/namespaces/full/policy".into(),
+            Some(policy.clone()),
+            "/v1/namespaces/full/policy".into(),
+            Some(other_policy),
+        ),
+        (
+            Method::DELETE,
+            "/v1/namespaces/k8a".into(),
+            None,
+            "/v1/namespaces/nope".into(),
+            None,
+        ),
+    ];
+    for (i, (method, first, first_body, second, second_body)) in keyed.into_iter().enumerate() {
+        let key = format!("conflict-{i}");
+        let headers = [("idempotency-key", key.as_str())];
+        let r = env
+            .call(Some(&ctx), method.clone(), &first, first_body, &headers)
+            .await;
+        assert!(r.status.is_success(), "{method} {first}: {}", r.json);
+        let r = env
+            .call(Some(&ctx), method.clone(), &second, second_body, &headers)
+            .await;
+        assert_eq!(
+            r.error(),
+            Code::IdempotencyConflict,
+            "{method} {second}: {}",
+            r.json
+        );
+    }
+    // An unknown body field, on every route that takes a body.
+    let fresh = save(&env, memory("for the field checks")).await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let with_bodies: Vec<(Method, String, Value)> = vec![
+        (Method::POST, "/v1/memories".into(), memory("s")),
+        (
+            Method::POST,
+            "/v1/memories/batch".into(),
+            json!({ "memories": [memory("s")] }),
+        ),
+        (
+            Method::POST,
+            "/v1/memories/forget".into(),
+            json!({ "ids": [missing] }),
+        ),
+        (
+            Method::POST,
+            format!("/v1/memories/{fresh}/reinforce"),
+            json!({ "quality": 3 }),
+        ),
+        (
+            Method::POST,
+            format!("/v1/memories/{fresh}/supersede"),
+            memory("s"),
+        ),
+        (
+            Method::POST,
+            "/v1/memories/move".into(),
+            json!({ "ids": [fresh], "destinationNamespace": "default" }),
+        ),
+        (
+            Method::POST,
+            format!("/v1/memories/{fresh}/similar"),
+            json!({ "limit": 3 }),
+        ),
+        (Method::POST, "/v1/recall".into(), json!({ "query": "q" })),
+        (
+            Method::POST,
+            "/v1/namespaces".into(),
+            json!({ "name": "fields" }),
+        ),
+        (Method::PUT, "/v1/namespaces/full/policy".into(), policy),
+    ];
+    for (method, uri, mut body) in with_bodies {
+        body["colour"] = json!(1);
+        let r = env
+            .call(Some(&ctx), method.clone(), &uri, Some(body), &[])
+            .await;
+        assert_eq!(
+            (r.error(), r.json["error"]["field"].as_str()),
+            (Code::InvalidArgument, Some("colour")),
+            "{method} {uri}: {}",
+            r.json
+        );
+    }
     // A memory without a vector yet cannot be searched by similarity.
     let pending = Env::new(false).await;
     let id = save(&pending, memory("waits")).await["id"]
@@ -1129,4 +1366,91 @@ async fn the_default_namespace_header_is_used() {
         )
         .await;
     assert_eq!(r.error(), Code::NotFound);
+}
+
+#[tokio::test]
+async fn the_65th_request_to_a_store_is_unavailable() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(RW);
+    env.call(Some(&ctx), Method::GET, "/v1/namespaces", None, &[])
+        .await;
+    // Imports whose bodies never come each hold one of the store's request permits.
+    let hold = || {
+        let request = Request::post("/v1/import")
+            .header("content-type", "application/x-ndjson")
+            .extension(ctx.clone())
+            .body(Body::from_stream(futures_util::stream::pending::<
+                Result<Vec<u8>, std::io::Error>,
+            >()))
+            .unwrap();
+        tokio::spawn(tower::ServiceExt::oneshot(env.app.clone(), request))
+    };
+    let settle = || async {
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+        }
+    };
+    let mut held: Vec<_> = (0..63).map(|_| hold()).collect();
+    settle().await;
+    let r = env
+        .call(Some(&ctx), Method::GET, "/v1/namespaces", None, &[])
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "the 64th is served");
+    held.push(hold());
+    settle().await;
+    let r = env
+        .call(Some(&ctx), Method::GET, "/v1/namespaces", None, &[])
+        .await;
+    assert_eq!(r.error(), Code::Unavailable, "{}", r.json);
+    assert_eq!(r.headers["retry-after"], "1");
+    for task in held {
+        task.abort();
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_request_past_its_time_limit_is_a_timeout() {
+    let mut config = knoggin_http::testing::fake_config();
+    config.limits.request_timeout_ms = 1_000;
+    let env = Env::with_config(config, false).await;
+    // Opening the store takes longer than the limit.
+    *env.counting.open_delay.lock().unwrap() = std::time::Duration::from_secs(5);
+    let ctx = env.t.ctx(RW);
+    let r = env
+        .call(Some(&ctx), Method::GET, "/v1/namespaces", None, &[])
+        .await;
+    assert_eq!(r.error(), Code::Timeout, "{}", r.json);
+}
+
+#[tokio::test(start_paused = true)]
+async fn an_import_that_stops_sending_is_ended_after_60_seconds() {
+    let env = Env::new(false).await;
+    let ctx = env.t.ctx(RW);
+    let record =
+        knoggin_core::transfer::TransferRecord::Header(knoggin_core::transfer::ExportHeader {
+            format: "knoggin-export".into(),
+            version: 1,
+            exported_at: None,
+            model: None,
+            counts: None,
+        });
+    let header = serde_json::to_string(&record).unwrap() + "\n";
+    let body = futures_util::stream::iter([Ok::<_, std::io::Error>(header.into_bytes())])
+        .chain(futures_util::stream::pending());
+    let started = tokio::time::Instant::now();
+    let r = env
+        .send(
+            Request::post("/v1/import")
+                .header("content-type", "application/x-ndjson")
+                .extension(ctx.clone())
+                .body(Body::from_stream(body))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(r.error(), Code::Timeout, "{}", r.json);
+    let waited = started.elapsed();
+    assert!(
+        waited >= std::time::Duration::from_secs(60) && waited < std::time::Duration::from_secs(61),
+        "{waited:?}"
+    );
 }
