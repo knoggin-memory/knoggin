@@ -216,3 +216,130 @@ fn config_check_model_verify_and_test_mode() {
     assert_eq!(home.run(&["keys", "create", "--expires-days", "7"]).code, 2);
     assert_eq!(home.run(&["frobnicate"]).code, 2);
 }
+
+/// A fake `open` and `xdg-open` first on `PATH`, which only note the file they are given,
+/// so that no test opens a real browser.
+fn with_fake_opener(home: Home) -> (Home, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = home.dir.path().join("bin");
+    let noted = home.dir.path().join("opened");
+    std::fs::create_dir_all(&bin).unwrap();
+    for name in ["open", "xdg-open"] {
+        let script = bin.join(name);
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\necho \"$1\" >> '{}'\n", noted.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    (home.with("PATH", &path), noted)
+}
+
+#[test]
+fn open_starts_the_daemon_and_opens_a_private_page() {
+    use std::os::unix::fs::PermissionsExt;
+    let (home, noted) = with_fake_opener(Home::new());
+    let _stop = support::Started(&home);
+    // `--print-url` starts the daemon and only prints the address.
+    let o = home.run(&["open", "--print-url"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let url = o.stdout.trim().to_owned();
+    assert!(url.starts_with("http://") && url.contains("/?t="), "{url}");
+    assert!(!noted.exists(), "--print-url opened something");
+    // Without it the address goes into a private file under run/, and that file is opened.
+    let o = home.run(&["open"]);
+    assert_eq!(o.code, 0, "{}", o.stderr);
+    let opened = std::fs::read_to_string(&noted).unwrap();
+    let page = PathBuf::from(opened.trim());
+    assert_eq!(page.parent().unwrap(), home.root().join("run"));
+    let name = page.file_name().unwrap().to_str().unwrap().to_owned();
+    assert!(
+        name.starts_with("open-") && name.ends_with(".html"),
+        "{name}"
+    );
+    assert_eq!(
+        std::fs::metadata(&page).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    let html = std::fs::read_to_string(&page).unwrap();
+    assert!(html.contains("/?t="), "{html}");
+    assert!(!html.contains(&url), "a one-time code was used twice");
+    assert!(!o.stdout.contains("/?t=") && !o.stderr.contains("/?t="));
+}
+
+#[test]
+fn open_exits_4_and_opens_nothing_when_the_install_is_locked() {
+    let (home, noted) = with_fake_opener(Home::new());
+    let mut d = home.daemon();
+    d.stop();
+    std::fs::remove_file(home.root().join("master.key")).unwrap();
+    let _stop = support::Started(&home);
+    for args in [vec!["open", "--print-url"], vec!["open"]] {
+        let o = home.run(&args);
+        assert_eq!(o.code, 4, "{args:?}: {}{}", o.stdout, o.stderr);
+        assert!(o.stderr.contains("master_key_missing"), "{}", o.stderr);
+    }
+    assert!(!noted.exists(), "a locked install opened a page");
+}
+
+#[test]
+fn key_import_loads_a_backup_into_a_copied_data_folder() {
+    use std::os::unix::fs::PermissionsExt;
+    let home = Home::new();
+    let mut d = home.daemon();
+    let r = home.sock(
+        "POST",
+        "/v1/memories",
+        &[],
+        Some(&json!({ "summary": "opened again" })),
+    );
+    assert_eq!(r.status, 201);
+    let backup = home.dir.path().join("backup.json");
+    let b = backup.to_str().unwrap();
+    // Refused while the daemon runs.
+    assert_ne!(home.run(&["key", "import", b]).code, 0);
+    d.stop();
+    assert_eq!(home.run(&["key", "export", "--out", b]).code, 0);
+    // The data folder on a new machine: no key, no record.
+    std::fs::remove_file(home.root().join("master.key")).unwrap();
+    std::fs::remove_file(home.data().join("key-source.json")).unwrap();
+    // A backup that others can write is refused.
+    std::fs::set_permissions(&backup, std::fs::Permissions::from_mode(0o666)).unwrap();
+    assert_ne!(home.run(&["key", "import", b]).code, 0);
+    std::fs::set_permissions(&backup, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(home.json(&["key", "import", b])["source"], "key_file");
+    assert!(home.data().join("key-source.json").exists());
+    let mut d = home.daemon();
+    let r = home.sock("GET", "/v1/memories", &[], None);
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(r.json()["items"][0]["summary"], "opened again");
+    d.stop();
+}
+
+#[test]
+fn without_test_mode_the_daemon_uses_the_real_model() {
+    let home = Home::new();
+    let models = home.dir.path().join("models");
+    std::fs::create_dir_all(&models).unwrap();
+    // The real model's files are missing and downloads are off, so nothing is fetched,
+    // loaded or written; the state says so under the real model's identity.
+    let mut d = home.daemon_with(|c| {
+        c.env_remove("KNOGGIN_TEST_MODE")
+            .env("KNOGGIN_MODEL__DOWNLOAD", "false")
+            .env("KNOGGIN_MODEL__DIR", &models);
+    });
+    let model = home.json(&["status"])["model"].clone();
+    assert_eq!(model["state"], "unavailable", "{model}");
+    assert_eq!(model["reason"], "files_missing", "{model}");
+    let identity = model["identity"].as_str().unwrap();
+    assert!(identity.starts_with("embeddinggemma"), "{model}");
+    assert!(!d.stderr().contains("test mode is on"));
+    assert_eq!(std::fs::read_dir(&models).unwrap().count(), 0);
+    d.stop();
+}

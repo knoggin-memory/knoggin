@@ -68,25 +68,54 @@ fn used_home() -> Home {
     home
 }
 
+/// Every API route: each path and method of `docs/openapi.json` (path parameters filled
+/// with an ID), and the MCP endpoints.
+fn api_routes() -> Vec<(String, String)> {
+    let doc: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/openapi.json"))
+            .unwrap(),
+    )
+    .unwrap();
+    let mut out = Vec::new();
+    for (path, item) in doc["paths"].as_object().unwrap() {
+        if path == "/healthz" || path == "/readyz" {
+            continue;
+        }
+        let filled = path
+            .split('/')
+            .map(|seg| {
+                if seg.starts_with('{') {
+                    "01a21617-0000-7000-8000-000000000001"
+                } else {
+                    seg
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("/");
+        for method in item.as_object().unwrap().keys() {
+            out.push((method.to_uppercase(), filled.clone()));
+        }
+    }
+    for path in ["/mcp", "/mcp/plugin"] {
+        for method in ["GET", "POST", "DELETE"] {
+            out.push((method.into(), path.into()));
+        }
+    }
+    assert!(out.len() > 40, "{}", out.len());
+    out
+}
+
 fn assert_locked(home: &Home, reason: &str) {
-    for (method, path, body) in [
-        ("GET", "/v1/memories", None),
-        ("GET", "/v1/stores", None),
-        ("POST", "/v1/recall", Some(json!({ "query": "x" }))),
-        (
-            "POST",
-            "/mcp",
-            Some(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" })),
-        ),
-    ] {
-        let r = home.sock(method, path, &[], body.as_ref());
+    for (method, path) in api_routes() {
+        let body = (method != "GET").then(|| json!({}));
+        let r = home.sock(&method, &path, &[], body.as_ref());
         assert_eq!(
             r.json()["error"]["code"],
             "store_locked",
-            "{path}: {}",
+            "{method} {path}: {}",
             r.text()
         );
-        assert_eq!(r.json()["error"]["reason"], reason, "{path}");
+        assert_eq!(r.json()["error"]["reason"], reason, "{method} {path}");
     }
     let r = home.sock("GET", "/v1/session", &[], None);
     assert!(r.json()["error"]["docsUrl"].is_string(), "{}", r.text());

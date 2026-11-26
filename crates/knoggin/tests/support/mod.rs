@@ -107,10 +107,16 @@ impl Home {
     /// Starts `knoggin daemon` in the foreground, its stderr in `<dir>/daemon-<n>.err`, and
     /// waits until the socket answers.
     pub fn daemon(&self) -> Daemon {
+        self.daemon_with(|_| {})
+    }
+
+    /// [`Home::daemon`] with a change to its command, such as an environment variable.
+    pub fn daemon_with(&self, change: impl FnOnce(&mut Command)) -> Daemon {
         let n = std::fs::read_dir(self.dir.path()).unwrap().count();
         let err = self.dir.path().join(format!("daemon-{n}.err"));
-        let child = self
-            .cmd(&["daemon"])
+        let mut cmd = self.cmd(&["daemon"]);
+        change(&mut cmd);
+        let child = cmd
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(&err).unwrap())
