@@ -141,6 +141,16 @@ impl World {
             .unwrap_or_default()
     }
 
+    async fn state(&self, id: Uuid) -> ContainerState {
+        self.containers()
+            .get(id)
+            .await
+            .unwrap()
+            .unwrap()
+            .value
+            .state
+    }
+
     async fn count(&self, state: ContainerState) -> usize {
         self.containers()
             .list()
@@ -497,6 +507,113 @@ async fn a_step_the_state_database_fails_does_not_stop_the_pass() {
     // The pool step after it still ran.
     wait_ready(&w, 1).await;
     *w.flaky.fail.lock().unwrap() = None;
+}
+
+#[tokio::test]
+async fn a_pass_with_the_launcher_unreachable_skips_its_steps_and_does_the_rest() {
+    let w = World::new().await;
+    let f = w.fleet(BUILD, true, |c| c.containers.pool_target = 1);
+    // A container that died (step 2 needs the launcher's list).
+    let (dead_user, alive_user) = (user(), user());
+    let dead = warm(&f, dead_user).await;
+    w.launcher.kill(&w.launcher.handle_of(dead).unwrap(), false);
+    // A warm lease whose container record is gone and an hour old (steps 6 and 13).
+    let lost = warm(&f, alive_user).await;
+    let rec = w.containers().get(lost).await.unwrap().unwrap();
+    let mut gone = rec.value.clone();
+    gone.state = ContainerState::Gone;
+    gone.gone_ms = Some(w.clock.now() - 3_600_001);
+    w.containers().put(&gone, rec.cond()).await.unwrap();
+    // A start past its limit (step 4).
+    let stuck = knoggin_state::record::Container::starting(
+        Uuid::now_v7(),
+        BUILD.into(),
+        String::new(),
+        w.clock.now() - 121_000,
+        i64::MAX,
+    );
+    w.containers()
+        .put(&stuck, knoggin_state::Cond::Absent)
+        .await
+        .unwrap();
+    let launched = w.launcher.handles().len();
+    w.launcher.unreachable.store(true, Ordering::Relaxed);
+    let mut r = Reconciler::default();
+    assert!(f.take_leadership().await.unwrap());
+    f.pass(&mut r).await.unwrap();
+    // Done without the launcher: the lease parked, the old record deleted.
+    assert_eq!(w.lease(alive_user).await.state, LeaseState::Parked);
+    assert!(w.containers().get(lost).await.unwrap().is_none());
+    // Skipped: no container marked gone, no start ended, no pool launch.
+    assert_eq!(w.lease(dead_user).await.state, LeaseState::Warm);
+    assert_eq!(w.state(dead).await, ContainerState::Claimed);
+    assert_eq!(w.state(stuck.id).await, ContainerState::Starting);
+    assert_eq!(w.launcher.handles().len(), launched);
+    // With the launcher back, the next pass does them.
+    w.launcher.unreachable.store(false, Ordering::Relaxed);
+    f.pass(&mut r).await.unwrap();
+    assert_eq!(w.lease(dead_user).await.state, LeaseState::Parked);
+    assert_eq!(w.state(stuck.id).await, ContainerState::Gone);
+    // That pass still counted the start; the next one fills the pool.
+    f.pass(&mut r).await.unwrap();
+    wait_ready(&w, 1).await;
+}
+
+#[tokio::test]
+async fn a_stuck_claim_whose_container_reports_another_generation_is_marked_gone() {
+    let w = World::new().await;
+    let f = w.fleet(BUILD, true, |_| {});
+    let u = user();
+    let id = warm(&f, u).await;
+    // The lease names a later claim than the one the container took, a minute ago.
+    let read = w.leases().get(u).await.unwrap().unwrap();
+    let mut stuck = read.value.clone();
+    stuck.set_state(LeaseState::Claiming, w.clock.now() - 61_000);
+    stuck.generation += 1;
+    w.leases().put(u, &stuck, read.cond()).await.unwrap();
+    let mut r = Reconciler::default();
+    assert!(f.take_leadership().await.unwrap());
+    f.pass(&mut r).await.unwrap();
+    let c = w.containers().get(id).await.unwrap().unwrap().value;
+    assert_eq!(
+        (c.state, c.stop_reason()),
+        (ContainerState::Gone, Some(StopReason::ClaimFailed))
+    );
+    let l = w.lease(u).await;
+    assert_eq!(l.state, LeaseState::Parked);
+    assert!(
+        l.abnormal_ends(w.clock.now()).is_empty(),
+        "it was never warm"
+    );
+}
+
+#[tokio::test]
+async fn a_container_that_ignores_park_is_stopped_after_two_hours() {
+    let w = World::new().await;
+    w.control.exit_on_park.store(false, Ordering::Relaxed);
+    let f = w.fleet(BUILD, true, |_| {});
+    let u = user();
+    let id = warm(&f, u).await;
+    f.request_park(u, ParkReason::Restore).await.unwrap();
+    let mut r = Reconciler::default();
+    assert!(f.take_leadership().await.unwrap());
+    f.pass(&mut r).await.unwrap();
+    assert_eq!(
+        w.lease(u).await.state,
+        LeaseState::Warm,
+        "asked, and ignored"
+    );
+    // The limit is 2 hours; the test clock moves past it (the bucket answers).
+    w.clock.advance(2 * 3_600_000 + 1);
+    assert!(f.take_leadership().await.unwrap());
+    f.pass(&mut r).await.unwrap();
+    let c = w.containers().get(id).await.unwrap().unwrap().value;
+    assert_eq!(
+        (c.state, c.stop_reason()),
+        (ContainerState::Gone, Some(StopReason::ParkTimeout))
+    );
+    assert_eq!(w.lease(u).await.state, LeaseState::Parked);
+    assert_eq!(w.launcher.running(), 0);
 }
 
 /// A launcher whose `list` takes `delay`; it counts the lists begun and those dropped
@@ -1105,6 +1222,42 @@ async fn a_container_that_stops_answering_status_is_marked_gone_and_a_get_is_sen
     );
     let ends = w.lease(u).await.abnormal_ends(w.clock.now());
     assert_eq!(ends.len(), 2, "sent once more, at most");
+}
+
+#[tokio::test]
+async fn a_hostile_status_answer_is_cut_off_and_other_users_are_served() {
+    for hostile in [Behaviour::BigStatus, Behaviour::DripStatus] {
+        let w = World::new().await;
+        *w.control.behaviour.lock().unwrap() = hostile;
+        let f = w.fleet(BUILD, true, |_| {});
+        let (a, b) = (user(), user());
+        let bad = warm(&f, a).await;
+        // Containers launched from now on behave.
+        w.launcher
+            .set_runner(stub_runner(BUILD, true, Arc::new(StubControl::default())));
+        warm(&f, b).await;
+        let started = std::time::Instant::now();
+        let post = || {
+            Request::post("/v1/memories")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from("{}"))
+                .unwrap()
+        };
+        let (h, o) = tokio::join!(send(&f, a, post()), send(&f, b, post()));
+        assert_eq!(o.status(), StatusCode::OK, "{hostile:?}");
+        // The request went silent, `status` was cut off twice: the container is gone.
+        assert_eq!(h.status(), StatusCode::SERVICE_UNAVAILABLE, "{hostile:?}");
+        let c = w.containers().get(bad).await.unwrap().unwrap().value;
+        assert_eq!(
+            (c.state, c.stop_reason()),
+            (ContainerState::Gone, Some(StopReason::Unresponsive)),
+            "{hostile:?}"
+        );
+        assert!(started.elapsed() < Duration::from_secs(5), "{hostile:?}");
+        // The router stopped reading at its cap: far less than the 1 GiB offered.
+        let sent = w.control.status_sent.load(Ordering::Relaxed);
+        assert!(sent < 32 << 20, "{hostile:?}: {sent} bytes");
+    }
 }
 
 #[tokio::test]

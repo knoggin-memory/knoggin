@@ -25,6 +25,7 @@ use axum::body::Body;
 use axum::extract::{Query, Request, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, get, post};
+use futures_util::StreamExt;
 use futures_util::future::BoxFuture;
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use knoggin_core::Timestamp;
@@ -416,6 +417,10 @@ pub enum Behaviour {
     Hang,
     /// Its `status` never answers either.
     Dead,
+    /// Forwarded requests hang; `status` answers a body of 1 GiB.
+    BigStatus,
+    /// Forwarded requests hang; `status` answers one byte a second.
+    DripStatus,
 }
 
 /// Shared knobs of a stub container.
@@ -431,6 +436,8 @@ pub struct StubControl {
     pub exit_on_park: AtomicBool,
     /// Never answer a `park` call.
     pub hang_park: AtomicBool,
+    /// Bytes of hostile `status` bodies handed to the connection so far.
+    pub status_sent: Arc<AtomicUsize>,
 }
 
 impl Default for StubControl {
@@ -441,6 +448,7 @@ impl Default for StubControl {
             seen: Mutex::new(Vec::new()),
             exit_on_park: AtomicBool::new(true),
             hang_park: AtomicBool::new(false),
+            status_sent: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -538,11 +546,34 @@ async fn park(State(s): State<Stub>, headers: HeaderMap) -> Response {
 }
 
 async fn status(State(s): State<Stub>, headers: HeaderMap) -> Response {
-    if *s.control.behaviour.lock().unwrap() == Behaviour::Dead {
+    let behaviour = *s.control.behaviour.lock().unwrap();
+    if behaviour == Behaviour::Dead {
         std::future::pending::<()>().await;
     }
     if verify_router_call(&s.launch.router_token(), &headers).is_err() {
         return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if matches!(behaviour, Behaviour::BigStatus | Behaviour::DripStatus) {
+        let (chunk, every, n) = if behaviour == Behaviour::BigStatus {
+            (64 * 1024, Duration::ZERO, 16 * 1024)
+        } else {
+            (1, Duration::from_secs(1), usize::MAX)
+        };
+        let sent = s.control.status_sent.clone();
+        let body = futures_util::stream::iter(0..n).then(move |_| {
+            let sent = sent.clone();
+            async move {
+                tokio::time::sleep(every).await;
+                sent.fetch_add(chunk, Ordering::Relaxed);
+                Ok::<_, std::io::Error>(bytes::Bytes::from(vec![b' '; chunk]))
+            }
+        });
+        let mut r = Response::new(Body::from_stream(body));
+        r.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
+        return r;
     }
     let claim = *s.claim.lock().unwrap();
     json(
@@ -641,7 +672,7 @@ async fn store_route(State(s): State<Stub>, request: Request) -> Response {
             );
             r
         }
-        Behaviour::Hang | Behaviour::Dead => {
+        Behaviour::Hang | Behaviour::Dead | Behaviour::BigStatus | Behaviour::DripStatus => {
             std::future::pending::<()>().await;
             unreachable!()
         }
