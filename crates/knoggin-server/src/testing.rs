@@ -429,6 +429,8 @@ pub struct StubControl {
     pub seen: Mutex<Vec<HeaderMap>>,
     /// Exit (code 0) after a `park` call.
     pub exit_on_park: AtomicBool,
+    /// Never answer a `park` call.
+    pub hang_park: AtomicBool,
 }
 
 impl Default for StubControl {
@@ -438,6 +440,7 @@ impl Default for StubControl {
             refuse_claim: AtomicBool::new(false),
             seen: Mutex::new(Vec::new()),
             exit_on_park: AtomicBool::new(true),
+            hang_park: AtomicBool::new(false),
         }
     }
 }
@@ -519,6 +522,9 @@ async fn claim(State(s): State<Stub>, headers: HeaderMap, body: axum::body::Byte
 async fn park(State(s): State<Stub>, headers: HeaderMap) -> Response {
     if verify_router_call(&s.launch.router_token(), &headers).is_err() {
         return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if s.control.hang_park.load(Ordering::Relaxed) {
+        std::future::pending::<()>().await;
     }
     if s.control.exit_on_park.load(Ordering::Relaxed) {
         // Exit once this answer is on its way.

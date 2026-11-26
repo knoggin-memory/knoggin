@@ -14,14 +14,19 @@
 
 mod fleet_support;
 
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use fleet_support::{Deployment, eventually, local_user, peer, save, summaries};
+use knoggin_core::UserId;
 use knoggin_server::lease::{Caller, Marked};
 use knoggin_server::reconcile::Reconciler;
-use knoggin_server::testing::serve_runner;
+use knoggin_server::router::run_router;
+use knoggin_server::testing::{StubControl, serve_runner, stub_runner};
 use knoggin_state::Meta;
 use knoggin_state::record::{ContainerState, LeaseState, ParkReason, StopReason};
+use uuid::Uuid;
 
 const LIMIT: Duration = Duration::from_secs(20);
 
@@ -381,4 +386,66 @@ async fn a_router_stopping_on_one_host_parks_its_containers_through_its_own_brok
     assert_eq!(d.lease(user).await.state, LeaseState::Parked);
     let r2 = d.router("0.1.0").await;
     assert_eq!(summaries(&r2, None).await.1, vec!["stays".to_owned()]);
+}
+
+#[tokio::test]
+async fn a_stop_asks_hung_containers_at_once_and_leaves_no_task_behind() {
+    // The wait is 110 seconds and each `park` call may take 10; this test shortens the wait
+    // to 3 seconds, so asking one container after another would take over 30.
+    const WAIT: Duration = Duration::from_secs(3);
+    let d = Deployment::new(false).await;
+    let control = Arc::new(StubControl::default());
+    d.launcher
+        .set_runner(stub_runner("0.1.0", true, control.clone()));
+    let (start, url, internal) = d.router_start("0.1.0", |t| t.timing.shutdown_wait = WAIT);
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    // The router runs on a runtime of its own, so that its tasks can be counted.
+    let router = std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let code = rt.block_on(run_router(start, async {
+            let _ = stopped.await;
+        }));
+        let ended = Instant::now();
+        let left = rt.block_on(async {
+            let metrics = tokio::runtime::Handle::current().metrics();
+            while metrics.num_alive_tasks() > 0 && ended.elapsed() < Duration::from_secs(2) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            metrics.num_alive_tasks()
+        });
+        (code, ended, left)
+    });
+    assert!(
+        eventually(LIMIT, || async {
+            reqwest::get(format!("{url}/healthz"))
+                .await
+                .is_ok_and(|r| r.status() == 200)
+        })
+        .await
+    );
+    // Three users with claimed containers that never answer `park`.
+    let fleet = d.fleet("0.1.0", true, &format!("https://{internal}")).await;
+    for _ in 0..3 {
+        let user = UserId::from_uuid(Uuid::now_v7());
+        let lease = fleet.acquire(user, LIMIT).await.unwrap();
+        assert_eq!(lease.value.state, LeaseState::Warm);
+    }
+    control.hang_park.store(true, Ordering::Relaxed);
+    let asked = Instant::now();
+    stop.send(()).unwrap();
+    let (code, ended, left) = tokio::task::spawn_blocking(move || router.join().unwrap())
+        .await
+        .unwrap();
+    let took = ended - asked;
+    assert_eq!(code, 0);
+    assert!(
+        took >= WAIT && took < WAIT + Duration::from_secs(3),
+        "the stop took {took:?}"
+    );
+    assert_eq!(left, 0, "tasks outlived run_router");
+    fleet.shutdown().await;
 }

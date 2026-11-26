@@ -298,9 +298,11 @@ impl Fleet {
         tasks.spawn(task);
     }
 
-    /// Stops every task the fleet runs (launches, claims).
-    pub fn shutdown(&self) {
-        crate::lock(&self.tasks).abort_all();
+    /// Stops every task the fleet runs (launches, claims, "Mark gone" after a silent
+    /// answer) and waits until they have ended.
+    pub async fn shutdown(&self) {
+        let mut tasks = std::mem::take(&mut *crate::lock(&self.tasks));
+        tasks.shutdown().await;
     }
 
     /// The build claims use, and `retire_before_ms`: on one host the router's own build;

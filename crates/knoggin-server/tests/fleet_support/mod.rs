@@ -256,6 +256,47 @@ impl Deployment {
         build: &str,
         tweak: impl FnOnce(Tweak<'_>),
     ) -> Result<RouterHandle, i32> {
+        let (start, url, internal_addr) = self.router_start(build, tweak);
+        let (stop, stopped) = oneshot::channel();
+        let task = tokio::spawn(run_router(start, async {
+            let _ = stopped.await;
+        }));
+        let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(60))
+            .build()
+            .unwrap();
+        let mut handle = RouterHandle {
+            url,
+            internal: internal_addr,
+            build: build.into(),
+            stop: Some(stop),
+            task: Some(task),
+            http,
+        };
+        // Serving once `/healthz` answers; a refused start returns its code first.
+        for _ in 0..200 {
+            if handle.task.as_ref().is_some_and(JoinHandle::is_finished) {
+                let code = handle.task.take().unwrap().await.unwrap();
+                return Err(code);
+            }
+            if let Ok(r) = handle.req(reqwest::Method::GET, "/healthz").send().await
+                && r.status() == 200
+            {
+                return Ok(handle);
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("the router did not start");
+    }
+
+    /// What `router_with` starts a router with: the start, its public URL and its internal
+    /// listener's address.
+    pub fn router_start(
+        &self,
+        build: &str,
+        tweak: impl FnOnce(Tweak<'_>),
+    ) -> (RouterStart, String, SocketAddr) {
         let loopback: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let public = reserve(loopback).unwrap();
         let internal = reserve(loopback).unwrap();
@@ -308,37 +349,7 @@ impl Deployment {
             },
             timing,
         };
-        let (stop, stopped) = oneshot::channel();
-        let task = tokio::spawn(run_router(start, async {
-            let _ = stopped.await;
-        }));
-        let http = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(60))
-            .build()
-            .unwrap();
-        let mut handle = RouterHandle {
-            url,
-            internal: internal_addr,
-            build: build.into(),
-            stop: Some(stop),
-            task: Some(task),
-            http,
-        };
-        // Serving once `/healthz` answers; a refused start returns its code first.
-        for _ in 0..200 {
-            if handle.task.as_ref().is_some_and(JoinHandle::is_finished) {
-                let code = handle.task.take().unwrap().await.unwrap();
-                return Err(code);
-            }
-            if let Ok(r) = handle.req(reqwest::Method::GET, "/healthz").send().await
-                && r.status() == 200
-            {
-                return Ok(handle);
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-        panic!("the router did not start");
+        (start, url, internal_addr)
     }
 
     /// A fleet over the same records, for a test to run reconcile passes and "Mark gone"

@@ -47,10 +47,6 @@ use crate::link::{ServerIdentity, serve_tls, server_config};
 use crate::settings::{Cidr, RouterSettings};
 use crate::storage::ObjectStorage;
 
-/// How long a stopping router on one host keeps its internal listener open while its
-/// containers save.
-pub const SHUTDOWN_WAIT: Duration = Duration::from_secs(110);
-
 /// The router's config guards beyond the sign-in ones: the warnings to log, or why it
 /// refuses to start. With `one_host`, `server.trusted_proxies` must be set and must not
 /// overlap `containers.user_net_cidr`.
@@ -241,6 +237,8 @@ pub struct RouterRole {
     pub settings: RouterSettings,
     /// One host: the peer allow lists and parking everyone on a stop.
     pub one_host: bool,
+    /// How long a stop waits for parking containers and requests in flight (110 s).
+    pub shutdown_wait: Duration,
 }
 
 /// The listeners' sockets, bound by the caller but not listening: nothing can connect
@@ -510,15 +508,19 @@ async fn prepare(start: RouterStart) -> Result<(RouterRole, Listeners), String> 
             metrics,
             settings,
             one_host: one_host.is_some(),
+            shutdown_wait: timing.shutdown_wait,
         },
         listeners,
     ))
 }
 
 /// Serves until `stop` resolves, runs the reconcile loop, then stops in the order of
-/// tab "Server": the public and metrics listeners close; on one host every claimed
-/// container is asked to park and the internal listener stays open up to 110 seconds
-/// while they save; then the rest. Returns the exit code.
+/// tab "Server": the public and metrics listeners stop accepting and the reconcile loop
+/// ends; on one host every claimed container is asked to park, all at once, and the
+/// internal listener stays open while they save; the requests in flight finish. Both
+/// waits end together, `shutdown_wait` (110 seconds) after the stop. Then the internal
+/// listener closes and every task the router owns has ended before it returns the exit
+/// code.
 pub async fn run(
     role: RouterRole,
     listeners: Listeners,
@@ -531,6 +533,7 @@ pub async fn run(
         metrics,
         settings,
         one_host,
+        shutdown_wait,
     } = role;
     let identity = match ServerIdentity::from_pem(
         &settings.internal.cert,
@@ -587,80 +590,101 @@ pub async fn run(
         ));
     }
     let user_net = one_host.then_some(settings.containers.user_net_cidr);
-    let internal = tokio::spawn(serve_tls(
+    let mut internal = tokio::spawn(serve_tls(
         internal_listener,
         identity,
         broker,
         internal_admit(fleet.limits().clone(), user_net),
         wait(internal_stopped),
     ));
-    let (reconcile_stop, reconcile_stopped) = watch::channel(false);
     let reconcile = tokio::spawn(crate::reconcile::run(
         fleet.clone(),
-        wait(reconcile_stopped),
+        std::future::pending::<()>(),
     ));
     stop.await;
     tracing::info!(kind = "shutdown", "the router is stopping");
+    // Stop accepting on the public and metrics listeners; their requests in flight go on.
     let _ = public_stop.send(true);
+    // The loop starts nothing more; every step of a pass is safe to cut.
+    reconcile.abort();
+    let _ = reconcile.await;
+    let deadline = tokio::time::Instant::now() + shutdown_wait;
     if one_host {
-        park_everyone(&fleet).await;
+        park_everyone(&fleet, deadline).await;
     }
-    let _ = reconcile_stop.send(true);
+    // The requests in flight finish within the same wait.
+    let drained = tokio::time::timeout_at(deadline, async {
+        while tasks.join_next().await.is_some() {}
+    })
+    .await;
+    if drained.is_err() {
+        tracing::warn!(kind = "shutdown", "requests still in flight were cut off");
+    }
+    tasks.shutdown().await;
+    // The internal listener closes last, once the containers had their wait.
     let _ = internal_stop.send(true);
-    let _ = tokio::time::timeout(Duration::from_secs(5), reconcile).await;
-    let _ = tokio::time::timeout(Duration::from_secs(5), internal).await;
-    tasks.abort_all();
-    fleet.shutdown();
+    if tokio::time::timeout(Duration::from_secs(5), &mut internal)
+        .await
+        .is_err()
+    {
+        internal.abort();
+        let _ = internal.await;
+    }
+    fleet.shutdown().await;
     0
 }
 
-/// One host's stop: `park` with the reason `shutdown` to every claimed container, then
-/// wait up to 110 seconds until their leases are parked.
-async fn park_everyone(fleet: &Arc<Fleet>) {
-    let mut users = Vec::new();
-    let mut after = None;
-    loop {
-        let Ok(page) = fleet.leases.list_active(100, after).await else {
-            break;
-        };
-        users.extend(page.iter().copied());
-        match page.last() {
-            Some(last) if page.len() == 100 => after = Some(*last),
-            _ => break,
-        }
-    }
-    for &user in &users {
-        let Ok(Some(lease)) = fleet.leases.get(user).await else {
-            continue;
-        };
-        if let (Some(id), Some(peer)) = (
-            lease.value.container_id,
-            peer_of(
-                lease.value.address.as_deref(),
-                lease.value.cert_sha256.as_deref(),
-            ),
-        ) {
-            let _ = fleet.request_park(user, ParkReason::Shutdown).await;
-            fleet.park(id, peer, ParkReason::Shutdown).await;
-        }
-    }
-    let deadline = tokio::time::Instant::now() + SHUTDOWN_WAIT;
-    while tokio::time::Instant::now() < deadline {
-        let mut waiting = false;
-        for &user in &users {
-            if let Ok(Some(l)) = fleet.leases.get(user).await
-                && l.value.state != LeaseState::Parked
-            {
-                waiting = true;
+/// One host's stop: `park` with the reason `shutdown` to every claimed container, all at
+/// once, then wait until their leases are parked, all before `deadline`.
+async fn park_everyone(fleet: &Arc<Fleet>, deadline: tokio::time::Instant) {
+    let all = async {
+        let mut users = Vec::new();
+        let mut after = None;
+        loop {
+            let Ok(page) = fleet.leases.list_active(100, after).await else {
                 break;
+            };
+            users.extend(page.iter().copied());
+            match page.last() {
+                Some(last) if page.len() == 100 => after = Some(*last),
+                _ => break,
             }
         }
-        if !waiting {
-            return;
+        futures_util::future::join_all(users.iter().map(|&user| async move {
+            let Ok(Some(lease)) = fleet.leases.get(user).await else {
+                return;
+            };
+            if let (Some(id), Some(peer)) = (
+                lease.value.container_id,
+                peer_of(
+                    lease.value.address.as_deref(),
+                    lease.value.cert_sha256.as_deref(),
+                ),
+            ) {
+                let _ = fleet.request_park(user, ParkReason::Shutdown).await;
+                fleet.park(id, peer, ParkReason::Shutdown).await;
+            }
+        }))
+        .await;
+        loop {
+            let mut waiting = false;
+            for &user in &users {
+                if let Ok(Some(l)) = fleet.leases.get(user).await
+                    && l.value.state != LeaseState::Parked
+                {
+                    waiting = true;
+                    break;
+                }
+            }
+            if !waiting {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
+    };
+    if tokio::time::timeout_at(deadline, all).await.is_err() {
+        tracing::warn!(kind = "shutdown", "some containers did not park in time");
     }
-    tracing::warn!(kind = "shutdown", "some containers did not park in time");
 }
 
 #[cfg(test)]
