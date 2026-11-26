@@ -24,7 +24,7 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use knoggin_core::Sensitive;
 use knoggin_core::time::MILLIS_PER_DAY;
 use knoggin_http::edge::{
-    Arrival, AuthMode, EdgeConfig, EdgeParts, EdgeState, OauthConfig, Role, edge_layer,
+    Arrival, AuthMode, EdgeConfig, EdgeParts, EdgeState, OauthConfig, Rate, Role, edge_layer,
 };
 use knoggin_http::error::Code;
 use knoggin_http::local::{LocalState, mode_routes};
@@ -66,6 +66,16 @@ impl S {
     }
 
     async fn at(role: Role, public: &str, f: impl FnOnce(&mut OauthConfig)) -> Self {
+        Self::with(role, public, f, |_| {}).await
+    }
+
+    /// With the `auth.*` settings changed by `f` and the edge's by `g`.
+    async fn with(
+        role: Role,
+        public: &str,
+        f: impl FnOnce(&mut OauthConfig),
+        g: impl FnOnce(&mut EdgeConfig),
+    ) -> Self {
         let issuer = TestIssuer::start(true).await.unwrap();
         assert!(TestIssuer::start(false).await.is_err(), "test mode only");
         let mut oauth = OauthConfig {
@@ -93,6 +103,7 @@ impl S {
             c.test_mode = true;
             c.public_url = Some(public.into());
             c.oauth = Some(oauth);
+            g(c);
             config = Some(c.clone());
         })
         .await;
@@ -768,6 +779,78 @@ async fn web_sign_in_sessions_and_their_cookies() {
     let r = s.cookie(&value, Method::GET, "/v1/session", None).await;
     assert_eq!(r.json["signedIn"], false);
     assert_eq!(r.json["signedOutReason"], "expired");
+}
+
+/// Step 1 on the daemon's fixed listener: a request to a sign-in route is charged to the
+/// bucket of requests without a credential whatever cookies it carries, before its code
+/// exchange, so one login cookie and its `state` cannot drive a flood of token requests.
+/// A callback that signs in gives its token back.
+#[tokio::test]
+async fn failed_callbacks_are_charged_to_the_fixed_bucket_before_the_exchange() {
+    let s = S::with(
+        Role::Local,
+        PUBLIC,
+        |_| {},
+        |c| {
+            c.unauthenticated = Rate {
+                per_second: 0.001,
+                burst: 5.0,
+            }
+        },
+    )
+    .await;
+    // A whole sign-in costs one token, for `/auth/login`.
+    s.sign_in("alice").await.unwrap();
+    assert_eq!(s.issuer.token_requests(), 1);
+    // One more login (4 tokens left, 3 after it), then callbacks with made-up codes.
+    let (login, path, _) = s.begin("alice", "/").await;
+    let state = path
+        .split(['?', '&'])
+        .find_map(|p| p.strip_prefix("state="))
+        .unwrap()
+        .to_owned();
+    let only_login = format!("__Host-login={login}");
+    let with_session = format!("__Host-login={login}; __Host-session=stale");
+    for (i, cookie) in [&only_login, &with_session, &only_login]
+        .into_iter()
+        .enumerate()
+    {
+        let r = s
+            .call(
+                Method::GET,
+                &format!("/auth/callback?code=made-up-{i}&state={state}"),
+                None,
+                &[("cookie", cookie)],
+            )
+            .await;
+        assert_eq!(location(&r), "/signin?error=provider_error", "{i}");
+    }
+    assert_eq!(s.issuer.token_requests(), 4);
+    // The bucket is empty: the next failed callback is refused before any exchange.
+    for cookie in [&only_login, &with_session] {
+        let r = s
+            .call(
+                Method::GET,
+                &format!("/auth/callback?code=made-up-9&state={state}"),
+                None,
+                &[("cookie", cookie)],
+            )
+            .await;
+        assert_eq!(r.error(), Code::RateLimited, "{}", r.json);
+        assert!(r.headers.contains_key(header::RETRY_AFTER));
+    }
+    assert_eq!(
+        s.issuer.token_requests(),
+        4,
+        "no request reached the token endpoint"
+    );
+    // So are a login and a request with a cookie that is not the session cookie.
+    let r = s.call(Method::GET, "/auth/login", None, &[]).await;
+    assert_eq!(r.error(), Code::RateLimited);
+    let r = s
+        .call(Method::GET, "/v1/session", None, &[("cookie", "other=1")])
+        .await;
+    assert_eq!(r.error(), Code::RateLimited);
 }
 
 #[tokio::test]

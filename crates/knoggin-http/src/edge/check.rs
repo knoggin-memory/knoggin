@@ -147,14 +147,12 @@ pub struct Caller {
 }
 
 /// Whether a request carries a credential that this mode reads: an `Authorization` header,
-/// or in mode `oauth` a cookie (step 8). In mode `none` a cookie is ignored, so a request
-/// with only a cookie is charged to the fixed listener's bucket at step 1.
-pub(super) fn sends_credential(map: &HeaderMap, mode: AuthMode) -> bool {
+/// or in mode `oauth` the session cookie named `session_cookie` (step 8). Any other cookie,
+/// the login cookie included, is no credential, so a request with only such a cookie is
+/// charged to the fixed listener's bucket at step 1.
+pub(super) fn sends_credential(map: &HeaderMap, session_cookie: Option<&str>) -> bool {
     map.contains_key(header::AUTHORIZATION)
-        || match mode {
-            AuthMode::Oauth => map.contains_key(header::COOKIE),
-            AuthMode::None => false,
-        }
+        || session_cookie.is_some_and(|name| cookie_value(map, name).is_some_and(|v| !v.is_empty()))
 }
 
 /// What a request presented, kept so that a transfer can be checked again.
@@ -187,7 +185,7 @@ impl Presented {
     fn read(arrival: Arrival, request: &Request, session_cookie: Option<&str>) -> Self {
         let map = request.headers();
         let method = request.method();
-        let mut p = Self::headers(arrival, map, session_cookie.is_some());
+        let mut p = Self::headers(arrival, map, session_cookie);
         if p.bearer.is_none()
             && !p.malformed
             && matches!(p.arrival, Arrival::Fixed { .. } | Arrival::Public)
@@ -203,12 +201,7 @@ impl Presented {
         p
     }
 
-    fn headers(arrival: Arrival, map: &HeaderMap, oauth: bool) -> Self {
-        let mode = if oauth {
-            AuthMode::Oauth
-        } else {
-            AuthMode::None
-        };
+    fn headers(arrival: Arrival, map: &HeaderMap, session_cookie: Option<&str>) -> Self {
         let mut values = map.get_all(header::AUTHORIZATION).iter();
         let (bearer, malformed) = match (values.next(), values.next()) {
             (None, _) => (None, false),
@@ -229,7 +222,7 @@ impl Presented {
             arrival,
             bearer,
             malformed,
-            sent: sends_credential(map, mode),
+            sent: sends_credential(map, session_cookie),
             cookie: None,
             bare_write: false,
         }
@@ -606,7 +599,7 @@ impl EdgeState {
     }
 
     /// The name of the session cookie, in mode `oauth`.
-    fn session_cookie(&self) -> Option<&'static str> {
+    pub(super) fn session_cookie(&self) -> Option<&'static str> {
         self.inner().oauth.as_ref().map(|o| o.cookies().session)
     }
 
@@ -826,6 +819,15 @@ pub(crate) async fn control(
     };
     let access = access(request.method(), &route(&request));
     if access == Access::Open {
+        // Step 1 for a route that needs no credential: a credential sent to it is never
+        // checked, so on the fixed listener it is charged as a bare request is at entry.
+        // A successful sign-in gives its token back (`signin::callback`).
+        if matches!(arrival, Arrival::Fixed { .. })
+            && sends_credential(request.headers(), edge.session_cookie())
+            && let Err(e) = edge.inner().unauthenticated.take(&(), "address")
+        {
+            return e.into_response();
+        }
         return next.run(request).await;
     }
     let p = Presented::read(arrival, &request, edge.session_cookie());
@@ -1169,28 +1171,28 @@ mod tests {
     fn authorization_forms() {
         let mut map = HeaderMap::new();
         map.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic abc"));
-        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, None).malformed);
         map.insert(
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer abc"),
         );
-        let p = Presented::headers(Arrival::Public, &map, false);
+        let p = Presented::headers(Arrival::Public, &map, None);
         assert_eq!(p.bearer.unwrap().expose(), "abc");
         for scheme in ["bearer", "BEARER", "bEaReR"] {
             let value = HeaderValue::from_str(&format!("{scheme} abc")).unwrap();
             map.insert(header::AUTHORIZATION, value);
-            let p = Presented::headers(Arrival::Public, &map, false);
+            let p = Presented::headers(Arrival::Public, &map, None);
             assert_eq!(p.bearer.unwrap().expose(), "abc", "{scheme}");
         }
         map.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer "));
-        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, None).malformed);
         map.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearerabc"));
-        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, None).malformed);
         map.append(
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer def"),
         );
-        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, None).malformed);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1266,7 +1268,7 @@ mod tests {
         let web = Arrival::Web {
             authority: "127.0.0.1:1".into(),
         };
-        let p = Presented::headers(web, &map, false);
+        let p = Presented::headers(web, &map, None);
         clock.advance(23 * MILLIS_PER_DAY / 24);
         assert!(edge.recheck(&p, personal).await.is_ok());
         clock.advance(2 * MILLIS_PER_DAY / 24);

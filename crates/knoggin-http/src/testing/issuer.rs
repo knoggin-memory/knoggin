@@ -5,6 +5,7 @@
 //! tokens with any claims a test wants. Never use it for real users.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use aws_lc_rs::encoding::{AsDer, Pkcs8V1Der};
@@ -52,6 +53,8 @@ struct Shared {
     codes: Mutex<HashMap<String, Grant>>,
     /// Every secret the issuer saw or made, for the log-marker test.
     seen: Mutex<Vec<String>>,
+    /// Requests that reached the token endpoint.
+    token_requests: AtomicUsize,
 }
 
 /// A running test issuer. Dropping it stops it.
@@ -189,6 +192,7 @@ impl TestIssuer {
             keys: Mutex::new(vec![rsa_key(), ec_key()]),
             codes: Mutex::new(HashMap::new()),
             seen: Mutex::new(Vec::new()),
+            token_requests: AtomicUsize::new(0),
         });
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(discovery))
@@ -264,6 +268,11 @@ impl TestIssuer {
         for k in keys.iter_mut().filter(|k| k.kid == kid) {
             k.published = false;
         }
+    }
+
+    /// How many requests reached the token endpoint, whatever their outcome.
+    pub fn token_requests(&self) -> usize {
+        self.shared.token_requests.load(Ordering::Relaxed)
     }
 
     /// Every code, PKCE verifier and challenge, nonce, state and token it saw or made.
@@ -397,6 +406,7 @@ async fn token(
     headers: HeaderMap,
     Form(f): Form<HashMap<String, String>>,
 ) -> Response {
+    s.token_requests.fetch_add(1, Ordering::Relaxed);
     let (client_id, secret) = match (basic(&headers), f.get("client_id"), f.get("client_secret")) {
         (Some(pair), _, _) => pair,
         (None, Some(id), Some(secret)) => (id.clone(), secret.clone()),

@@ -216,10 +216,17 @@ async fn callback(
     // The login cookie is cleared whatever happens.
     let clear = clear_cookie(c.login, c.attributes);
     match finish_sign_in(&edge, o, request.uri(), request.headers()).await {
-        Ok((session, to)) => redirect(
-            &to,
-            [set_cookie(c.session, session.expose(), c.attributes), clear],
-        ),
+        Ok((session, to)) => {
+            // Only a callback that does not sign in counts against the fixed listener's
+            // bucket (step 1), which charged every callback before its code exchange.
+            if matches!(arrival, Arrival::Fixed { .. }) {
+                edge.inner().unauthenticated.give_back(&());
+            }
+            redirect(
+                &to,
+                [set_cookie(c.session, session.expose(), c.attributes), clear],
+            )
+        }
         Err(Failed::Code(code)) => {
             tracing::info!(kind = "sign_in_failed", code, "a web sign-in failed");
             redirect(&format!("/signin?error={code}"), [clear])

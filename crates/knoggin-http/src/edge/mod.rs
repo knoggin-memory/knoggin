@@ -365,7 +365,7 @@ async fn entry(State(edge): State<EdgeState>, mut request: Request, next: Next) 
             let charged = match arrival {
                 Arrival::Fixed { .. }
                     if !ui::is_ui(&request)
-                        && !check::sends_credential(request.headers(), edge.0.config.auth_mode) =>
+                        && !check::sends_credential(request.headers(), edge.session_cookie()) =>
                 {
                     edge.0.unauthenticated.take(&(), "address")
                 }

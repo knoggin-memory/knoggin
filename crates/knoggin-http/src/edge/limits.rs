@@ -76,6 +76,16 @@ impl<K: Hash + Eq + Clone> Buckets<K> {
     }
 }
 
+impl<K: Hash + Eq> Buckets<K> {
+    /// Gives back one token that `take` took, for a request that turned out not to count.
+    pub(crate) fn give_back(&self, key: &K) {
+        let mut map = self.map.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(b) = map.get_mut(key) {
+            b.tokens = (b.tokens + 1.0).min(self.rate.burst);
+        }
+    }
+}
+
 /// `rate_limited` with `Retry-After`.
 pub(crate) fn rate_limited(seconds: u32) -> ApiError {
     ApiError::new(Code::RateLimited, "Too many requests; slow down").with_retry_after(seconds)
