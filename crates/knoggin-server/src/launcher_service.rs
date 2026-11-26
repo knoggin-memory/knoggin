@@ -442,9 +442,27 @@ impl LauncherService {
         ))
         .await
         .map_err(|_| unavailable("a container could not be created"))?;
-        timed(self.docker.start_container(&created.id, None))
+        if timed(self.docker.start_container(&created.id, None))
             .await
-            .map_err(|_| unavailable("a container could not be started"))?;
+            .is_err()
+        {
+            // A container left `created` would never end, and its network and range would
+            // never be freed: removed now, the tidy-up takes the empty network.
+            let options = RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            };
+            if timed(self.docker.remove_container(&created.id, Some(options)))
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    kind = "docker",
+                    "a container that did not start could not be removed"
+                );
+            }
+            return Err(unavailable("a container could not be started"));
+        }
         let inspect = timed(self.docker.inspect_container(&created.id, None))
             .await
             .map_err(|_| unavailable("a container could not be inspected"))?;

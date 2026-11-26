@@ -68,6 +68,8 @@ struct Fake {
     /// Every changing call: method and path.
     changes: Vec<(String, String)>,
     next: u32,
+    /// Every container start fails.
+    fail_start: bool,
 }
 
 type Shared = Arc<Mutex<Fake>>;
@@ -251,6 +253,9 @@ async fn docker(
             let Some(id) = f.find(id) else {
                 return status(StatusCode::NOT_FOUND, "no such container");
             };
+            if f.fail_start {
+                return status(StatusCode::INTERNAL_SERVER_ERROR, "cannot start");
+            }
             let net = f.containers[&id].body["HostConfig"]["NetworkMode"]
                 .as_str()
                 .map(str::to_owned);
@@ -722,6 +727,53 @@ async fn a_failed_container_is_kept_ten_minutes_for_the_router_to_ask() {
         .tidy(Timestamp::from_millis(finished.millis() + 11 * 60_000))
         .await;
     assert!(!r.fake.lock().unwrap().containers.contains_key(&handle));
+    r.foreign_untouched();
+}
+
+#[tokio::test]
+async fn a_container_that_cannot_start_is_removed_and_its_range_freed() {
+    let r = rig().await;
+    r.fake.lock().unwrap().fail_start = true;
+    let id = Uuid::now_v7();
+    let (code, _) = r
+        .call(Method::POST, "/v1/containers", TOKEN, Some(create_body(id)))
+        .await;
+    assert_eq!(code, 503);
+    {
+        let f = r.fake.lock().unwrap();
+        assert!(
+            !f.containers
+                .values()
+                .any(|c| c.labels.get("knoggin.container-id") == Some(&id.to_string())),
+            "the container that did not start is gone"
+        );
+    }
+    // Its network is empty: after a minute the tidy-up removes it and frees its range.
+    let net = |r: &Rig| {
+        r.fake
+            .lock()
+            .unwrap()
+            .networks
+            .keys()
+            .any(|n| n.ends_with(&id.to_string()))
+    };
+    assert!(net(&r));
+    let now = Timestamp::parse_rfc3339("2027-01-15T08:00:00Z").unwrap();
+    r.service.tidy(now).await;
+    r.service
+        .tidy(Timestamp::from_millis(now.millis() + 2 * 60_000))
+        .await;
+    assert!(!net(&r));
+    r.fake.lock().unwrap().fail_start = false;
+    let (code, created) = r
+        .call(
+            Method::POST,
+            "/v1/containers",
+            TOKEN,
+            Some(create_body(Uuid::now_v7())),
+        )
+        .await;
+    assert_eq!(code, 200, "{created}");
     r.foreign_untouched();
 }
 
