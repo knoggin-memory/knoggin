@@ -105,3 +105,24 @@ the MCP client names an open store has seen (at most 32, with when), for `/v1/ui
   host methods above.
 - `src/edge/`, `src/local/`: own modules; `edge_layer(edge, store_layer(host), mode_routes)`.
 - Store-status route: `host.store_status(id)` plus `host.model_state()`.
+
+## The edge layer (`edge`, `local`)
+
+- `EdgeState::new(EdgeConfig, EdgeParts)`: the settings (`EdgeConfig::local(own_url, version)`
+  for the daemon's defaults) and the state database, field keys, key provider, clock, and on
+  the daemon the store host and `LocalSessions`. The one `local` user must exist first:
+  `local::ensure_local_user(users, keys, now)`.
+- `edge_layer(edge, store_layer(host), local::mode_routes(LocalState { .. }))` is the daemon's
+  whole API. Every request must carry an `edge::Arrival` extension: the listeners in
+  `edge::listen` (`serve_tcp(listener, router, arrival, ListenConfig, shutdown)`,
+  `serve_unix(..)`) tag it; a test inserts it by hand.
+- Control and mode handlers read `Extension<edge::Caller>`; store routes get the
+  `RequestContext`. Milestone 5 adds OAuth tokens and cookie sessions at the marked steps of
+  `edge::check` (`Credential` gains variants; nothing else changes shape).
+- `local`: `prepare_run_dir`, `bind_socket`, `bind_loopback(port)` (127.0.0.1 and [::1]),
+  `web_label` + `web_authority` (the web listener's origin), `LocalSessions`, `erase_step`
+  (now and hourly), `locked_router(reason, version, docs_url)`.
+- `edge::metrics_router(PrometheusHandle)` serves `/metrics` for `metrics.bind`; the binary
+  installs the recorder and its 5-second upkeep task.
+- `docs/openapi.json` is refreshed with
+  `cargo nextest run -p knoggin-http --run-ignored only -E 'test(write_openapi)'`.
