@@ -85,6 +85,54 @@ fn web(
     (status, json)
 }
 
+/// A key in lower-case hex and in base64 (standard and URL-safe, padded and not).
+fn encodings(key: &[u8]) -> Vec<String> {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+    let hex = key.iter().map(|b| format!("{b:02x}")).collect();
+    vec![
+        hex,
+        STANDARD.encode(key),
+        STANDARD_NO_PAD.encode(key),
+        URL_SAFE.encode(key),
+        URL_SAFE_NO_PAD.encode(key),
+    ]
+}
+
+/// The master keys from the key file, and the data key of every container file under the
+/// data folder, unwrapped with them.
+fn key_bytes(home: &Home) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
+    use base64::Engine as _;
+    use knoggin_crypto::{KeyProvider as _, LocalKeyProvider, MasterKeySet, container};
+    let text = std::fs::read(home.root().join("master.key")).unwrap();
+    let set: Value = serde_json::from_slice(&text).unwrap();
+    let master = set["keys"]
+        .as_object()
+        .unwrap()
+        .values()
+        .map(|k| {
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(k.as_str().unwrap())
+                .unwrap()
+        })
+        .collect();
+    let provider = LocalKeyProvider::new(MasterKeySet::from_json(&text).unwrap());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap();
+    let mut data = Vec::new();
+    for (path, bytes) in home.data_bytes() {
+        if path.extension().is_some_and(|e| e == "kgs") {
+            let (header, _) = container::read_header(&bytes).unwrap();
+            let key = rt
+                .block_on(provider.unwrap(header.store_id, &header.wrapped_key()))
+                .unwrap();
+            data.push(key.expose().to_vec());
+        }
+    }
+    (master, data)
+}
+
 #[test]
 fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
     let metrics = free_port();
@@ -94,86 +142,116 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
     let mut d = home.daemon();
     let mut stderr = String::new();
     let mut tokens: Vec<String> = Vec::new();
-    let ok = |r: &support::Resp, what: &str| {
-        assert!(r.status < 500, "{what}: {} {}", r.status, r.text())
+    // Each call must get the status it is expected to get: a success path proves itself.
+    let want = |r: &support::Resp, status: u16, what: &str| {
+        assert_eq!(r.status, status, "{what}: {}", r.text());
     };
 
     // Store routes on the personal store, over the socket.
     let s = |m: &str, p: &str, b: Option<Value>| {
         home.sock(m, p, &[("Knoggin-Namespace", NAMESPACE)], b.as_ref())
     };
-    ok(
+    want(
         &s("POST", "/v1/namespaces", Some(json!({ "name": NAMESPACE }))),
+        201,
+        "create namespace",
+    );
+    want(
+        &s(
+            "POST",
+            "/v1/namespaces",
+            Some(json!({ "name": format!("{NAMESPACE}d") })),
+        ),
+        201,
         "create namespace",
     );
     let memory = json!({ "summary": format!("{SUMMARY} about {QUERY}"), "fullText": FULL, "tags": [TAG],
         "entities": [ENTITY], "topics": [TOPIC], "emotions": [EMOTION] });
     let r = s("POST", "/v1/memories", Some(memory.clone()));
-    ok(&r, "save");
+    want(&r, 201, "save");
     let id = r.json()["id"].as_str().unwrap().to_owned();
+    let r = s("POST", "/v1/memories", Some(memory.clone()));
+    want(&r, 201, "save");
+    let third = r.json()["id"].as_str().unwrap().to_owned();
     let r = s(
         "POST",
         "/v1/memories/batch",
         Some(json!({ "memories": [memory.clone(), memory.clone()] })),
     );
-    ok(&r, "batch");
+    want(&r, 200, "batch");
     let other = r.json()["results"][0]["memory"]["id"]
         .as_str()
         .unwrap_or(&id)
         .to_owned();
-    for (m, p, b) in [
-        ("GET", format!("/v1/memories?tag={TAG}"), None),
-        ("GET", format!("/v1/memories/{id}"), None),
+    for (m, p, b, status) in [
+        ("GET", format!("/v1/memories?tag={TAG}"), None, 200),
+        ("GET", format!("/v1/memories/{id}"), None, 200),
         (
             "POST",
             format!("/v1/memories/{id}/reinforce"),
             Some(json!({ "quality": 3 })),
+            200,
         ),
         (
             "POST",
             format!("/v1/memories/{id}/similar"),
             Some(json!({})),
+            200,
         ),
         (
             "POST",
             "/v1/recall".into(),
             Some(json!({ "query": QUERY, "entities": [ENTITY], "tags": [TAG] })),
+            200,
         ),
-        ("GET", format!("/v1/context?topic={QUERY}"), None),
-        ("GET", "/v1/namespaces".into(), None),
-        ("GET", format!("/v1/namespaces/{NAMESPACE}/stats"), None),
-        ("GET", format!("/v1/tags?prefix={TAG}"), None),
+        ("GET", format!("/v1/context?topic={QUERY}"), None, 200),
+        ("GET", "/v1/namespaces".into(), None, 200),
+        (
+            "GET",
+            format!("/v1/namespaces/{NAMESPACE}/stats"),
+            None,
+            200,
+        ),
+        ("GET", format!("/v1/tags?prefix={TAG}"), None, 200),
         (
             "POST",
             format!("/v1/memories/{other}/supersede"),
             Some(json!({ "summary": format!("{SUMMARY} again") })),
+            201,
         ),
         (
             "POST",
             "/v1/memories/move".into(),
             Some(json!({ "ids": [other], "destinationNamespace": "default" })),
+            200,
         ),
         (
             "PUT",
             format!("/v1/namespaces/{NAMESPACE}/policy"),
-            Some(json!({ "policy": {
+            Some(json!({
             "initialStability": 3.7145, "defaultDifficulty": 5.0,
             "phaseThresholds": { "fullToSummary": 0.7, "summaryToGhost": 0.3, "ghostToDelete": 0.05 },
-            "permastoreThreshold": 1500.0, "decayRateMultiplier": null } })),
+            "permastoreThreshold": 1500.0, "decayRateMultiplier": null })),
+            200,
         ),
+        // A call that fails, with markers in it.
         (
             "POST",
             "/v1/memories".into(),
             Some(json!({ "summary": "", "tags": [format!("{TAG}!bad")] })),
+            400,
         ),
-        ("GET", "/v1/export".into(), None),
+        ("GET", "/v1/export".into(), None, 200),
         (
             "POST",
             "/v1/memories/forget".into(),
             Some(json!({ "ids": [other] })),
+            200,
         ),
+        ("DELETE", format!("/v1/memories/{third}"), None, 200),
+        ("DELETE", format!("/v1/namespaces/{NAMESPACE}d"), None, 200),
     ] {
-        ok(&s(m, &p, b), &p);
+        want(&s(m, &p, b), status, &format!("{m} {p}"));
     }
     let line = json!({ "type": "memory", "id": "0193a1f2-7c3e-7b1a-9f00-2b6f3c1d9e11", "namespace": NAMESPACE,
         "createdAt": "2026-01-01T00:00:00.000Z", "phase": "full", "summary": SUMMARY, "fullText": FULL, "tags": [TAG] });
@@ -186,7 +264,7 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
         &[("Content-Type", "application/x-ndjson")],
         None,
     );
-    ok(&r, "empty import");
+    want(&r, 400, "empty import");
     let mut raw = std::os::unix::net::UnixStream::connect(home.socket()).unwrap();
     raw.write_all(
         format!(
@@ -210,94 +288,113 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
         "/healthz",
         "/readyz",
     ] {
-        ok(&home.sock("GET", p, &[], None), p);
+        want(&home.sock("GET", p, &[], None), 200, p);
     }
-    let app = home
-        .sock("POST", "/v1/stores", &[], Some(&json!({ "name": APP })))
-        .json();
+    // The one user's routes. The daemon has no other user, so removing one is refused:
+    // an admin cannot remove themselves.
+    let user = home.sock("GET", "/v1/users", &[], None).json()["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    want(
+        &home.sock("GET", &format!("/v1/users/{user}/stores"), &[], None),
+        200,
+        "user stores",
+    );
+    want(
+        &home.sock("DELETE", &format!("/v1/users/{user}"), &[], None),
+        400,
+        "remove user",
+    );
+    let r = home.sock("POST", "/v1/stores", &[], Some(&json!({ "name": APP })));
+    want(&r, 201, "create app");
+    let app = r.json();
     let app_id = app["id"].as_str().unwrap().to_owned();
-    ok(
+    want(
         &home.sock(
             "PATCH",
             &format!("/v1/stores/{app_id}"),
             &[],
             Some(&json!({ "name": format!("{APP}x") })),
         ),
+        200,
         "rename",
     );
-    ok(
+    want(
         &home.sock(
             "POST",
             "/v1/stores",
             &[],
             Some(&json!({ "name": format!("{APP}x") })),
         ),
+        409,
         "duplicate app",
     );
-    let key = home
-        .sock(
-            "POST",
-            &format!("/v1/stores/{app_id}/keys"),
-            &[],
-            Some(&json!({ "name": KEY_NAME })),
-        )
-        .json();
+    let r = home.sock(
+        "POST",
+        &format!("/v1/stores/{app_id}/keys"),
+        &[],
+        Some(&json!({ "name": KEY_NAME })),
+    );
+    want(&r, 201, "create key");
+    let key = r.json();
     let secret = key["secret"].as_str().unwrap().to_owned();
     tokens.push(secret.clone());
     let key_id = key["key"]["id"].as_str().unwrap().to_owned();
     let auth = format!("Bearer {secret}");
-    ok(
+    want(
         &home.tcp(
             "POST",
             "/v1/memories",
             &[("Authorization", &auth)],
             Some(&memory),
         ),
+        201,
         "key save",
     );
-    ok(
+    want(
         &home.tcp("GET", "/v1/session", &[("Authorization", &auth)], None),
+        200,
         "key session",
     );
-    ok(
+    want(
         &home.tcp(
             "GET",
             "/v1/memories",
             &[("Authorization", "Bearer knoggin_live_mkrbadtokenq12")],
             None,
         ),
+        401,
         "bad key",
     );
     tokens.push("mkrbadtokenq12".into());
-    let rotated = home
-        .sock(
-            "POST",
-            &format!("/v1/stores/{app_id}/keys/{key_id}/rotate"),
-            &[],
-            Some(&json!({})),
-        )
-        .json();
+    let r = home.sock(
+        "POST",
+        &format!("/v1/stores/{app_id}/keys/{key_id}/rotate"),
+        &[],
+        Some(&json!({})),
+    );
+    want(&r, 201, "rotate key");
+    let rotated = r.json();
     tokens.push(rotated["secret"].as_str().unwrap().to_owned());
     let new_id = rotated["key"]["id"].as_str().unwrap().to_owned();
-    for (m, p) in [
-        ("GET", format!("/v1/stores/{app_id}")),
-        ("GET", format!("/v1/stores/{app_id}/keys")),
-        ("GET", format!("/v1/stores/{app_id}/status")),
-        ("GET", format!("/v1/admin/stores/{app_id}/snapshots")),
-        ("DELETE", format!("/v1/stores/{app_id}/keys/{new_id}")),
-        ("DELETE", format!("/v1/stores/{app_id}")),
-        ("POST", format!("/v1/stores/{app_id}/undelete")),
+    for (m, p, status) in [
+        ("GET", format!("/v1/stores/{app_id}"), 200),
+        ("GET", format!("/v1/stores/{app_id}/keys"), 200),
+        ("GET", format!("/v1/stores/{app_id}/status"), 200),
+        // The snapshot list exists on a server only.
+        ("GET", format!("/v1/admin/stores/{app_id}/snapshots"), 404),
+        ("DELETE", format!("/v1/stores/{app_id}/keys/{new_id}"), 204),
+        ("DELETE", format!("/v1/stores/{app_id}"), 200),
+        ("POST", format!("/v1/stores/{app_id}/undelete"), 200),
     ] {
-        ok(&home.sock(m, &p, &[], None), &p);
+        want(&home.sock(m, &p, &[], None), status, &format!("{m} {p}"));
     }
 
     // The local web session: a one-time code over the socket, a session on the web listener.
-    let url = home
-        .sock("POST", "/v1/local/browser-code", &[], None)
-        .json()["url"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let r = home.sock("POST", "/v1/local/browser-code", &[], None);
+    want(&r, 200, "browser code");
+    let url = r.json()["url"].as_str().unwrap().to_owned();
     let (origin, code) = url.split_once("/?t=").unwrap();
     tokens.push(code.to_owned());
     let (st, session) = web(
@@ -328,18 +425,63 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
     );
     let (st, _) = web(origin, "DELETE", "/v1/account", None, None);
     assert!(st >= 400);
-    ok(
-        &home.sock(
+    let delete_account = || {
+        home.sock(
             "DELETE",
             "/v1/account",
             &[],
             Some(&json!({ "confirm": "delete my data" })),
-        ),
-        "delete account",
-    );
-    ok(
+        )
+    };
+    // The user undelete is an admin route, which a deleted account cannot call (410), and
+    // the one user cannot be removed by an admin; so on the daemon it can only refuse.
+    let undelete_user = || home.sock("POST", &format!("/v1/users/{user}/undelete"), &[], None);
+    want(&delete_account(), 200, "delete account");
+    want(&undelete_user(), 410, "undelete user while deleted");
+    want(
         &home.sock("POST", "/v1/account/undelete", &[], None),
+        200,
         "undelete account",
+    );
+    want(&undelete_user(), 409, "undelete a user that is not deleted");
+
+    // The MCP endpoint over HTTP: no stream, and the older revision with its session.
+    let mcp_headers = [("Accept", "application/json, text/event-stream")];
+    want(
+        &home.sock("GET", "/mcp", &mcp_headers, None),
+        405,
+        "GET /mcp",
+    );
+    want(
+        &home.sock("DELETE", "/mcp", &mcp_headers, None),
+        405,
+        "DELETE /mcp without a session",
+    );
+    let init = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+        "protocolVersion": "2025-06-18", "capabilities": {},
+        "clientInfo": { "name": CLIENT, "version": "1" } } });
+    let r = home.sock("POST", "/mcp", &mcp_headers, Some(&init));
+    want(&r, 200, "legacy initialize");
+    let sid = r
+        .headers
+        .lines()
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.eq_ignore_ascii_case("mcp-session-id")
+                .then(|| v.trim().to_owned())
+        })
+        .unwrap();
+    tokens.push(sid.clone());
+    let session = [mcp_headers[0], ("Mcp-Session-Id", sid.as_str())];
+    let call = json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": { "name": "store_memory", "arguments": memory.clone() } });
+    let r = home.sock("POST", "/mcp", &session, Some(&call));
+    want(&r, 200, "legacy tool call");
+    assert!(r.json()["result"]["isError"].is_null(), "{}", r.text());
+    want(
+        &home.sock("DELETE", "/mcp", &session, None),
+        200,
+        "DELETE /mcp",
     );
 
     // Every tool, over the bridge, with the client's name as a marker.
@@ -437,6 +579,33 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
         "trace logging did not run"
     );
     let all = format!("{}\n{log}\n{stderr}\n{page}", d.stderr());
+    // The master key set and every data key (of each snapshot and of the state file), in
+    // hex and in base64: none of them may be in a log or the metrics page.
+    let (master, data) = key_bytes(&home);
+    assert!(
+        !master.is_empty() && data.len() >= 2,
+        "{} data keys",
+        data.len()
+    );
+    for key in master.iter().chain(&data) {
+        for form in encodings(key) {
+            assert!(
+                !all.contains(&form),
+                "a key is in the logs or the metrics page"
+            );
+        }
+    }
+    for key in &master {
+        for (path, bytes) in home.data_bytes() {
+            for form in encodings(key) {
+                assert!(
+                    !String::from_utf8_lossy(&bytes).contains(&form),
+                    "the master key is in {}",
+                    path.display()
+                );
+            }
+        }
+    }
     let mut markers: Vec<String> = [
         SUMMARY, FULL, TAG, ENTITY, TOPIC, EMOTION, NAMESPACE, QUERY, APP, KEY_NAME, CLIENT,
     ]

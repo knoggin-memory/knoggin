@@ -300,7 +300,10 @@ fn refused(home: &Home) -> String {
         if std::time::Instant::now() > deadline {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("the daemon started: {}", std::fs::read_to_string(&err).unwrap());
+            panic!(
+                "the daemon started: {}",
+                std::fs::read_to_string(&err).unwrap()
+            );
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     };
@@ -379,13 +382,14 @@ fn start_up_refuses_what_step_3_refuses() {
         &Home::new()
             .with("KNOGGIN_AUTH__MODE", "oauth")
             .with("KNOGGIN_AUTH__ALLOWED_EMAILS", "me@example.com")
-            .with("KNOGGIN_SERVER__PUBLIC_URL", "http://localhost.example:7690"),
+            .with(
+                "KNOGGIN_SERVER__PUBLIC_URL",
+                "http://localhost.example:7690",
+            ),
     );
     assert!(e.contains("public_url"), "{e}");
     // Test mode and a public address that is not loopback.
-    let e = refused(
-        &Home::new().with("KNOGGIN_SERVER__PUBLIC_URL", "https://memory.example.com"),
-    );
+    let e = refused(&Home::new().with("KNOGGIN_SERVER__PUBLIC_URL", "https://memory.example.com"));
     assert!(e.contains("test mode refuses"), "{e}");
 }
 
@@ -414,10 +418,7 @@ fn an_idle_daemon_uses_no_cpu() {
     let before = cpu_seconds(pid);
     std::thread::sleep(std::time::Duration::from_secs(5));
     let used = cpu_seconds(pid) - before;
-    assert!(
-        used < 1.5,
-        "the idle daemon used {used:.2} s of CPU in 5 s"
-    );
+    assert!(used < 1.5, "the idle daemon used {used:.2} s of CPU in 5 s");
     assert_eq!(d.stop(), 0);
 }
 
