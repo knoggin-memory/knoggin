@@ -112,13 +112,13 @@ resource "aws_iam_role_policy" "router" {
         Condition = local.in_cluster
       },
       {
-        Sid      = "EcsTagStartedTask"
-        Effect   = "Allow"
-        Action   = "ecs:TagResource"
-        Resource = local.tasks
-        Condition = merge(local.in_cluster, {
-          StringEquals = { "ecs:CreateAction" = "RunTask" }
-        })
+        # TagResource on a task offers no ecs:cluster key (only daemons do), so that
+        # condition would never match; the task ARN names this cluster instead.
+        Sid       = "EcsTagStartedTask"
+        Effect    = "Allow"
+        Action    = "ecs:TagResource"
+        Resource  = local.tasks
+        Condition = { StringEquals = { "ecs:CreateAction" = "RunTask" } }
       },
       {
         Sid       = "EcsUserTasks"

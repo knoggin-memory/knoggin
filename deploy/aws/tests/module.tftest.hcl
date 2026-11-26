@@ -361,9 +361,17 @@ run "router_permissions" {
   assert {
     condition = alltrue([
       for s in jsondecode(aws_iam_role_policy.router.policy).Statement : try(s.Condition.ArnEquals["ecs:cluster"], "") == aws_ecs_cluster.this.arn
-      if anytrue([for a in flatten([s.Action]) : startswith(a, "ecs:")])
+      if anytrue([for a in flatten([s.Action]) : startswith(a, "ecs:")]) && !contains(flatten([s.Action]), "ecs:TagResource")
     ])
-    error_message = "Every ECS statement of the router carries the condition ecs:cluster."
+    error_message = "Every ECS statement of the router but the tagging one carries the condition ecs:cluster."
+  }
+  # TagResource on a task has no ecs:cluster key; the task ARN keeps it to this cluster.
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.router.policy).Statement : [s.Action, s.Resource, s.Condition]
+      if contains(flatten([s.Action]), "ecs:TagResource")
+    ] == [["ecs:TagResource", "arn:aws:ecs:eu-west-1:111122223333:task/knoggin/*", { StringEquals = { "ecs:CreateAction" = "RunTask" } }]]
+    error_message = "The router tags only the tasks it starts, and only in this cluster."
   }
   assert {
     condition     = !contains(flatten([for s in jsondecode(aws_iam_role_policy.router.policy).Statement : s.Action]), "dynamodb:PutItem")
