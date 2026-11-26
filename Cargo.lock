@@ -1290,7 +1290,6 @@ dependencies = [
  "futures-util",
  "http",
  "http-body-util",
- "hyper",
  "hyper-util",
  "knoggin-core",
  "knoggin-crypto",

@@ -19,7 +19,6 @@ bytes = { workspace = true }
 futures-util = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
-hyper = { workspace = true }
 hyper-util = { workspace = true }
 knoggin-core = { path = "../knoggin-core" }
 knoggin-crypto = { path = "../knoggin-crypto" }
