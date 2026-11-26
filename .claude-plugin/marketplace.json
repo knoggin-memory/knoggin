@@ -1,0 +1,16 @@
+{
+  "name": "knoggin",
+  "description": "The Knoggin plugin: long-term memory from your own Knoggin install or server.",
+  "owner": {
+    "name": "Knoggin",
+    "url": "https://github.com/knoggin-memory/knoggin"
+  },
+  "plugins": [
+    {
+      "name": "knoggin",
+      "description": "Long-term memory from Knoggin. Recall is read-only, and every save is shown to you first and waits for your yes.",
+      "source": "./integrations/plugin",
+      "category": "productivity"
+    }
+  ]
+}

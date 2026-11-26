@@ -1,0 +1,20 @@
+{
+  "name": "knoggin",
+  "interface": {
+    "displayName": "Knoggin"
+  },
+  "plugins": [
+    {
+      "name": "knoggin",
+      "source": {
+        "source": "local",
+        "path": "./integrations/plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

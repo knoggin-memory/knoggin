@@ -1,0 +1,31 @@
+{
+  "name": "knoggin",
+  "version": "0.1.0",
+  "description": "Long-term memory from Knoggin, on your own machine or your own server. Recall is read-only, and every save is shown to you first and waits for your yes.",
+  "author": {
+    "name": "Knoggin",
+    "url": "https://github.com/knoggin-memory/knoggin"
+  },
+  "homepage": "https://github.com/knoggin-memory/knoggin",
+  "repository": "https://github.com/knoggin-memory/knoggin",
+  "license": "AGPL-3.0-only",
+  "keywords": ["memory", "long-term memory", "mcp", "knoggin"],
+  "skills": "./skills/",
+  "mcpServers": "./mcp.json",
+  "interface": {
+    "displayName": "Knoggin",
+    "shortDescription": "Long-term memory you host",
+    "longDescription": "Knoggin keeps short text memories and finds them again by meaning. The plugin recalls without changing anything, and it shows you the exact text of every memory and waits for your yes before it saves.",
+    "developerName": "Knoggin",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "What do you remember about this project?",
+      "Recall my preferences for this kind of task.",
+      "Propose a memory of what we decided today."
+    ],
+    "brandColor": "#2A442A",
+    "websiteURL": "https://github.com/knoggin-memory/knoggin",
+    "privacyPolicyURL": "https://github.com/knoggin-memory/knoggin/blob/main/integrations/plugin/PRIVACY.md"
+  }
+}
