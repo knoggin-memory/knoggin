@@ -572,6 +572,71 @@ async fn a_park_refuses_new_requests_ends_streams_and_cuts_what_outlives_the_wai
     assert_eq!(*rig.parked.lock().unwrap(), [c.id]);
 }
 
+/// Writes that race a park: every write the container acknowledged is in the snapshot the
+/// park saved, and none is acknowledged after it.
+#[tokio::test]
+async fn a_write_during_a_park_is_saved_or_refused() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let c = rig.container(quick()).await;
+    let g = rig.generation();
+    rig.lease(a.user, &c, g).await;
+    c.claim(a.user, g, settings(600, GIB)).await;
+    assert_eq!(c.save(a, "before").await, StatusCode::CREATED);
+    let c = std::sync::Arc::new(tokio::sync::Mutex::new(c));
+    let writers: Vec<_> = (0..8)
+        .map(|w| {
+            let c = c.clone();
+            tokio::spawn(async move {
+                let mut acknowledged = Vec::new();
+                for i in 0.. {
+                    let summary = format!("w{w}-{i}");
+                    let guard = c.lock().await;
+                    if guard.ended() {
+                        break;
+                    }
+                    let req = guard.request(
+                        a.user,
+                        a.store,
+                        Method::POST,
+                        "/v1/memories",
+                        serde_json::json!({ "summary": summary }).to_string(),
+                    );
+                    let client = guard.client.clone();
+                    drop(guard);
+                    match client.request(req).await {
+                        Ok(r) if r.status() == StatusCode::CREATED => acknowledged.push(summary),
+                        Ok(_) => {}
+                        Err(_) => break,
+                    }
+                }
+                acknowledged
+            })
+        })
+        .collect();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    c.lock().await.park(ParkReason::Drain).await;
+    let end = c.lock().await.end(SECONDS).await;
+    assert_eq!(end.reason, EndReason::Parked);
+    let mut acknowledged = vec!["before".to_owned()];
+    for w in writers {
+        acknowledged.extend(w.await.unwrap());
+    }
+    assert!(
+        acknowledged.len() > 1,
+        "writes went through before the park"
+    );
+    // The saved snapshot holds exactly the acknowledged writes.
+    let record = rig
+        .stores
+        .get_of(a.user, a.store)
+        .await
+        .unwrap()
+        .unwrap()
+        .value;
+    assert_eq!(record.memory_count, acknowledged.len() as u64);
+}
+
 #[tokio::test]
 async fn an_idle_container_parks_but_not_while_the_bucket_is_down() {
     let rig = Rig::start(Options::default()).await;

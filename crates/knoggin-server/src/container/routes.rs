@@ -323,6 +323,11 @@ async fn forward(State(s): S, req: Request) -> Response {
     let Some(claim) = s.claim.get().cloned() else {
         return ApiError::internal().into_response();
     };
+    // Counted before the phase is read: a park that sees no request in flight has set
+    // `Parking` first, so a request that slips in after its count sees `Parking` here.
+    // An open event stream is not activity.
+    let events = req.method() == Method::GET && req.uri().path() == "/v1/ui/events";
+    let guard = (!events).then(|| s.begin());
     if s.phase() == Phase::Parking {
         return parking();
     }
@@ -359,9 +364,6 @@ async fn forward(State(s): S, req: Request) -> Response {
             Err(_) => return busy(),
         }
     };
-    // An open event stream is not activity.
-    let events = req.method() == Method::GET && req.uri().path() == "/v1/ui/events";
-    let guard = (!events).then(|| s.begin());
     let mut req = req;
     let request_id = ctx.request_id;
     req.extensions_mut().insert(ctx);
