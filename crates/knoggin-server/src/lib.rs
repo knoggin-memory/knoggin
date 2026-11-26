@@ -7,11 +7,14 @@
 //! the admin commands and the launcher service are built on top of these; `CONTRACT.md`
 //! says where each goes.
 
+pub mod aws;
 mod hex;
 pub mod launcher;
 pub mod link;
 pub mod settings;
+pub mod storage;
 
 pub use launcher::{
     BuildInfo, ContainerEnv, ContainerInfo, ContainerSpec, LaunchError, LaunchHandle, Launcher,
 };
+pub use storage::{ObjectInfo, ObjectStorage, SignedRequest, StorageError};
