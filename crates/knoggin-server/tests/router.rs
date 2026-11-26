@@ -33,7 +33,7 @@ use knoggin_server::reconcile::Reconciler;
 use knoggin_server::router::forward::{Timing, forwarder};
 use knoggin_server::settings::ContainerSettings;
 use knoggin_server::storage::MemoryStorage;
-use knoggin_server::testing::{Behaviour, FakeLauncher, StubControl, stub_runner};
+use knoggin_server::testing::{Behaviour, FakeLauncher, FlakyDb, StubControl, stub_runner};
 use knoggin_state::record::{BuildSpec, ContainerState, Lease, LeaseState, ParkReason, StopReason};
 use knoggin_state::testing::{TestClock, test_field_keys};
 use knoggin_state::{Containers, Leases, LocalFileDb, Meta, StateDb};
@@ -45,6 +45,8 @@ const BUILD: &str = "0.1.0";
 struct World {
     clock: TestClock,
     db: Arc<dyn StateDb>,
+    /// The same database, whose writes a test can make fail.
+    flaky: Arc<FlakyDb>,
     launcher: Arc<FakeLauncher>,
     control: Arc<StubControl>,
     storage: Arc<MemoryStorage>,
@@ -54,13 +56,15 @@ impl World {
     async fn new() -> Self {
         let clock = TestClock::new();
         clock.advance(1_800_000_000_000);
-        let db: Arc<dyn StateDb> = Arc::new(LocalFileDb::in_memory(clock.clock()));
+        let flaky = FlakyDb::new(Arc::new(LocalFileDb::in_memory(clock.clock())));
+        let db: Arc<dyn StateDb> = flaky.clone();
         let control = Arc::new(StubControl::default());
         let launcher = FakeLauncher::new(stub_runner(BUILD, true, control.clone()), clock.clock());
         let storage = Arc::new(MemoryStorage::start(clock.clock()).await.unwrap());
         Self {
             clock,
             db,
+            flaky,
             launcher,
             control,
             storage,
@@ -456,6 +460,27 @@ async fn a_starting_record_whose_launch_never_happened_ends_and_claims_go_on() {
     let c = w.containers().get(orphan.id).await.unwrap().unwrap().value;
     assert_eq!(c.state, ContainerState::Gone);
     warm(&f, u).await;
+}
+
+#[tokio::test]
+async fn a_step_the_state_database_fails_does_not_stop_the_pass() {
+    let w = World::new().await;
+    let f = w.fleet(BUILD, true, |c| c.containers.pool_target = 1);
+    let u = user();
+    let id = warm(&f, u).await;
+    // The lifetime step must ask this lease to park, and every lease write fails.
+    let rec = w.containers().get(id).await.unwrap().unwrap();
+    let mut old = rec.value.clone();
+    old.retire_at_ms = 0;
+    w.containers().put(&old, rec.cond()).await.unwrap();
+    *w.flaky.fail.lock().unwrap() = Some("lease#");
+    let mut r = Reconciler::default();
+    assert!(f.take_leadership().await.unwrap());
+    f.pass(&mut r).await.unwrap();
+    assert_eq!(w.lease(u).await.park_requested(), None);
+    // The pool step after it still ran.
+    wait_ready(&w, 1).await;
+    *w.flaky.fail.lock().unwrap() = None;
 }
 
 /// A launcher whose `list` takes `delay`; it counts the lists begun and those dropped

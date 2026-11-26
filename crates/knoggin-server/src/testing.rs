@@ -31,7 +31,7 @@ use knoggin_core::Timestamp;
 use knoggin_core::UserId;
 use knoggin_core::ops::{ModelState, ModelStatus};
 use knoggin_http::ctx::headers;
-use knoggin_state::Clock;
+use knoggin_state::{Clock, Item, StateDb, StateError, Write};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, watch};
 use uuid::Uuid;
@@ -713,4 +713,51 @@ impl Drop for AbortOnDrop {
 /// A body of `n` bytes, for requests.
 pub fn body_of(n: usize) -> Body {
     Body::from(vec![b'x'; n])
+}
+
+/// A state database that fails every write naming a partition that starts with the prefix
+/// a test sets in `fail` (`"lease#"`, `"containers"`), as an outage would; everything
+/// else goes to `inner`.
+#[derive(Debug)]
+pub struct FlakyDb {
+    inner: Arc<dyn StateDb>,
+    /// The partition prefix whose writes fail, if any.
+    pub fail: Mutex<Option<&'static str>>,
+}
+
+impl FlakyDb {
+    /// A database over `inner` that fails nothing yet.
+    pub fn new(inner: Arc<dyn StateDb>) -> Arc<Self> {
+        Arc::new(Self {
+            inner,
+            fail: Mutex::new(None),
+        })
+    }
+}
+
+#[async_trait]
+impl StateDb for FlakyDb {
+    async fn get(&self, pk: &str, sk: &str) -> Result<Option<Item>, StateError> {
+        self.inner.get(pk, sk).await
+    }
+
+    async fn query(
+        &self,
+        pk: &str,
+        sk_prefix: &str,
+        limit: usize,
+        after: Option<&str>,
+    ) -> Result<Vec<Item>, StateError> {
+        self.inner.query(pk, sk_prefix, limit, after).await
+    }
+
+    async fn write(&self, writes: Vec<Write>) -> Result<(), StateError> {
+        let fail = *self.fail.lock().unwrap();
+        if let Some(prefix) = fail
+            && writes.iter().any(|w| w.key().0.starts_with(prefix))
+        {
+            return Err(StateError::Unavailable("a test's fault".into()));
+        }
+        self.inner.write(writes).await
+    }
 }

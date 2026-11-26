@@ -98,8 +98,10 @@ impl Fleet {
                     .and_then(|id| pass.record(id))
                     .map(|c| c.value.started_ms);
                 if started.is_some_and(|s| s < t) {
-                    self.request_park(*user, ParkReason::Upgrade).await?;
-                    budget -= 1;
+                    match self.request_park(*user, ParkReason::Upgrade).await {
+                        Ok(()) => budget -= 1,
+                        Err(e) => crate::reconcile::step_failed("rollout", &e),
+                    }
                 }
             }
         }

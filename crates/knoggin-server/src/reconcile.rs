@@ -253,12 +253,22 @@ impl Fleet {
         self.leases_without_container(&pass).await;
         self.park_requests(&pass, up).await;
         if up {
-            self.lifetime(&pass).await?;
-            self.draining(&pass).await?;
+            if let Err(e) = self.lifetime(&pass).await {
+                step_failed("lifetime", &e);
+            }
+            if let Err(e) = self.draining(&pass).await {
+                step_failed("draining", &e);
+            }
         }
-        let view = self.rollout_steps(&pass, up).await?;
-        if up && let Some(claim) = view.claim {
-            self.pool(&pass, &claim, view.slowly).await?;
+        let view = self.rollout_steps(&pass, up).await.unwrap_or_else(|e| {
+            step_failed("rollout", &e);
+            crate::rollout::RolloutView::default()
+        });
+        if up
+            && let Some(claim) = view.claim
+            && let Err(e) = self.pool(&pass, &claim, view.slowly).await
+        {
+            step_failed("pool", &e);
         }
         // 12. Counters, beside the others.
         if state.counters.as_ref().is_none_or(JoinHandle::is_finished) {
@@ -498,8 +508,10 @@ impl Fleet {
             let v = &c.value;
             match v.state {
                 ContainerState::Claimed if now > v.retire_at_ms => {
-                    if let Some(user) = v.user_id {
-                        self.request_park(user, ParkReason::Lifetime).await?;
+                    if let Some(user) = v.user_id
+                        && let Err(e) = self.request_park(user, ParkReason::Lifetime).await
+                    {
+                        step_failed("lifetime", &e);
                     }
                 }
                 ContainerState::Ready if now > v.retire_at_ms => {
@@ -546,8 +558,10 @@ impl Fleet {
                             .iter()
                             .any(|(u, l)| *u == user && l.value.park_requested().is_some());
                         if !asked {
-                            self.request_park(user, ParkReason::Drain).await?;
-                            budget -= 1;
+                            match self.request_park(user, ParkReason::Drain).await {
+                                Ok(()) => budget -= 1,
+                                Err(e) => step_failed("draining", &e),
+                            }
                         }
                     }
                 }
@@ -649,6 +663,13 @@ impl Fleet {
         metrics::gauge!("knoggin_container_open_stores").set(open as f64);
         metrics::gauge!("knoggin_container_embed_queue_depth").set(queue as f64);
     }
+}
+
+/// A step, or one item of it, that the state database failed: logged and counted
+/// (`knoggin_reconcile_errors_total`), and the pass goes on.
+pub(crate) fn step_failed(step: &'static str, e: &StateError) {
+    tracing::warn!(kind = "reconcile", step, error = %e, "a reconcile step failed; the pass goes on");
+    metrics::counter!("knoggin_reconcile_errors_total", "step" => step).increment(1);
 }
 
 fn state_label(s: ContainerState) -> &'static str {
