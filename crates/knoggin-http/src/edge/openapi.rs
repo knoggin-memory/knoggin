@@ -20,6 +20,11 @@ use uuid::Uuid;
 
 use super::control;
 use crate::error::{Code, LockReason};
+use crate::host::live::UiEvent;
+use crate::store_api::ui::wire::{
+    AccessHistory, Activity, Facets, GraphSnapshot, HealthReport, MemoryPage, Neighborhood,
+    SystemStatus, UiSearch,
+};
 
 /// Every error answer: `{ "error": { ... } }`.
 #[derive(Serialize, ToSchema, ts_rs::TS)]
@@ -193,6 +198,85 @@ fn export() {}
 #[allow(dead_code)]
 fn import() {}
 
+// The web UI's read models (tab "Web UI"). None reads the `Knoggin-Namespace` header.
+
+#[utoipa::path(get, path = "/v1/ui/graph", tag = "ui",
+    params(UiStore, ("namespace" = Option<String>, Query), ("edgeOffset" = Option<u32>, Query)),
+    responses((status = 200, body = GraphSnapshot), (status = "default", body = ErrorEnvelope)))]
+#[allow(dead_code)]
+fn ui_graph() {}
+
+#[utoipa::path(get, path = "/v1/ui/memories", tag = "ui",
+    params(UiStore, ("namespace" = Option<String>, Query),
+        ("phase" = Option<Vec<String>>, Query, description = "Repeatable: `full`, `summary`, `ghost`"),
+        ("tag" = Option<Vec<String>>, Query, description = "Repeatable; all must match"),
+        ("entity" = Option<Vec<String>>, Query, description = "Repeatable; all must match"),
+        ("client" = Option<Vec<String>>, Query, description = "Repeatable"),
+        ("id" = Option<Vec<Uuid>>, Query, description = "Repeatable"),
+        ("sort" = Option<String>, Query, description = "`lastAccess`, `strength`, `created`, `nextChange` or `summary`"),
+        ("desc" = Option<bool>, Query), ("offset" = Option<u32>, Query), ("limit" = Option<u32>, Query)),
+    responses((status = 200, body = MemoryPage), (status = "default", body = ErrorEnvelope)))]
+#[allow(dead_code)]
+fn ui_memories() {}
+
+#[utoipa::path(get, path = "/v1/ui/facets", tag = "ui",
+    params(UiStore, ("namespace" = Option<String>, Query)),
+    responses((status = 200, body = Facets), (status = "default", body = ErrorEnvelope)))]
+#[allow(dead_code)]
+fn ui_facets() {}
+
+#[utoipa::path(get, path = "/v1/ui/memories/{id}/history", tag = "ui",
+    params(UiStore, ("id" = Uuid, Path), ("limit" = Option<u32>, Query)),
+    responses((status = 200, body = AccessHistory), (status = "default", body = ErrorEnvelope)))]
+#[allow(dead_code)]
+fn ui_history() {}
+
+#[utoipa::path(get, path = "/v1/ui/memories/{id}/neighbors", tag = "ui",
+    params(UiStore, ("id" = Uuid, Path), ("depth" = Option<u32>, Query, description = "1 or 2")),
+    responses((status = 200, body = Neighborhood), (status = "default", body = ErrorEnvelope)))]
+#[allow(dead_code)]
+fn ui_neighbors() {}
+
+#[utoipa::path(get, path = "/v1/ui/search", tag = "ui",
+    params(UiStore, ("q" = String, Query), ("namespace" = Option<String>, Query), ("limit" = Option<u32>, Query)),
+    responses((status = 200, body = UiSearch), (status = "default", body = ErrorEnvelope)))]
+#[allow(dead_code)]
+fn ui_search() {}
+
+#[utoipa::path(get, path = "/v1/ui/activity", tag = "ui",
+    params(UiStore, ("namespace" = Option<String>, Query), ("since" = Option<String>, Query), ("limit" = Option<u32>, Query)),
+    responses((status = 200, body = Activity), (status = "default", body = ErrorEnvelope)))]
+#[allow(dead_code)]
+fn ui_activity() {}
+
+#[utoipa::path(get, path = "/v1/ui/health", tag = "ui",
+    params(UiStore, ("namespace" = Option<String>, Query)),
+    responses((status = 200, body = HealthReport), (status = "default", body = ErrorEnvelope)))]
+#[allow(dead_code)]
+fn ui_health() {}
+
+#[utoipa::path(get, path = "/v1/ui/system", tag = "ui", params(UiStore),
+    responses((status = 200, body = SystemStatus), (status = "default", body = ErrorEnvelope)))]
+#[allow(dead_code)]
+fn ui_system() {}
+
+#[utoipa::path(get, path = "/v1/ui/events", tag = "ui", params(UiStore),
+    responses((status = 200, description = "Server-sent events, each named by its `kind`", content_type = "text/event-stream", body = UiEvent),
+        (status = 204, description = "The store is not open"),
+        (status = "default", body = ErrorEnvelope)))]
+#[allow(dead_code)]
+fn ui_events() {}
+
+/// The header that selects the store of a `/v1/ui/*` route.
+#[derive(utoipa::IntoParams)]
+#[into_params(parameter_in = Header)]
+#[allow(dead_code)]
+struct UiStore {
+    /// The store, for a session or the local socket; refused with an API key.
+    #[param(rename = "Knoggin-Store")]
+    knoggin_store: Option<Uuid>,
+}
+
 /// The headers that select the store and the default namespace.
 #[derive(utoipa::IntoParams)]
 #[into_params(parameter_in = Header)]
@@ -243,6 +327,16 @@ struct Idempotency {
         list_tags,
         export,
         import,
+        ui_graph,
+        ui_memories,
+        ui_facets,
+        ui_history,
+        ui_neighbors,
+        ui_search,
+        ui_activity,
+        ui_health,
+        ui_system,
+        ui_events,
         control::healthz,
         control::readyz,
         control::session,
