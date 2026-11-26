@@ -807,7 +807,7 @@ impl StoreHost {
             Ok::<_, Poisoned>(f(&guard))
         })
         .await;
-        self.finish(open, out)?
+        self.finish(open, out, false)?
     }
 
     /// Runs `f` under the write lock in a blocking task, after the write gate, and arms
@@ -844,7 +844,7 @@ impl StoreHost {
             Ok::<_, Poisoned>(result)
         })
         .await;
-        let result = self.finish(open, out)?;
+        let result = self.finish(open, out, true)?;
         if result.is_ok() && kind != WriteKind::Bookkeeping {
             open.full.store(false, Ordering::Relaxed);
         }
@@ -854,10 +854,14 @@ impl StoreHost {
         result
     }
 
+    /// The answer of a blocking store operation. After a panic in a write the store is
+    /// dropped unsaved, because it may be half changed; a read changes nothing, so a panic
+    /// there loses only that request.
     fn finish<R>(
         &self,
         open: &Arc<OpenStore>,
         out: Result<Result<Result<R, ApiError>, Poisoned>, tokio::task::JoinError>,
+        wrote: bool,
     ) -> Result<Result<R, ApiError>, ApiError> {
         match out {
             Ok(Ok(result)) => Ok(result),
@@ -868,7 +872,7 @@ impl StoreHost {
             }
             Err(join) => {
                 let e = ApiError::from_join(&join);
-                if join.is_panic() {
+                if join.is_panic() && wrote {
                     // Never save a store that was half changed.
                     self.drop_open(open);
                 }
@@ -1042,18 +1046,6 @@ impl StoreHost {
         report
     }
 
-    /// Tests only: runs `f` on a store as a client write does.
-    #[doc(hidden)]
-    pub async fn write_for_test<R: Send + 'static>(
-        &self,
-        ctx: &RequestContext,
-        f: impl FnOnce(&mut Store) -> R + Send + 'static,
-    ) -> Result<R, ApiError> {
-        let (open, _permit) = self.open_for(ctx).await?;
-        self.write_on(&open, WriteKind::Client, move |s| Ok(f(s)))
-            .await
-    }
-
     /// Whether a store is open in memory.
     pub fn is_open(&self, id: StoreId) -> bool {
         lock(&self.entries)
@@ -1123,7 +1115,84 @@ fn read_snapshot(
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+    use crate::Permissions;
+    use crate::testing::{TestHost, fake_config};
+
+    async fn host() -> (tempfile::TempDir, TestHost) {
+        let dir = tempfile::tempdir().unwrap();
+        let t = TestHost::new(dir.path(), fake_config(), false, EmbedWaits::default()).await;
+        (dir, t)
+    }
+
+    async fn save(t: &TestHost, summary: &str) {
+        let req = serde_json::from_value(json!({ "summary": summary })).unwrap();
+        let ctx = t.ctx(Permissions::READ_WRITE);
+        t.host.store_memory(&ctx, req, None).await.unwrap();
+    }
+
+    async fn count(t: &TestHost) -> usize {
+        let ctx = t.ctx(Permissions::READ_WRITE);
+        let req = serde_json::from_value(json!({})).unwrap();
+        t.host.list_memories(&ctx, req).await.unwrap().items.len()
+    }
+
+    async fn opened(t: &TestHost) -> Arc<OpenStore> {
+        t.host.open_for(&t.ctx(Permissions::READ)).await.unwrap().0
+    }
+
+    #[tokio::test]
+    async fn a_panic_in_a_write_drops_the_store_without_saving_it() {
+        let (_dir, t) = host().await;
+        save(&t, "saved").await;
+        t.host.close(t.store).await.unwrap();
+        save(&t, "lost with the panic").await;
+        let saved = t.host.counters.snapshot_count.load(Ordering::SeqCst);
+        let open = opened(&t).await;
+        let e = t
+            .host
+            .write_on(
+                &open,
+                WriteKind::Client,
+                |_s: &mut Store| -> Result<(), ApiError> { panic!("marker-in-a-store-operation") },
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (e.code, e.message.as_str()),
+            (Code::Internal, "Internal error")
+        );
+        assert!(!t.host.is_open(t.store));
+        assert!(t.host.save_all().await.is_empty());
+        assert_eq!(
+            t.host.counters.snapshot_count.load(Ordering::SeqCst),
+            saved,
+            "the half-changed store was not saved"
+        );
+        // The next request loads the last snapshot.
+        assert_eq!(count(&t).await, 1);
+    }
+
+    #[tokio::test]
+    async fn a_panic_in_a_read_keeps_the_store_and_its_changes() {
+        let (_dir, t) = host().await;
+        save(&t, "not saved yet").await;
+        let open = opened(&t).await;
+        let e = t
+            .host
+            .read_on(&open, |_s: &Store| -> Result<(), ApiError> {
+                panic!("marker-in-a-read")
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, Code::Internal);
+        assert!(t.host.is_open(t.store), "a read changes nothing");
+        assert!(t.host.save_all().await.is_empty());
+        t.host.drop_store(t.store);
+        assert_eq!(count(&t).await, 1, "the change was saved");
+    }
 
     #[test]
     fn client_names_keep_the_32_seen_last() {

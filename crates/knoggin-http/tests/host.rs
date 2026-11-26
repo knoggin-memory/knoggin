@@ -204,39 +204,6 @@ async fn an_idle_store_is_saved_and_closed_once_its_queue_allows() {
 }
 
 #[tokio::test]
-async fn a_panic_inside_a_store_operation_drops_the_store_without_saving() {
-    let env = Env::new(false).await;
-    let ctx = env.t.ctx(Permissions::READ_WRITE);
-    save(&env, &ctx, "saved").await;
-    env.t.host.close(env.t.store).await.unwrap();
-    save(&env, &ctx, "lost with the panic").await;
-    let before = env.counting.count();
-    let e = env
-        .t
-        .host
-        .write_for_test(&ctx, |_s| -> () { panic!("marker-in-a-store-operation") })
-        .await
-        .unwrap_err();
-    assert_eq!(e.code, Code::Internal);
-    assert_eq!(e.message, "Internal error");
-    assert!(!env.t.host.is_open(env.t.store));
-    assert!(env.t.host.save_all().await.is_empty());
-    assert_eq!(
-        env.counting.count(),
-        before,
-        "the half-changed store was not saved"
-    );
-    // The next request loads the last snapshot.
-    let list = env
-        .t
-        .host
-        .list_memories(&ctx, serde_json::from_value(json!({})).unwrap())
-        .await
-        .unwrap();
-    assert_eq!(list.items.len(), 1);
-}
-
-#[tokio::test]
 async fn the_budget_refuses_writes_and_reports_full_until_a_forget() {
     let mut config = fake_config();
     config.memory_budget = Some(4_000);
