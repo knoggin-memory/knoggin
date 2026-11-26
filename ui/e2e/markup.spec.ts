@@ -54,6 +54,14 @@ test('markup in the answers of Users and Server status is shown as text', async 
   await expect(page.getByRole('combobox', { name: 'User', exact: true })).toContainText(`Eve ${evil}`);
   await expect(page.getByRole('combobox', { name: 'Store of this user' })).toContainText(`Bot ${evil}`);
   await expect(page.getByText('No snapshots yet.')).toBeVisible();
+
+  // The last agent: neither Users nor Server status draws one (the prototype's columns have none), so the
+  // store's lastWriteClient is checked where it is drawn, the Last write tile of App overview.
+  await page.route(/\/v1\/stores$/, (r) => r.fulfill({ json: { items: [store] } }));
+  await page.route(`**/v1/stores/${store.id}/keys`, (r) => r.fulfill({ json: { items: [] } }));
+  await page.goto(page.url().replace('/status', `/apps/${store.id}`));
+  await expect(page.getByRole('heading', { name: `Bot ${evil}` })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Store' }).getByText(`agent ${evil}`)).toBeVisible();
   await expect(page.locator('img[src="x"]')).toHaveCount(0);
   await noScriptRan(page);
 });
