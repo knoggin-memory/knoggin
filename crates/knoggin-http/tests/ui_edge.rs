@@ -23,6 +23,16 @@ use tower::ServiceExt;
 
 use support::edge::{EdgeEnv, PORT, fixed, tight};
 
+/// Whether `ui/dist` is built in this checkout: debug builds read the UI from disk, so a
+/// developer who built the UI gets its files where CI gets the "not built" answer.
+fn ui_built() -> bool {
+    std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../ui/dist/index.html"
+    ))
+    .exists()
+}
+
 fn get(uri: &str, arrival: Arrival) -> Request<Body> {
     let mut r = Request::builder()
         .uri(uri)
@@ -45,9 +55,13 @@ async fn the_ui_needs_no_credential_and_is_not_counted_by_the_fixed_bucket() {
         "/favicon.svg",
     ] {
         let r = env.call(fixed(), Method::GET, path, None, &[]).await;
-        // This build has no `ui/dist`.
-        assert_eq!(r.status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
-        assert_eq!(r.bytes, b"The web UI is not built");
+        if ui_built() {
+            assert_ne!(r.status, StatusCode::UNAUTHORIZED, "{path}");
+            assert_ne!(r.status, StatusCode::TOO_MANY_REQUESTS, "{path}");
+        } else {
+            assert_eq!(r.status, StatusCode::SERVICE_UNAVAILABLE, "{path}");
+            assert_eq!(r.bytes, b"The web UI is not built");
+        }
         assert_eq!(r.headers["x-content-type-options"], "nosniff");
         assert_eq!(r.headers["x-frame-options"], "DENY");
         assert_eq!(r.headers["referrer-policy"], "no-referrer");
@@ -157,8 +171,18 @@ async fn the_locked_daemon_still_serves_the_ui_files() {
         "https://docs".into(),
     );
     let r = app.clone().oneshot(get("/map", fixed())).await.unwrap();
-    assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(r.headers()["content-type"], "text/plain; charset=utf-8");
+    if ui_built() {
+        assert_eq!(r.status(), StatusCode::OK);
+        assert!(
+            r.headers()["content-type"]
+                .to_str()
+                .unwrap()
+                .starts_with("text/html")
+        );
+    } else {
+        assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(r.headers()["content-type"], "text/plain; charset=utf-8");
+    }
     let r = app.oneshot(get("/v1/ui/graph", fixed())).await.unwrap();
     assert_eq!(r.status().as_u16(), 423);
 }
