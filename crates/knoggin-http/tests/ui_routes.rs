@@ -630,3 +630,46 @@ async fn the_event_stream_carries_the_stores_events_and_opens_nothing() {
     ctx.store_id = app;
     assert_eq!(stream(&env, &ctx).await.status(), StatusCode::OK);
 }
+
+#[tokio::test]
+async fn a_recall_names_the_namespace_as_stored_whatever_its_spelling() {
+    let env = Env::new(true).await;
+    let ctx = env.t.ctx(RW);
+    let (_, _, c) = seed(&env, &ctx).await;
+    let r = stream(&env, &ctx).await;
+    let mut body = r.into_body();
+    let mut buf = String::new();
+    // No access recorded, so only the event can make the Timeline's row.
+    post(
+        &env,
+        &ctx,
+        "/v1/recall",
+        json!({ "query": "quarterly plan", "namespace": "WORK", "recordAccess": false }),
+    )
+    .await;
+    let (name, data) = next_event(&mut body, &mut buf, Duration::from_secs(5))
+        .await
+        .unwrap();
+    assert_eq!(name, "recall");
+    assert_eq!(data["namespace"], "work", "{data}");
+    for scope in ["work", "Work"] {
+        let act = get(&env, &ctx, &format!("/v1/ui/activity?namespace={scope}")).await;
+        let recalls: Vec<&Value> = act["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["kind"] == "recall")
+            .collect();
+        assert_eq!(recalls.len(), 1, "{scope}: {act}");
+        assert_eq!(recalls[0]["id"], c.as_str());
+    }
+    let other = get(&env, &ctx, "/v1/ui/activity?namespace=default").await;
+    assert!(
+        other["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["kind"] != "recall"),
+        "{other}"
+    );
+}

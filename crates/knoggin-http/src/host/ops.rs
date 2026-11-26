@@ -622,23 +622,32 @@ impl StoreHost {
         ctx.require_read()?;
         let started = std::time::Instant::now();
         req.namespace = fill(req.namespace.take(), ctx);
-        let namespace = req.namespace.clone().unwrap_or_default();
         let vector = self.query_vector(&req.query).await;
         let asked = req.record_access;
-        let (result, open) = self
+        let ((result, namespace), open) = self
             .read(ctx, move |s, at| {
-                s.recall(&req, vector.as_deref(), false, at)
+                let result = s.recall(&req, vector.as_deref(), false, at)?;
+                // The engine finds a namespace ignoring ASCII case; the event names it as
+                // it is stored.
+                let namespace = req
+                    .namespace
+                    .as_deref()
+                    .and_then(|n| s.namespace_by_name(n))
+                    .map(|n| (n.id, n.name.clone()));
+                Ok((result, namespace))
             })
             .await?;
         // The event and the access it records share one time, so that the Timeline can
         // join them into one row.
         let at = now();
-        open.events().publish(vec![live::recalled(
-            &result.trace,
-            &namespace,
-            ctx.client.as_deref(),
-            at,
-        )]);
+        if let Some(namespace) = namespace {
+            open.events().publish(vec![live::recalled(
+                &result.trace,
+                namespace,
+                ctx.client.as_deref(),
+                at,
+            )]);
+        }
         self.record(ctx, &open, asked, result.hits, at).await;
         self.recall_ms.note(started.elapsed());
         Ok(result.response)

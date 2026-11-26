@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use knoggin_core::model::{EdgeType, Phase};
 use knoggin_core::ops::{ApplyOutcome, RecallTrace, SweepReport};
-use knoggin_core::{MemoryId, Store, Timestamp};
+use knoggin_core::{MemoryId, NamespaceId, Store, Timestamp};
 use serde::Serialize;
 use tokio::sync::broadcast;
 
@@ -44,7 +44,11 @@ pub(crate) struct RecallEvent {
     /// Milliseconds since 1970.
     pub(crate) at: i64,
     pub(crate) client: Option<String>,
+    // The namespace's name as stored, whatever the request's spelling, and the namespace
+    // itself for `GET /v1/ui/activity`'s scope, which is not sent.
     pub(crate) namespace: String,
+    #[serde(skip)]
+    pub(crate) namespace_id: NamespaceId,
     pub(crate) seeds: Vec<Seed>,
     pub(crate) spreads: Vec<Spread>,
     pub(crate) returned: Vec<MemoryId>,
@@ -289,7 +293,7 @@ pub(crate) fn forgotten(id: MemoryId, client: Option<&str>, at: Timestamp) -> Ui
 /// seeds, at most 500 spreads and 24 suppressed memories that were not returned.
 pub(crate) fn recalled(
     trace: &RecallTrace,
-    namespace: &str,
+    (namespace_id, namespace): (NamespaceId, String),
     client: Option<&str>,
     at: Timestamp,
 ) -> UiEvent {
@@ -320,7 +324,8 @@ pub(crate) fn recalled(
         seq: 0,
         at: at.millis(),
         client: client.map(str::to_owned),
-        namespace: namespace.to_owned(),
+        namespace,
+        namespace_id,
         seeds,
         spreads: trace
             .spreads
@@ -496,7 +501,7 @@ mod tests {
         };
         let json = serde_json::to_value(recalled(
             &trace,
-            "work",
+            (NamespaceId::new(2), "work".to_owned()),
             Some("codex"),
             Timestamp::from_millis(9),
         ))

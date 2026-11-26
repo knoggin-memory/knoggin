@@ -605,7 +605,7 @@ pub(crate) fn activity(
         }
         match &**event {
             UiEvent::Recall(r) => {
-                if scope.is_some() && namespace != Some(r.namespace.as_str()) {
+                if !scope.is_none_or(|ns| ns == r.namespace_id) {
                     continue;
                 }
                 let row = grouped.entry((at, "recall")).or_insert(Row {
