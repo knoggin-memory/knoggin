@@ -62,15 +62,41 @@ The spec's build-time measurements (tab "Overview", Build-time measurements), ea
 | M2 | Time from claim to first answer on the one-host stack at 1,500, 15,000 and 75,000 memories | Build | Not yet run |
 | M3 | Peak memory of a user container at the same three sizes | Build | Not yet run |
 | M4 | Snapshot size and duration at the three sizes, local disk and SeaweedFS | Build | Not yet run |
-| M5 | Retrieval with the faster compute path (patched graph) | Build if `locomo10.json` is usable, otherwise owner | Not yet run |
+| M5 | Retrieval with the faster compute path (patched graph) | Build if `locomo10.json` is usable, otherwise owner | Done 2026-11-25: 97.0% overlap, the patched graph is the one to ship; switch waits for the owner (below) |
 | M6 | On AWS: usable memory, containers per host, launch to ready, embedding time on a full host | Owner: AWS account | Not yet run |
 | M7 | Bucket self-test and a long upload | Build for SeaweedFS; owner for real S3 | Not yet run |
 | M8 | Linux first run with and without a desktop session | Build if a Linux machine is at hand, otherwise owner | Not yet run |
-| M9 | Engine latency on a 4-core arm64 machine with the fake model | Build | Not yet run |
+| M9 | Engine latency on a 4-core arm64 machine with the fake model | Build | Done 2026-11-25: every budget met (below) |
 | M10 | macOS: keychain read after an upgrade replaced the binary | Owner: a Mac and two builds | Not yet run |
 | M11 | ECS: start a task with `no-new-privileges` | Owner | Not yet run |
-| M12 | Whether ONNX Runtime 1.31.1 has a library for Intel Macs | Build: a look-up | Not yet run |
+| M12 | Whether ONNX Runtime 1.31.1 has a library for Intel Macs | Build: a look-up | Done 2026-11-25: no. Intel Macs stay unsupported |
 | M13 | One pass against a real AuthKit environment | Owner: WorkOS account | Not yet run |
 | M14 | Submit the plugin to the Claude and OpenAI directories | Owner | Not yet run |
 | M15 | Whether claude.ai and Claude Desktop show MCP server instructions | Owner | Not yet run |
 | M16 | Embedding time on an x86_64 Linux CI runner | Build, once the organization exists (P3) | Not yet run |
+
+### M5: the faster compute path
+
+Measured on 2026-11-25 on the build machine (Apple Silicon, macOS) with `locomo10.json` from recalld's benchmark commit: all 5,882 turns and 1,986 questions embedded with the published graph and with the patched one. Mean top-10 overlap 0.9701 (minimum 0.80); mean cosine between the two graphs' vectors 0.99987. `scripts/patch_q4_graph.py` (onnx 1.23.2) set `accuracy_level = 4` on all 146 `MatMulNBits` nodes; the patched `model_q4.onnx` has SHA-256 `1afd951bf447f631786cc1302921f94d4bc30f602ee6a61e8e517d0a3203c8a8`. Both passes ran at background priority, so the speed ratio seen (1.19 times) is not a measurement.
+
+The rule says the patched graph is the one to ship. The build keeps the published graph pinned, because only a release of the organization can host the patched file. The owner switches before the first public release (a later switch re-embeds every store):
+
+1. Pin the new `graph_sha256` in `knoggin-embed`'s model module and take the new identity string that follows from it.
+2. Update the identity test to the new string.
+3. Make the graph file's first download address, and with it the image's model stage, the asset `model_q4.onnx` of the project's release tagged `model-<new identity string>`, because Hugging Face keeps serving the published graph.
+4. Run `model-release.yml` with the patched graph and a notice that says it was modified, before the release that names the new identity.
+
+### M9: engine latency
+
+On GitHub's `ubuntu-24.04-arm` runner (4-core arm64 Linux), with `FakeProvider::with_dim(768)`, after the link-selection fix (CI run 45733605239). 95th percentiles in ms:
+
+| Store size | Save | apply_embedding | Recall | Get | 8 recalls at once (no mark) |
+| --- | --- | --- | --- | --- | --- |
+| 15,000 | 0.92 (budget 20) | 3.39 (20) | 57.87 (100) | 0.05 (2) | 256.98 |
+| 75,000 | 4.38 | 23.05 | 152.59 (400) | 0.09 | 577.67 |
+
+The stores are built by the budget test itself: one namespace, summaries of 20 to 45 words, full text on 30%, about 20 edges per memory, all memories `Full`.
+
+### M12: ONNX Runtime for Intel Macs
+
+No. The 1.31.1 NuGet package's `runtimes/` folder holds `android`, `ios`, `linux-arm64`, `linux-x64`, `osx-arm64`, `win-arm64` and `win-x64`, and PyPI's 1.31.1 macOS wheels are all `macosx_14_0_arm64`. (GitHub's release page for ONNX Runtime returned 404 on 2026-11-25, which is why the NuGet package is the source; see `docs/spec-deviations.md`.) `x86_64-apple-darwin` stays out of the release matrix.
