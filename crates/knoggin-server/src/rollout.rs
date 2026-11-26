@@ -7,7 +7,7 @@
 use std::cmp::Ordering;
 use std::sync::Arc;
 
-use knoggin_state::record::{BuildSpec, ContainerState, ParkReason, Rollout, StopReason};
+use knoggin_state::record::{BuildSpec, ContainerState, ParkReason, Rollout};
 use knoggin_state::{Cond, Meta, StateError, Versioned};
 
 use crate::launcher::BuildInfo;
@@ -156,11 +156,13 @@ impl Fleet {
                 slowly: false,
             });
         }
-        // Not ready yet: try one container of the desired build a minute.
+        // Not ready yet: try one container of the desired build a minute. A launch of it
+        // that ended without ever being ready (refused, failed or timed out: it has no
+        // pin) means the rollout stalls.
         let stalled = pass.records.iter().any(|c| {
             c.value.build == record.value.desired.build
                 && c.value.state == ContainerState::Gone
-                && c.value.stop_reason() == Some(StopReason::LaunchFailed)
+                && c.value.cert_sha256.is_none()
         });
         metrics::gauge!("knoggin_rollout_stalled").set(f64::from(u8::from(stalled)));
         if launcher_up && !of(&record.value.desired, ContainerState::Starting) {

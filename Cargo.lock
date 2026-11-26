@@ -2570,6 +2570,7 @@ dependencies = [
  "knoggin-http",
  "knoggin-state",
  "metrics",
+ "metrics-exporter-prometheus",
  "rcgen",
  "reqwest",
  "rustls",

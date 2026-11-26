@@ -819,6 +819,58 @@ async fn claims_switch_only_after_a_new_build_container_is_ready() {
 }
 
 #[tokio::test]
+async fn a_refused_launch_of_the_desired_build_sets_the_stalled_metric() {
+    let metrics = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .install_recorder()
+        .unwrap();
+    let w = World::new().await;
+    let meta = Meta::new(w.db.clone());
+    let spec = |b: &str| BuildSpec {
+        build: b.into(),
+        spec: format!("td:{b}"),
+    };
+    knoggin_server::rollout::at_start(&meta, &spec("0.1.0"), false)
+        .await
+        .unwrap();
+    let old = w.fleet("0.1.0", false, |c| {
+        c.spec = "td:0.1.0".into();
+        c.containers.pool_target = 1
+    });
+    let mut r = Reconciler::default();
+    assert!(old.take_leadership().await.unwrap());
+    old.pass(&mut r).await.unwrap();
+    wait_ready(&w, 1).await;
+    // The new build's launches are refused.
+    knoggin_server::rollout::at_start(&meta, &spec("0.2.0"), false)
+        .await
+        .unwrap();
+    let new = w.fleet("0.2.0", false, |c| {
+        c.spec = "td:0.2.0".into();
+        c.containers.pool_target = 1
+    });
+    w.launcher.refuse.store(true, Ordering::Relaxed);
+    let mut r2 = Reconciler::default();
+    assert!(new.take_leadership().await.unwrap());
+    new.pass(&mut r2).await.unwrap();
+    for _ in 0..50 {
+        let gone = w
+            .containers()
+            .list()
+            .await
+            .unwrap()
+            .iter()
+            .any(|c| c.value.build == "0.2.0" && c.value.state == ContainerState::Gone);
+        if gone {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    new.pass(&mut r2).await.unwrap();
+    let text = metrics.render();
+    assert!(text.contains("knoggin_rollout_stalled 1"), "{text}");
+}
+
+#[tokio::test]
 async fn retire_before_parks_in_batches_of_a_tenth() {
     let w = World::new().await;
     let f = w.fleet(BUILD, true, |_| {});
