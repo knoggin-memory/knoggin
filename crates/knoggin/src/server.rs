@@ -247,20 +247,30 @@ fn docker_launcher(config: &Config) -> anyhow::Result<DockerLauncher> {
         .map_err(|e| anyhow!("launcher.docker.url: {e}"))
 }
 
-/// A future that ends on SIGTERM or SIGINT, and a watch that turns true then.
-pub(crate) fn stop_signal() -> anyhow::Result<watch::Receiver<bool>> {
+/// A task that ends when this is dropped, so that a role's helpers end with it.
+pub(crate) struct Owned(tokio::task::JoinHandle<()>);
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// A watch that turns true on SIGTERM or SIGINT, and the task that watches for them,
+/// which ends when the returned [`Owned`] is dropped.
+pub(crate) fn stop_signal() -> anyhow::Result<(watch::Receiver<bool>, Owned)> {
     use tokio::signal::unix::{SignalKind, signal};
     let mut term = signal(SignalKind::terminate()).context("installing the stop signal handler")?;
     let mut int = signal(SignalKind::interrupt()).context("installing the stop signal handler")?;
     let (tx, rx) = watch::channel(false);
-    tokio::spawn(async move {
+    let task = tokio::spawn(async move {
         tokio::select! {
             _ = term.recv() => {}
             _ = int.recv() => {}
         }
         let _ = tx.send(true);
     });
-    Ok(rx)
+    Ok((rx, Owned(task)))
 }
 
 async fn stopped(mut rx: watch::Receiver<bool>) {
@@ -306,25 +316,25 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
         reserve(config.bind()).with_context(|| format!("binding server.bind {}", config.bind()))?;
     let internal = reserve(settings.internal.bind)
         .with_context(|| format!("binding internal.bind {}", settings.internal.bind))?;
-    let (metrics_listener, metrics) = match config.metrics_bind() {
+    let (metrics_listener, metrics, _upkeep) = match config.metrics_bind() {
         Some(addr) => {
             let handle = metrics_exporter_prometheus::PrometheusBuilder::new()
                 .install_recorder()
                 .context("installing the metrics recorder")?;
             let l = reserve(addr).with_context(|| format!("binding metrics.bind {addr}"))?;
             let h = handle.clone();
-            tokio::spawn(async move {
+            let upkeep = Owned(tokio::spawn(async move {
                 let mut every = tokio::time::interval(Duration::from_secs(5));
                 loop {
                     every.tick().await;
                     h.run_upkeep();
                 }
-            });
-            (Some(l), Some(edge::metrics_router(handle)))
+            }));
+            (Some(l), Some(edge::metrics_router(handle)), Some(upkeep))
         }
-        None => (None, None),
+        None => (None, None, None),
     };
-    let stop = stop_signal()?;
+    let (stop, _watching) = stop_signal()?;
     let launcher = Arc::new(launcher);
     // Start-up steps 7 and 8: the bucket self-test, then the launcher's `attach`.
     let before_rollout = {
@@ -407,7 +417,7 @@ pub(crate) async fn serve(config: &Config, env: &Env) -> anyhow::Result<u8> {
             Some(m),
         )
     };
-    let stop = stop_signal()?;
+    let (stop, _watching) = stop_signal()?;
     let end = serve(
         SocketAddr::from(([0, 0, 0, 0], 8443)),
         ServeConfig {
@@ -451,7 +461,7 @@ pub(crate) async fn lifecycle(config: &Config, every: Option<Duration>) -> anyho
     let storage_settings = storage_settings(config)?;
     let clock = system_clock();
     let pg = connect_state(&state, clock.clone(), false).await?;
-    let stop = stop_signal()?;
+    let (stop, _watching) = stop_signal()?;
     let code = knoggin_server::lifecycle::run(
         knoggin_server::lifecycle::Lifecycle {
             db: pg.clone(),
@@ -485,7 +495,7 @@ pub(crate) async fn launcher(config: &Config, env: &Env) -> anyhow::Result<u8> {
         .context("reading /etc/hostname: the launcher runs in a container")?;
     let docker = bollard::Docker::connect_with_unix_defaults()
         .map_err(|e| anyhow!("the Docker socket: {e}"))?;
-    let stop = stop_signal()?;
+    let (stop, _watching) = stop_signal()?;
     let code =
         knoggin_server::launcher_service::run(settings, env.test_mode, docker, own.trim(), stop)
             .await;

@@ -627,7 +627,7 @@ fn watched(
                     if !alive(&s.fleet, s.id, s.peer, s.limit).await {
                         let fleet = s.fleet.clone();
                         let id = s.id;
-                        tokio::spawn(async move {
+                        s.fleet.spawn(async move {
                             let _ = fleet
                                 .mark_gone(id, Some(StopReason::Unresponsive), Caller::Request)
                                 .await;
