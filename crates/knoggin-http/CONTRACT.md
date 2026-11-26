@@ -35,7 +35,9 @@ Fill the `OnceCell` before sending `ModelStatus::Ready`.
 
 Lifecycle: `close(store)` (save, then drop; stays open if the save fails), `drop_store(store)`
 (deleted: no save), `save_all()` (park, shutdown; returns the failures, the role retries),
-`shutdown()` (stop tasks, refuse requests), `lease_lost()` (a watch the container waits on).
+`shutdown()` (stop tasks, refuse requests), `lease_lost()` (a watch the container waits on),
+`end_event_streams()` (ends every event stream at once and answers new ones 204; call it
+first on a stop and at step 1 of a park, before waiting for requests in flight).
 Status: `store_status(store)` (also retries a stale lock in the background), `report()` (the
 container's `status` answer: open stores, opening, locks), `counters`, `model_state()`.
 
@@ -104,7 +106,8 @@ the MCP client names an open store has seen (at most 32, with when), for `/v1/ui
 - `host::live`: each open store's `EventLog` (the last 1,000 events and a broadcast channel
   of 1,024). Host writes add their events inside the write (`Op` closures get a
   `&mut Vec<UiEvent>`), so a replayed idempotent write makes none. `StoreHost::subscribe`
-  gives a stream's receiver without opening the store; the channel closes with the store.
+  gives a stream's receiver without opening the store; the channel closes with the store,
+  and the stream also ends on `end_event_streams()`.
 - `GET /v1/ui/events` is exempt from the request timeout; the edge counts it against the
   per-user cap of 10 (`Cap::Events`) and re-checks its credential every 60 seconds, as an
   export.

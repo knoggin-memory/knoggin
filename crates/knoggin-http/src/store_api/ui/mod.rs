@@ -280,16 +280,21 @@ async fn rss_bytes() -> Option<u64> {
 }
 
 /// `GET /v1/ui/events`: the store's live events as server-sent events, named by kind.
-/// It never opens a store: 204 when the store is not open. It ends when the store closes.
+/// It never opens a store: 204 when the store is not open. It ends when the store closes
+/// and when the process stops or parks ([`StoreHost::end_event_streams`]).
 async fn events(State(host): Host, Ctx(ctx): Ctx, q: QueryMap) -> Answer {
     q.finish()?;
     ctx.require_read()?;
-    let Some(rx) = host.subscribe(ctx.store_id) else {
+    let Some(subscription) = host.subscribe(ctx.store_id) else {
         return Ok(StatusCode::NO_CONTENT.into_response());
     };
-    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+    let stream = futures_util::stream::unfold(subscription, |(mut rx, mut end)| async move {
         loop {
-            let event = match rx.recv().await {
+            let received = tokio::select! {
+                received = rx.recv() => received,
+                _ = end.wait_for(|ended| *ended) => return None,
+            };
+            let event = match received {
                 Ok(event) => event,
                 Err(RecvError::Lagged(missed)) => Arc::new(UiEvent::Lagged(LaggedEvent { missed })),
                 Err(RecvError::Closed) => return None,
@@ -298,7 +303,7 @@ async fn events(State(host): Host, Ctx(ctx): Ctx, q: QueryMap) -> Answer {
                 continue;
             };
             let sse = Event::default().event(event.kind()).data(data);
-            return Some((Ok::<_, Infallible>(sse), rx));
+            return Some((Ok::<_, Infallible>(sse), (rx, end)));
         }
     });
     Ok(Sse::new(stream)

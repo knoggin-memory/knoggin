@@ -504,3 +504,39 @@ fn the_lock_file_is_complete_before_the_daemon_answers() {
         assert_eq!(home.run(&["stop"]).code, 0);
     }
 }
+
+#[test]
+fn an_open_event_stream_does_not_hold_up_a_stop() {
+    use std::io::{Read, Write};
+    let home = Home::new();
+    let mut d = home.daemon();
+    let r = home.sock(
+        "POST",
+        "/v1/memories",
+        &[],
+        Some(&json!({ "summary": "open" })),
+    );
+    assert_eq!(r.status, 201, "{}", r.text());
+    let mut stream = std::os::unix::net::UnixStream::connect(home.socket()).unwrap();
+    stream
+        .write_all(b"GET /v1/ui/events HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(20)))
+        .unwrap();
+    let mut buf = [0u8; 4096];
+    let n = stream.read(&mut buf).unwrap();
+    assert!(buf[..n].starts_with(b"HTTP/1.1 200"));
+    // The stream ends as soon as the stop begins, so the drain does not wait 30 seconds.
+    let started = std::time::Instant::now();
+    assert_eq!(home.run(&["stop"]).code, 0);
+    let took = started.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(10),
+        "stop took {took:?}"
+    );
+    let mut rest = Vec::new();
+    stream.read_to_end(&mut rest).unwrap();
+    assert_eq!(d.stop(), 0);
+    assert!(!d.stderr().contains("drain_timeout"), "{}", d.stderr());
+}

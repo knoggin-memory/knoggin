@@ -420,6 +420,8 @@ pub struct StoreHost {
     tasks: Mutex<Vec<JoinHandle<()>>>,
     closing: AtomicBool,
     lease_lost: watch::Sender<bool>,
+    /// Becomes true when the process stops or parks: every event stream then ends.
+    streams_end: watch::Sender<bool>,
     /// How often the embedding worker went to wait for work; a test watches it.
     idle_waits: AtomicU64,
     /// Running totals.
@@ -487,6 +489,7 @@ impl StoreHost {
             tasks: Mutex::new(Vec::new()),
             closing: AtomicBool::new(false),
             lease_lost: watch::Sender::new(false),
+            streams_end: watch::Sender::new(false),
             idle_waits: AtomicU64::new(0),
             counters: HostCounters::default(),
             started_at: now(),
@@ -509,14 +512,28 @@ impl StoreHost {
         (self.started_at, self.started.elapsed())
     }
 
-    /// The live events of an open store; `None` when the store is not open. Opens
-    /// nothing and counts as no activity.
+    /// The live events of an open store, and the signal that ends the stream; `None`
+    /// when the store is not open or the streams were ended. Opens nothing and counts as
+    /// no activity.
     pub(crate) fn subscribe(
         &self,
         id: StoreId,
-    ) -> Option<tokio::sync::broadcast::Receiver<Arc<live::UiEvent>>> {
+    ) -> Option<(
+        tokio::sync::broadcast::Receiver<Arc<live::UiEvent>>,
+        watch::Receiver<bool>,
+    )> {
+        if *self.streams_end.borrow() {
+            return None;
+        }
         let open = lock(&self.entries).get(&id).and_then(|e| e.open())?;
-        Some(open.events.subscribe())
+        Some((open.events.subscribe(), self.streams_end.subscribe()))
+    }
+
+    /// Ends every event stream at once, and answers later ones with 204: a stream never
+    /// ends by itself, so a stop or a park calls this first, before it waits for the
+    /// requests in flight (tab "Server", park sequence step 1).
+    pub fn end_event_streams(&self) {
+        self.streams_end.send_replace(true);
     }
 
     /// The Model state of this process.

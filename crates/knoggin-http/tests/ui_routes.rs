@@ -673,3 +673,25 @@ async fn a_recall_names_the_namespace_as_stored_whatever_its_spelling() {
         "{other}"
     );
 }
+
+#[tokio::test]
+async fn a_stop_or_park_ends_every_stream_at_once_and_later_ones_get_204() {
+    let env = Env::new(true).await;
+    let ctx = env.t.ctx(RW);
+    get(&env, &ctx, "/v1/namespaces").await;
+    let r = stream(&env, &ctx).await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let mut body = r.into_body();
+    env.t.host.end_event_streams();
+    let end = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(frame) = body.frame().await {
+            if frame.is_err() {
+                break;
+            }
+        }
+    })
+    .await;
+    assert!(end.is_ok(), "the stream did not end");
+    assert!(env.t.host.is_open(ctx.store_id));
+    assert_eq!(stream(&env, &ctx).await.status(), StatusCode::NO_CONTENT);
+}

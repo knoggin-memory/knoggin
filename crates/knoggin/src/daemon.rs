@@ -736,6 +736,11 @@ pub(crate) async fn run(config: Config, env: &Env) -> anyhow::Result<u8> {
         kind = "stopping",
         "stop signal: finishing requests in flight"
     );
+    // An event stream never ends by itself: end them first, or the drain waits its full
+    // 30 seconds for them.
+    if let Some(l) = live.lock().await.as_ref() {
+        l.host.end_event_streams();
+    }
     let _ = stop_tx.send(true);
     let drain = async {
         for l in &mut listeners {
