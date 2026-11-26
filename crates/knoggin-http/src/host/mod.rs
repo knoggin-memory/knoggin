@@ -390,6 +390,8 @@ pub struct StoreHost {
     tasks: Mutex<Vec<JoinHandle<()>>>,
     closing: AtomicBool,
     lease_lost: watch::Sender<bool>,
+    /// How often the embedding worker went to wait for work; a test watches it.
+    idle_waits: AtomicU64,
     /// Running totals.
     pub counters: HostCounters,
 }
@@ -447,6 +449,7 @@ impl StoreHost {
             tasks: Mutex::new(Vec::new()),
             closing: AtomicBool::new(false),
             lease_lost: watch::Sender::new(false),
+            idle_waits: AtomicU64::new(0),
             counters: HostCounters::default(),
         });
         let worker = tokio::spawn(schedule::embed_worker(Arc::downgrade(&host)));
@@ -1187,6 +1190,27 @@ mod tests {
         );
         // The next request loads the last snapshot.
         assert_eq!(count(&t).await, 1);
+    }
+
+    /// How often the embedding worker went idle in 200 ms of real time: a spinning worker
+    /// would keep paused time from ever moving.
+    async fn idle_waits_in_a_while(host: &StoreHost) -> u64 {
+        let before = host.idle_waits.load(Ordering::Relaxed);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        host.idle_waits.load(Ordering::Relaxed) - before
+    }
+
+    #[tokio::test]
+    async fn the_embedding_worker_waits_without_spinning() {
+        let dir = tempfile::tempdir().unwrap();
+        let TestHost { host, model, .. } =
+            TestHost::new(dir.path(), fake_config(), true, EmbedWaits::default()).await;
+        // The model state has changed once (to ready).
+        let waits = idle_waits_in_a_while(&host).await;
+        assert!(waits <= 2, "after a change: idle {waits} times");
+        drop(model);
+        let waits = idle_waits_in_a_while(&host).await;
+        assert!(waits <= 2, "without a sender: idle {waits} times");
     }
 
     #[tokio::test]

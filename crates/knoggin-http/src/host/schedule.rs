@@ -269,10 +269,17 @@ pub(super) async fn embed_worker(host: Weak<StoreHost>) {
             }
         }
         let Some((open, job)) = found else {
+            h.idle_waits.fetch_add(1, Ordering::Relaxed);
             let mut changes = h.embedder.subscribe();
+            // A closed channel means the model state can no longer change: wait for work.
+            let model_changed = async move {
+                if changes.changed().await.is_err() {
+                    std::future::pending::<()>().await;
+                }
+            };
             tokio::select! {
                 () = h.work.notified() => {}
-                _ = changes.changed() => {}
+                () = model_changed => {}
                 () = tokio::time::sleep(Duration::from_secs(30)) => {}
             }
             continue;

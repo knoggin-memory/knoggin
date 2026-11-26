@@ -117,9 +117,13 @@ impl Embedder {
         self.state.borrow().clone()
     }
 
-    /// A receiver that wakes on every change of the model state.
+    /// A receiver that wakes on the next change of the model state. A clone of the
+    /// embedder's own receiver, which never marks a value seen, would count every change
+    /// since the start as new and wake at once, again and again.
     pub(crate) fn subscribe(&self) -> watch::Receiver<ModelState> {
-        self.state.clone()
+        let mut rx = self.state.clone();
+        rx.mark_unchanged();
+        rx
     }
 
     /// The identity of the loaded providers, when the model is ready.
