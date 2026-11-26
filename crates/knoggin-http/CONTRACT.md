@@ -136,8 +136,18 @@ the MCP client names an open store has seen (at most 32, with when), for `/v1/ui
   `edge::listen` (`serve_tcp(listener, router, arrival, ListenConfig, shutdown)`,
   `serve_unix(..)`) tag it; a test inserts it by hand.
 - Control and mode handlers read `Extension<edge::Caller>`; store routes get the
-  `RequestContext`. Milestone 5 adds OAuth tokens and cookie sessions at the marked steps of
-  `edge::check` (`Credential` gains variants; nothing else changes shape).
+  `RequestContext`. `Credential` has `Oauth` (an access token) and `Cookie` (a browser
+  session from web sign-in) beside the local ones.
+- Sign-in (milestone 5): set `EdgeConfig::auth_mode = Oauth`, `public_url`, `test_mode` and
+  `oauth: Some(OauthConfig { .. })`, then call `edge.discover().await` at start (and again
+  while it answers `DiscoveryError::Unreachable`; the other errors stop a start).
+  `edge::oauth` checks tokens and caches the signing keys; `edge::signin` serves
+  `/auth/login`, `/auth/callback`, `POST /auth/logout` (also the local web session's
+  logout) and the protected-resource metadata. The router's start-up guards are
+  `edge::guard::{router_settings, router_users, check_public_url}`.
+- The test issuer: `testing::issuer::TestIssuer::start(test_mode)` (or `serve`), with
+  `url`, `claims`, `mint`, `mint_with`, `rotate_keys`, `remove_key`, `kids` and `secrets`;
+  its client secret is `TEST_SECRET`.
 - `local`: `prepare_run_dir`, `bind_socket`, `bind_loopback(port)` (127.0.0.1 and [::1]),
   `web_label` + `web_authority` (the web listener's origin), `LocalSessions`, `erase_step`
   (now and hourly), `locked_router(reason, version, docs_url)`.
