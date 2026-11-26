@@ -1,0 +1,51 @@
+{
+  "name": "recalld-ui",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@10.34.9",
+  "engines": {
+    "node": ">=22.17"
+  },
+  "scripts": {
+    "dev": "vite dev",
+    "build": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
+    "test": "vitest run",
+    "test:e2e": "playwright test --project=e2e",
+    "test:screens": "playwright test --project=screens",
+    "perf": "playwright test --project=perf"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@fontsource/instrument-sans": "5.3.0",
+    "@fontsource/newsreader": "5.3.0",
+    "@sigma/node-border": "4.0.0",
+    "@tanstack/svelte-query": "6.4.4",
+    "@tanstack/svelte-virtual": "3.13.52",
+    "bits-ui": "2.21.0",
+    "d3-force": "3.0.1",
+    "d3-scale": "4.0.3",
+    "d3-shape": "3.2.1",
+    "graphology": "0.26.0",
+    "idb-keyval": "6.3.0",
+    "sigma": "4.0.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@sveltejs/adapter-static": "4.0.1",
+    "@sveltejs/kit": "3.4.0",
+    "@sveltejs/vite-plugin-svelte": "7.3.1",
+    "@types/d3-force": "3.0.10",
+    "@types/d3-scale": "4.0.9",
+    "@types/d3-shape": "3.2.0",
+    "@types/node": "24.19.2",
+    "graphology-types": "0.24.8",
+    "svelte": "5.58.0",
+    "svelte-check": "4.7.8",
+    "typescript": "6.0.3",
+    "vite": "8.3.8",
+    "vitest": "5.1.1"
+  }
+}

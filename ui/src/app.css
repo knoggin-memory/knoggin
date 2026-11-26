@@ -1,0 +1,160 @@
+/* Base styles. Every value comes from tokens.css (the single source in docs/ui). */
+@import '../../docs/ui/tokens.css';
+@import '@fontsource/newsreader/latin-400.css';
+@import '@fontsource/newsreader/latin-500.css';
+@import '@fontsource/newsreader/latin-400-italic.css';
+@import '@fontsource/instrument-sans/latin-400.css';
+@import '@fontsource/instrument-sans/latin-500.css';
+@import '@fontsource/instrument-sans/latin-600.css';
+@import '@fontsource/ibm-plex-mono/latin-400.css';
+@import '@fontsource/ibm-plex-mono/latin-500.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: var(--text-body);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--color-accent-text);
+}
+a:hover {
+  color: var(--color-accent-strong);
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: calc(var(--hairline) * 2) solid var(--color-accent);
+  outline-offset: calc(var(--hairline) * 2);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: var(--hairline);
+  height: var(--hairline);
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Shared primitives (DESIGN §5). */
+.mono {
+  font-family: var(--font-mono);
+}
+.micro-label {
+  font: var(--weight-medium) var(--text-label) var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+kbd {
+  font: normal var(--text-status) var(--font-mono);
+  color: var(--color-text-muted);
+  padding: var(--hairline) calc(var(--space-1) * 1.5);
+  border: var(--hairline) solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-h);
+  padding: 0 var(--space-3);
+  border: var(--hairline) solid var(--color-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text-2);
+  font: var(--weight-medium) var(--text-control) var(--font-sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.chip[aria-pressed='true'] {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent-soft-border);
+  color: var(--color-accent-strong);
+}
+.chip:hover {
+  border-color: var(--color-border-strong);
+}
+.btn-primary,
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: var(--button-h);
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-md);
+  font: var(--weight-medium) var(--text-button) var(--font-sans);
+  cursor: pointer;
+}
+.btn-primary {
+  background: var(--color-accent);
+  color: var(--color-on-accent);
+  border: 0;
+  font-weight: var(--weight-semibold);
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--color-text);
+  border: var(--hairline) solid var(--color-border-strong);
+}
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-btn);
+  height: var(--icon-btn);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.icon-btn:hover {
+  background: var(--color-accent-soft);
+  color: var(--color-text);
+}
+.card {
+  background: var(--color-surface);
+  border: var(--hairline) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--card-pad);
+}
+.card-title {
+  margin: 0;
+  font: var(--weight-regular) var(--text-section) var(--font-serif);
+}
+.skeleton {
+  background: var(--color-divider);
+  border-radius: var(--radius-sm);
+}
+.toolbar-divider {
+  width: var(--hairline);
+  height: var(--space-5);
+  background: var(--color-border);
+  margin: 0 var(--space-1);
+}
