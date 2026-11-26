@@ -2,8 +2,8 @@
 //! The log-marker test (tab "Security", Logs; tab "Engineering rules", rule 3): marker
 //! strings in every kind of sensitive value that milestone 3 has, every route and every
 //! tool run at log level `trace`, then all log output and the metrics page are searched,
-//! and the data folder too. The web UI's read models and its event stream are in it; the
-//! sign-in tokens (milestone 5) are not yet.
+//! and the data folder too. The web UI's read models and its event stream are in it, and
+//! a second test covers sign-in (milestone 5).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -707,6 +707,253 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
                 "the marker {m} is in {}",
                 path.display()
             );
+        }
+    }
+}
+
+/// A header of a raw answer.
+fn header_of(r: &support::Resp, name: &str) -> Vec<String> {
+    r.headers
+        .lines()
+        .filter_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.eq_ignore_ascii_case(name).then(|| v.trim().to_owned())
+        })
+        .collect()
+}
+
+/// The value of cookie `name` in an answer's `Set-Cookie` headers.
+fn set_cookie(r: &support::Resp, name: &str) -> String {
+    header_of(r, "set-cookie")
+        .into_iter()
+        .find_map(|c| {
+            let v = c.strip_prefix(&format!("{name}="))?.split(';').next()?;
+            (!v.is_empty()).then(|| v.to_owned())
+        })
+        .unwrap_or_else(|| panic!("no {name} cookie in {}", r.headers))
+}
+
+/// Milestone 5: a daemon with sign-in on against the test issuer, at log level `trace`.
+/// Markers sit in the sign-in subject, the email and the name; every secret of the flow
+/// (state, nonce, PKCE verifier and challenge, authorization code, the sealed login
+/// cookie, the session value, the ID and access tokens the exchange returned, and minted
+/// tokens, good and bad) is then searched for in the logs and the metrics page.
+#[test]
+fn no_sign_in_secret_or_identity_reaches_a_log() {
+    use knoggin_http::testing::issuer::{TEST_SECRET, TestIssuer};
+
+    const SUB: &str = "mkrsubjectq20";
+    const NAME: &str = "mkrnameq21";
+    let email = format!("{SUB}@test.example");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let issuer = rt.block_on(TestIssuer::start(true)).unwrap();
+    let port = free_port();
+    let metrics = free_port();
+    let public = format!("http://127.0.0.1:{port}");
+    let home = Home::new()
+        .with("KNOGGIN_LOG__LEVEL", "trace")
+        .with("KNOGGIN_METRICS__BIND", &format!("127.0.0.1:{metrics}"))
+        .with("KNOGGIN_SERVER__BIND", &format!("127.0.0.1:{port}"))
+        .with("KNOGGIN_SERVER__PUBLIC_URL", &public)
+        .with("KNOGGIN_AUTH__MODE", "oauth")
+        .with("KNOGGIN_AUTH__ISSUER", issuer.url())
+        .with("KNOGGIN_AUTH__WEB_CLIENT_ID", "web-client")
+        .with("KNOGGIN_AUTH__WEB_CLIENT_SECRET", TEST_SECRET)
+        .with("KNOGGIN_AUTH__ALLOWED_EMAILS", &email);
+    let mut d = home.daemon();
+    let mut secrets: Vec<String> = Vec::new();
+    let want = |r: &support::Resp, status: u16, what: &str| {
+        assert_eq!(r.status, status, "{what}: {} {}", r.headers, r.text());
+    };
+
+    // Web sign-in, step by step.
+    let r = home.tcp(
+        "GET",
+        &format!("/auth/login?return_to=/map&login_hint={SUB}"),
+        &[],
+        None,
+    );
+    want(&r, 303, "login");
+    let login = set_cookie(&r, "knoggin_login");
+    secrets.push(login.clone());
+    let to = header_of(&r, "location").remove(0);
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let back = rt.block_on(async { client.get(&to).send().await }).unwrap();
+    let callback = back.headers()["location"].to_str().unwrap().to_owned();
+    let path = callback.strip_prefix(&public).unwrap().to_owned();
+    let cookie = format!("knoggin_login={login}");
+    let r = home.tcp("GET", &path, &[("Cookie", &cookie)], None);
+    want(&r, 303, "callback");
+    let session = set_cookie(&r, "knoggin_session");
+    secrets.push(session.clone());
+    // The same callback again fails at the exchange (the code works once).
+    let r = home.tcp("GET", &path, &[("Cookie", &cookie)], None);
+    want(&r, 303, "replayed callback");
+    let browser = format!("knoggin_session={session}");
+    let ui = [("Cookie", browser.as_str()), ("X-Knoggin-UI", "1")];
+    let r = home.tcp("GET", "/v1/session", &ui, None);
+    want(&r, 200, "cookie session");
+    assert_eq!(r.json()["user"]["email"], email.as_str(), "{}", r.text());
+    want(
+        &home.tcp("GET", "/v1/stores", &ui, None),
+        200,
+        "cookie stores",
+    );
+    want(
+        &home.tcp(
+            "POST",
+            "/v1/stores",
+            &[("Cookie", &browser)],
+            Some(&json!({ "name": "x" })),
+        ),
+        403,
+        "write without the UI header",
+    );
+    want(
+        &home.tcp(
+            "POST",
+            "/v1/stores/00000000-0000-0000-0000-000000000000/keys",
+            &ui,
+            Some(&json!({ "name": "k" })),
+        ),
+        403,
+        "a key from a cookie session",
+    );
+
+    // Access tokens: good, of another person, and broken.
+    let mut claims = issuer.claims(SUB, &format!("{public}/mcp"));
+    claims["name"] = json!(NAME);
+    let token = issuer.mint(&claims);
+    let auth = format!("Bearer {token}");
+    let memory = json!({ "summary": "from a token" });
+    want(
+        &home.tcp(
+            "POST",
+            "/v1/memories",
+            &[("Authorization", &auth)],
+            Some(&memory),
+        ),
+        201,
+        "token save",
+    );
+    want(
+        &home.tcp("GET", "/v1/session", &[("Authorization", &auth)], None),
+        200,
+        "token session",
+    );
+    want(
+        &home.tcp("GET", "/v1/stores", &[("Authorization", &auth)], None),
+        403,
+        "token control",
+    );
+    let mcp = [
+        ("Authorization", auth.as_str()),
+        ("Accept", "application/json, text/event-stream"),
+    ];
+    let r = home.tcp(
+        "POST",
+        "/mcp",
+        &mcp,
+        Some(
+            &json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+            "protocolVersion": "2025-06-18", "capabilities": {},
+            "clientInfo": { "name": "agent", "version": "1" } } }),
+        ),
+    );
+    want(&r, 200, "token MCP");
+    let mut other = issuer.claims("mkrstrangerq22", &format!("{public}/mcp"));
+    other["name"] = json!(NAME);
+    let stranger = format!("Bearer {}", issuer.mint(&other));
+    want(
+        &home.tcp(
+            "GET",
+            "/v1/namespaces",
+            &[("Authorization", &stranger)],
+            None,
+        ),
+        403,
+        "not allowed",
+    );
+    let mut expired = claims.clone();
+    expired["exp"] = json!(1);
+    let expired = format!("Bearer {}", issuer.mint(&expired));
+    let r = home.tcp(
+        "GET",
+        "/v1/namespaces",
+        &[("Authorization", &expired)],
+        None,
+    );
+    want(&r, 401, "expired token");
+    assert!(header_of(&r, "www-authenticate")[0].contains("invalid_token"));
+    let broken = format!("{token}mkrbrokenq23");
+    want(
+        &home.tcp(
+            "POST",
+            "/mcp/plugin",
+            &[("Authorization", &format!("Bearer {broken}"))],
+            Some(&json!({})),
+        ),
+        401,
+        "broken token",
+    );
+    secrets.extend([token, broken, stranger, expired]);
+    want(
+        &home.tcp(
+            "GET",
+            "/.well-known/oauth-protected-resource/mcp",
+            &[],
+            None,
+        ),
+        200,
+        "metadata",
+    );
+    want(&home.tcp("POST", "/auth/logout", &ui, None), 204, "logout");
+    want(
+        &home.tcp("GET", "/v1/stores", &ui, None),
+        401,
+        "after logout",
+    );
+
+    let page = {
+        let mut s = std::net::TcpStream::connect(("127.0.0.1", metrics)).unwrap();
+        s.write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        let mut t = String::new();
+        s.read_to_string(&mut t).unwrap();
+        t
+    };
+    assert_eq!(d.stop(), 0);
+    let log = std::fs::read_to_string(home.root().join("logs/daemon.log")).unwrap();
+    assert!(
+        log.contains("route=/v1/memories"),
+        "trace logging did not run"
+    );
+    // The refusals were logged, by kind only.
+    assert!(log.contains("token_refused") && log.contains("sign_in_failed"));
+    let all = format!("{}\n{log}\n{page}", d.stderr());
+    let issued = issuer.secrets();
+    // state, nonce, challenge, code, verifier, the ID token and the access token.
+    assert!(issued.len() >= 7, "{} secrets", issued.len());
+    secrets.extend(issued);
+    secrets.extend([
+        SUB.to_owned(),
+        NAME.to_owned(),
+        email.clone(),
+        "mkrstrangerq22".into(),
+    ]);
+    for s in &secrets {
+        assert!(
+            !all.contains(s.as_str()),
+            "a sign-in secret or marker is in the logs: {s:.12}..."
+        );
+    }
+    for (path, bytes) in home.data_bytes() {
+        let text = String::from_utf8_lossy(&bytes);
+        for m in [SUB, NAME, email.as_str()] {
+            assert!(!text.contains(m), "the marker {m} is in {}", path.display());
         }
     }
 }

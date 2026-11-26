@@ -423,3 +423,21 @@ fn use_previous_with_json_needs_yes() {
     assert!(o.stdout.is_empty(), "{}", o.stdout);
     assert!(o.stderr.contains("--yes"), "{}", o.stderr);
 }
+
+#[test]
+fn the_test_issuer_refuses_to_start_outside_test_mode() {
+    let home = Home::new();
+    let o = home
+        .cmd(&[
+            "test-issuer",
+            "--bind",
+            "127.0.0.1:0",
+            "--issuer-url",
+            "http://127.0.0.1:1",
+        ])
+        .env_remove("KNOGGIN_TEST_MODE")
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("test mode only"));
+}

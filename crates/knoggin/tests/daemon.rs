@@ -540,3 +540,62 @@ fn an_open_event_stream_does_not_hold_up_a_stop() {
     assert_eq!(d.stop(), 0);
     assert!(!d.stderr().contains("drain_timeout"), "{}", d.stderr());
 }
+
+/// A home in sign-in mode against `issuer`, on a fixed port that is also the public URL.
+fn oauth_home(issuer: &str) -> (Home, u16) {
+    let port = std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port();
+    let home = Home::new()
+        .with("KNOGGIN_SERVER__BIND", &format!("127.0.0.1:{port}"))
+        .with(
+            "KNOGGIN_SERVER__PUBLIC_URL",
+            &format!("http://127.0.0.1:{port}"),
+        )
+        .with("KNOGGIN_AUTH__MODE", "oauth")
+        .with("KNOGGIN_AUTH__ISSUER", issuer)
+        .with("KNOGGIN_AUTH__WEB_CLIENT_ID", "web-client")
+        .with("KNOGGIN_AUTH__WEB_CLIENT_SECRET", "test-secret")
+        .with("KNOGGIN_AUTH__ALLOWED_EMAILS", "alice@test.example");
+    (home, port)
+}
+
+#[test]
+fn sign_in_discovery_at_start() {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let issuer = rt
+        .block_on(knoggin_http::testing::issuer::TestIssuer::start(true))
+        .unwrap();
+    // A discovery document that names another issuer stops the start, with both values.
+    let (home, _) = oauth_home(&format!("{}/", issuer.url()));
+    let o = home.run(&["daemon"]);
+    assert_ne!(o.code, 0);
+    assert!(
+        o.stderr.contains("is not auth.issuer") && o.stderr.contains(issuer.url()),
+        "{}",
+        o.stderr
+    );
+    // An unreachable provider: the daemon serves the socket and answers `unavailable` on
+    // the sign-in routes.
+    let gone = format!("http://127.0.0.1:{}", {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    });
+    let (home, _) = oauth_home(&gone);
+    let mut d = home.daemon();
+    assert_eq!(home.sock("GET", "/v1/stores", &[], None).status, 200);
+    assert_eq!(home.tcp("GET", "/auth/login", &[], None).status, 503);
+    assert_eq!(d.stop(), 0);
+    // A provider that answers: the sign-in route sends the browser to it.
+    let (home, _) = oauth_home(issuer.url());
+    let mut d = home.daemon();
+    let r = home.tcp("GET", "/auth/login", &[], None);
+    assert_eq!(r.status, 303, "{}", r.text());
+    assert!(r.headers.contains(&format!("{}/authorize?", issuer.url())));
+    assert_eq!(d.stop(), 0);
+}
