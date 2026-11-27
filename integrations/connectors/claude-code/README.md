@@ -1,4 +1,4 @@
-<!-- Checked 2026-11-26 against `claude mcp add --help` of Claude Code 2.1.332 on the build machine, and the `.mcp.json` files of its official marketplace. The vendor's online documentation was not read (the build contacts no outside service). -->
+<!-- Checked against code.claude.com/docs/en/mcp and code.claude.com/docs/en/skills on 2026-11-27. -->
 
 # Claude Code
 

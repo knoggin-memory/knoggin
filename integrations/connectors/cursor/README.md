@@ -1,4 +1,4 @@
-<!-- UNVERIFIED 2026-11-26: Cursor's documentation was not read (the build contacts no outside service). The snippets follow its `mcp.json` format as known on that date; the skills folder is the least certain part. -->
+<!-- Checked against cursor.com/docs/context/mcp and cursor.com/docs/skills on 2026-11-27. -->
 
 # Cursor
 
@@ -9,4 +9,4 @@
 
 **An app's store.** Set `KNOGGIN_API_KEY` to the app's key in the environment Cursor runs in, and use the local entry.
 
-**The skill.** Copy `skills/knoggin-memory` to `~/.cursor/skills/`, if your Cursor version reads Agent Skills.
+**The skill.** Copy `skills/knoggin-memory` to `~/.cursor/skills/` or `~/.agents/skills/`.

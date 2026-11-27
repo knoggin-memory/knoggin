@@ -1,4 +1,4 @@
-<!-- UNVERIFIED 2026-11-26: Kiro's documentation was not read (the build contacts no outside service). The snippets follow its `mcp.json` as known on that date. -->
+<!-- Checked against kiro.dev/docs/mcp/configuration on 2026-11-27. -->
 
 # Kiro
 

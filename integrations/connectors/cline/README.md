@@ -1,4 +1,4 @@
-<!-- UNVERIFIED 2026-11-26: Cline's documentation was not read (the build contacts no outside service). The snippets follow its `cline_mcp_settings.json` as known on that date. -->
+<!-- Checked against docs.cline.bot/mcp/configuring-mcp-servers on 2026-11-27. -->
 
 # Cline
 

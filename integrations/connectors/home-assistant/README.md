@@ -1,12 +1,12 @@
-<!-- UNVERIFIED 2026-11-26: Home Assistant's documentation was not read (the build contacts no outside service). It is set up in its integrations page, so there is no snippet. Whether your version speaks streamable HTTP, which Knoggin needs, could not be checked. -->
+<!-- Checked against home-assistant.io/integrations/mcp on 2026-11-27. -->
 
 # Home Assistant
 
-Use the **Model Context Protocol** integration. There is no file to edit.
+Use the **Model Context Protocol Client** integration. There is no file to edit. It signs in with OAuth only, so Knoggin needs sign-in on ([sign-in guide](../../../docs/sign-in.md)); it has no field for an API key.
 
 1. Open **Settings**, **Devices & services**, and add the integration.
-2. Give the address `https://memory.example.com/mcp`, with your server's host. Knoggin speaks streamable HTTP only, not the older SSE transport.
-3. Sign in through your identity provider when Home Assistant asks, or give it an API key if it asks for a token. Keep the key in `KNOGGIN_API_KEY` where you keep secrets.
-4. Pick the integration as a tool source for your conversation agent.
+2. Give the address `https://memory.example.com/mcp`, with your server's host. Home Assistant tries streamable HTTP first, which is what Knoggin speaks.
+3. When Home Assistant sees that the server needs sign-in, it asks for an OAuth client ID and secret. Knoggin issues none: make an OAuth client for Home Assistant in your identity provider and give its ID and secret. Home Assistant then opens your identity provider's sign-in page. When you are done, you are back in Home Assistant. Knoggin shows no page of its own.
+4. In **Settings**, **Devices & services**, open the settings (the cogwheel) of your conversation agent and pick Knoggin under its AI tools.
 
-**Read-only key.** This agent can run tools without asking you first. Give it a read-only key, so that it can recall but never save, change or forget: on a local install `knoggin keys create --read-only --name <agent>`, on a server a read-only key from the web UI's API keys page.
+**No read-only key.** A conversation agent runs tools without asking you first, and Home Assistant has no place for a read-only key: it signs in as you and gets your full access.

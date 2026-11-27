@@ -70,15 +70,15 @@ For a server, use `"type":"http","url":"https://<your server>/mcp"` instead; VS 
 
 ## Zed
 
-Add `knoggin` under `context_servers` in Zed's `settings.json`, with the command `knoggin mcp`. For a server, use `knoggin mcp --url https://<your server>/mcp` with an API key in `KNOGGIN_API_KEY`. See [`integrations/connectors/zed`](../integrations/connectors/zed/README.md).
+Add `knoggin` under `context_servers` in Zed's `settings.json`, with the command `knoggin mcp`, or for a server the address `https://<your server>/mcp`, where Zed signs you in. See [`integrations/connectors/zed`](../integrations/connectors/zed/README.md).
 
 ## opencode
 
-Add `knoggin` under `mcp` in `~/.config/opencode/opencode.json`: a `local` entry with the command `["knoggin", "mcp"]`, or a `remote` entry with `https://<your server>/mcp`. See [`integrations/connectors/opencode`](../integrations/connectors/opencode/README.md).
+Add `knoggin` under `mcp.servers` in `~/.config/opencode/opencode.json`: a `local` entry with the command `["knoggin", "mcp"]`, or a `remote` entry with `https://<your server>/mcp`. See [`integrations/connectors/opencode`](../integrations/connectors/opencode/README.md).
 
 ## OpenClaw
 
-Add an MCP server that runs `knoggin mcp`, and copy the memory skill into OpenClaw's skills folder. There is no snippet for OpenClaw yet. See [`integrations/connectors/openclaw`](../integrations/connectors/openclaw/README.md).
+Add `knoggin` under `mcp.servers` in OpenClaw's config, or with `openclaw mcp set`, and copy the memory skill to `~/.openclaw/skills/`. See [`integrations/connectors/openclaw`](../integrations/connectors/openclaw/README.md).
 
 ## Hermes Agent
 
