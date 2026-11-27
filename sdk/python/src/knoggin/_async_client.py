@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from . import _ops, _transport, typed
 from ._config import resolve
 from ._transport import Attempt, Op, api_error, before_send, client_args, no_answer, note_expiry, parse, query
-from .errors import ConfigurationError, WriteOutcomeUnknown
+from .errors import WriteOutcomeUnknown
 from .models import ImportResult, Memory, TagCount
 
 P = ParamSpec("P")
@@ -200,8 +200,8 @@ class AsyncClient(_Runner):
                 )
             except httpx.TransportError as e:
                 err = no_answer(e, self._settings)
-                if isinstance(err, ConfigurationError):
-                    raise err from None
+                if isinstance(e, httpx.ConnectError | httpx.ConnectTimeout):
+                    raise err from None  # no connection was made, so nothing was sent
                 raise WriteOutcomeUnknown(f"The import may or may not have been applied: {err.message}") from err
         if r.is_success:
             return parse(Op("POST", "/v1/import", ImportResult.model_validate), r)

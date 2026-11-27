@@ -336,6 +336,19 @@ def test_import_streams_the_file_once(api: respx.MockRouter, kind: str, tmp_path
 
 
 @pytest.mark.parametrize("kind", ["sync", "async"])
+def test_an_import_that_cannot_connect_sent_nothing(api: respx.MockRouter, kind: str, tmp_path: Any) -> None:
+    from knoggin import KnogginConnectionError, WriteOutcomeUnknown
+
+    route = api.post("/v1/import").mock(side_effect=httpx.ConnectError("refused"))
+    f = tmp_path / "in.jsonl"
+    f.write_bytes(b"{}\n")
+    with pytest.raises(KnogginConnectionError) as caught:
+        run(make(kind).import_(f))
+    assert not isinstance(caught.value, WriteOutcomeUnknown)
+    assert route.call_count == 1
+
+
+@pytest.mark.parametrize("kind", ["sync", "async"])
 def test_an_import_without_an_answer_is_not_retried(api: respx.MockRouter, kind: str, tmp_path: Any) -> None:
     from knoggin import WriteOutcomeUnknown
 
