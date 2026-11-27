@@ -29,6 +29,8 @@ const QUERY: &str = "mkrqueryq8";
 const APP: &str = "mkrappq9";
 const KEY_NAME: &str = "mkrkeynameq10";
 const CLIENT: &str = "mkrclientq11";
+/// The client of an app's last write, which its store record holds (sealed).
+const LAST_CLIENT: &str = "mkrlastclientq13";
 
 fn modern(id: i64, method: &str, mut params: Value) -> Value {
     params["_meta"] = json!({
@@ -470,7 +472,6 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
     ] {
         want(&home.sock(m, &p, &[], None), status, &format!("{m} {p}"));
     }
-
     // The local web session: a one-time code over the socket, a session on the web listener.
     let r = home.sock("POST", "/v1/local/browser-code", &[], None);
     want(&r, 200, "browser code");
@@ -524,6 +525,27 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
         "undelete account",
     );
     want(&undelete_user(), 409, "undelete a user that is not deleted");
+
+    // The app's last write is an MCP save that names its client.
+    let save = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": "store_memory", "arguments": memory.clone(), "_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": { "name": LAST_CLIENT, "version": "1" },
+            "io.modelcontextprotocol/clientCapabilities": {} } } });
+    let r = home.sock(
+        "POST",
+        "/mcp",
+        &[
+            ("Knoggin-Store", app_id.as_str()),
+            ("Accept", "application/json, text/event-stream"),
+            ("Mcp-Method", "tools/call"),
+            ("Mcp-Protocol-Version", "2026-07-28"),
+            ("Mcp-Name", "store_memory"),
+        ],
+        Some(&save),
+    );
+    want(&r, 200, "app MCP save");
+    assert!(r.json()["result"]["isError"].is_null(), "{}", r.text());
 
     // The MCP endpoint over HTTP: no stream, and the older revision with its session.
     let mcp_headers = [("Accept", "application/json, text/event-stream")];
@@ -687,7 +709,18 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
         }
     }
     let mut markers: Vec<String> = [
-        SUMMARY, FULL, TAG, ENTITY, TOPIC, EMOTION, NAMESPACE, QUERY, APP, KEY_NAME, CLIENT,
+        SUMMARY,
+        FULL,
+        TAG,
+        ENTITY,
+        TOPIC,
+        EMOTION,
+        NAMESPACE,
+        QUERY,
+        APP,
+        KEY_NAME,
+        CLIENT,
+        LAST_CLIENT,
     ]
     .iter()
     .map(|m| (*m).to_owned())
@@ -709,6 +742,13 @@ fn no_marker_reaches_a_log_the_metrics_page_or_the_data_folder() {
             );
         }
     }
+    // The search above covered the record of the app's last write: a daemon started
+    // again reads the client's name back from it.
+    let mut d = home.daemon();
+    let r = home.sock("GET", &format!("/v1/stores/{app_id}"), &[], None);
+    want(&r, 200, "the app after a restart");
+    assert_eq!(r.json()["lastWriteClient"], LAST_CLIENT, "{}", r.text());
+    assert_eq!(d.stop(), 0);
 }
 
 /// A header of a raw answer.

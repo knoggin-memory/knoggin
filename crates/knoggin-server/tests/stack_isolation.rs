@@ -274,6 +274,30 @@ async fn isolation_on_the_one_host_stack() {
         200
     );
 
+    // I14: the client of app X's last write, which X's record holds once the park saves.
+    let client = format!("client{sfx}");
+    let mcp_text = format!("a-appx-mcp-{sfx}");
+    let r = s
+        .call(
+            Method::POST,
+            "/mcp",
+            &ax_key,
+            &[
+                ("mcp-method", "tools/call"),
+                ("mcp-protocol-version", "2026-07-28"),
+                ("mcp-name", "store_memory"),
+            ],
+            Some(
+                json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+                "name": "store_memory", "arguments": { "summary": mcp_text }, "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientInfo": { "name": client, "version": "1" },
+                    "io.modelcontextprotocol/clientCapabilities": {} } } }),
+            ),
+        )
+        .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(r.json()["result"]["isError"].is_null(), "{}", r.body);
     // I9: from inside A's container, only the router's internal port answers.
     let ca = s.container_of(&a).expect("A's container");
     let cb = s.container_of(&b).expect("B's container");
@@ -319,7 +343,15 @@ async fn isolation_on_the_one_host_stack() {
 
     // I14: nothing at rest is plaintext, and no log holds a marker or a secret.
     let mut markers: Vec<String> = texts.to_vec();
-    markers.extend([a.sub.clone(), b.sub.clone(), ax_name, ay_name, bx_name]);
+    markers.extend([
+        a.sub.clone(),
+        b.sub.clone(),
+        ax_name,
+        ay_name,
+        bx_name,
+        client,
+        mcp_text,
+    ]);
     markers.extend(key_names);
     let mut secrets = s.secrets.clone();
     secrets.extend(keys.iter().map(|(_, k)| match k {
