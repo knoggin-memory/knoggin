@@ -170,6 +170,10 @@ jobs:
         with:
           persist-credentials: false
       - run: rustup toolchain install
+      # fuzz/ is a workspace of its own. A bump in the root workspace can leave its lock
+      # file behind, which only the weekly fuzz job would notice.
+      - name: fuzz/Cargo.lock matches
+        run: cargo metadata --locked --format-version 1 --manifest-path fuzz/Cargo.toml > /dev/null
       - name: Install cargo-deny
         run: |
           curl -fsSL -o "$RUNNER_TEMP/deny.tar.gz" https://github.com/EmbarkStudios/cargo-deny/releases/download/0.21.0/cargo-deny-0.21.0-x86_64-unknown-linux-musl.tar.gz
