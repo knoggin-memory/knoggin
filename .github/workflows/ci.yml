@@ -349,8 +349,9 @@ jobs:
 
   # The SDK tier: unit tests, and contract tests against a daemon built from this commit
   # and started in test mode, on the lowest and the highest supported Python; the linters
-  # and type checkers the SDK tab names; and `uv build`. uv comes from its PyPI wheel,
-  # checked against its SHA-256; uv checks the Python builds it downloads itself.
+  # and type checkers the SDK tab names; `uv build`; and the integrations test. uv comes
+  # from its PyPI wheel, checked against its SHA-256; uv checks the Python builds it
+  # downloads itself.
   sdk:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
@@ -375,6 +376,9 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/uv"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: uv python install 3.11.18 3.15.2
+      # The integrations test: plugin, registry and snippet files, and their versions.
+      - run: uv run --no-project --python 3.15.2 --with pytest==9.2.0 --with pyyaml==6.0.4 python -m pytest integrations/tests -q
+        working-directory: .
       - run: rustup toolchain install
         working-directory: .
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
