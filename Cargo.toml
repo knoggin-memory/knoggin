@@ -47,7 +47,7 @@ hyper = { version = "1", features = ["server", "client", "http1", "http2"] }
 hyper-util = { version = "0.1.21", features = ["client-legacy", "server", "server-auto", "server-graceful", "service", "http1", "http2", "tokio"] }
 hyper-rustls = { version = "0.27.10", default-features = false, features = ["aws-lc-rs", "http1", "http2"] }
 tower = { version = "0.5.3", features = ["limit", "timeout", "util"] }
-tower-http = { version = "0.6.8", features = ["trace", "timeout", "limit", "request-id", "sensitive-headers", "catch-panic"] }
+tower-http = { version = "0.7.1", features = ["trace", "timeout", "limit", "request-id", "sensitive-headers", "catch-panic"] }
 rustls = { version = "0.23.46", default-features = false, features = ["aws_lc_rs", "std", "logging", "tls12", "prefer-post-quantum"] }
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["aws_lc_rs"] }
 rcgen = { version = "0.14.10", default-features = false, features = ["aws_lc_rs", "pem"] }
