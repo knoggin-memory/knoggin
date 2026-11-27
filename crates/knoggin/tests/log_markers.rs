@@ -824,13 +824,21 @@ fn sign_in_markers(basic: bool) {
         assert_eq!(r.status, status, "{what}: {} {}", r.headers, r.text());
     };
 
-    // Web sign-in, step by step.
-    let r = home.tcp(
-        "GET",
-        &format!("/auth/login?return_to=/map&login_hint={SUB}"),
-        &[],
-        None,
-    );
+    // Web sign-in, step by step. Discovery runs in the background, and until it has
+    // worked the sign-in routes answer `unavailable`: ask again until they don't.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let r = loop {
+        let r = home.tcp(
+            "GET",
+            &format!("/auth/login?return_to=/map&login_hint={SUB}"),
+            &[],
+            None,
+        );
+        if r.status != 503 || std::time::Instant::now() >= deadline {
+            break r;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
     want(&r, 303, "login");
     let login = set_cookie(&r, "knoggin_login");
     secrets.push(login.clone());
