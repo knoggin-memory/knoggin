@@ -18,8 +18,22 @@ FROM busybox@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e
 # ---------------------------------------------------------------------------- ui
 # node:26
 FROM node@sha256:f8e5d4bb28fa55c74f1345166a082a10b7c68f22304350c1ce0d18358ae94996 AS ui
+ARG TARGETARCH
+# pnpm 12.21.0 as the prebuilt archive CI uses, checked by SHA-256.
+RUN set -eu; \
+    case "$TARGETARCH" in \
+        arm64) arch=arm64; sum=6c5913a48c93b3a556b71c3bd9bf12c6bf9fbfbbbd2dcbd1d52a85c539751b9e ;; \
+        amd64) arch=x64; sum=84c4773bcf4a217f4083cd7b2a91e4cee6103cf42426c1282ef37d308f55a410 ;; \
+        *) echo "unsupported TARGETARCH $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL --retry 3 -o /tmp/pnpm.tar.gz \
+        "https://github.com/pnpm/pnpm/releases/download/v12.21.0/pnpm-linux-$arch.tar.gz"; \
+    echo "$sum  /tmp/pnpm.tar.gz" | sha256sum -c -; \
+    mkdir /opt/pnpm; \
+    tar -xzf /tmp/pnpm.tar.gz -C /opt/pnpm; \
+    rm /tmp/pnpm.tar.gz
+ENV PATH=/opt/pnpm:$PATH
 WORKDIR /src
-RUN npm install -g pnpm@12.21.0
 COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ui/
 RUN pnpm -C ui install --frozen-lockfile
 COPY ui ui
