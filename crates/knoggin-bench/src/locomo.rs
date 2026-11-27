@@ -355,15 +355,26 @@ fn turn_text(turn: &crate::data::Turn) -> String {
     text
 }
 
+/// What ingesting one conversation did.
+struct Ingested {
+    stored: usize,
+    /// Turns whose ingestion call failed; each is in `debug`.
+    failed_turns: usize,
+    debug: String,
+}
+
 /// Feeds every turn to the ingestion model and saves what it returns. A refused save
-/// is skipped and reported, as an agent would move on.
+/// is skipped and reported, as an agent would move on; so is a turn whose ingestion
+/// call fails, which is counted.
 async fn ingest_conversation(
     harness: &Arc<Harness>,
     conv: &Conversation,
     llm: &LlmClient,
     label: &str,
-) -> anyhow::Result<usize> {
+) -> anyhow::Result<Ingested> {
     let mut stored_memories: Vec<(String, String)> = Vec::new();
+    let mut failed_turns = 0;
+    let mut debug = String::new();
     let mut recent_turns: Vec<String> = Vec::new();
     let total_turns = conv.turns.len();
 
@@ -374,10 +385,20 @@ async fn ingest_conversation(
         let text = turn_text(turn);
         let context = &recent_turns[recent_turns.len().saturating_sub(CONTEXT_WINDOW)..];
         let recent_mems = &stored_memories[stored_memories.len().saturating_sub(MEMORY_WINDOW)..];
-        let memories = llm
+        let memories = match llm
             .process_turn(context, &text, recent_mems, turn.timestamp_ms)
             .await
-            .unwrap_or_default();
+        {
+            Ok(memories) => memories,
+            Err(error) => {
+                failed_turns += 1;
+                let _ = writeln!(
+                    debug,
+                    "  {label}: ingestion of turn {turn_idx} failed: {error:#}"
+                );
+                Vec::new()
+            }
+        };
 
         for mem in memories {
             let ts = turn.timestamp_ms;
@@ -396,7 +417,11 @@ async fn ingest_conversation(
         }
         recent_turns.push(text);
     }
-    Ok(stored_memories.len())
+    Ok(Ingested {
+        stored: stored_memories.len(),
+        failed_turns,
+        debug,
+    })
 }
 
 // ── Search ────────────────────────────────────────────────────────
@@ -695,6 +720,7 @@ pub(crate) struct ConversationResult {
     id: String,
     turns: usize,
     memories_stored: usize,
+    ingest_failed_turns: usize,
     qa_total: usize,
     qa_correct: usize,
     accuracy: f64,
@@ -718,6 +744,8 @@ pub(crate) struct LocomoReport {
     pub(crate) total_conversations: usize,
     pub(crate) total_qa: usize,
     pub(crate) total_turns: usize,
+    /// Turns whose ingestion call failed, so nothing was saved for them.
+    pub(crate) ingest_failed_turns: usize,
     pub(crate) total_correct: usize,
     pub(crate) accuracy: f64,
     /// Wilson score interval, 95%, in percent.
@@ -794,6 +822,13 @@ pub(crate) fn format_report(report: &LocomoReport) -> String {
         report.full_text_count,
         report.total_turns,
     );
+    if report.ingest_failed_turns > 0 {
+        let _ = writeln!(
+            out,
+            "  WARNING: ingestion failed for {} of {} turns; nothing was saved for them\n",
+            report.ingest_failed_turns, report.total_turns
+        );
+    }
     let _ = writeln!(
         out,
         "  Overall accuracy:  {:.1}% ({}/{}), 95% CI [{:.1}%, {:.1}%]\n",
@@ -963,11 +998,14 @@ async fn run_conversation(
     let harness = Arc::new(Harness::new(embedders));
     eprintln!("  {tag}: ingesting...");
     let start = Instant::now();
-    let stored = ingest_conversation(&harness, &conv, &models.ingest, &tag)
+    let ingested = ingest_conversation(&harness, &conv, &models.ingest, &tag)
         .await
         .with_context(|| format!("{tag}: ingestion failed"))?;
     let ingestion_secs = start.elapsed().as_secs_f64();
-    eprintln!("  {tag}: ingested {stored} memories in {ingestion_secs:.1}s");
+    eprintln!(
+        "  {tag}: ingested {} memories in {ingestion_secs:.1}s, {} turns failed",
+        ingested.stored, ingested.failed_turns
+    );
 
     let qa_total = active.len();
     let sem = Arc::new(tokio::sync::Semaphore::new(qa_parallel.max(1)));
@@ -1028,14 +1066,15 @@ async fn run_conversation(
         result: ConversationResult {
             id: conv.id.clone(),
             turns: conv.turns.len(),
-            memories_stored: stored,
+            memories_stored: ingested.stored,
+            ingest_failed_turns: ingested.failed_turns,
             qa_total,
             qa_correct: outcomes.iter().filter(|o| o.result.correct).count(),
             accuracy: 0.0,
             ingestion_secs,
             questions: Vec::new(),
         },
-        debug: String::new(),
+        debug: ingested.debug,
         retrieval: Vec::new(),
         answer: Vec::new(),
         judge: Vec::new(),
@@ -1145,6 +1184,7 @@ pub(crate) async fn run(
         answer.extend(outcome.answer);
         judge.extend(outcome.judge);
         chars.extend(outcome.context_chars);
+        report.ingest_failed_turns += outcome.result.ingest_failed_turns;
         for q in &outcome.result.questions {
             let stats = report.categories.entry(q.category.clone()).or_default();
             stats.total += 1;
@@ -1557,6 +1597,8 @@ mod tests {
         assert_eq!(report["total_correct"], 3);
         assert_eq!(report["judge_style"], "mem0");
         assert_eq!(report["per_conversation"][0]["memories_stored"], 4);
+        assert_eq!(report["per_conversation"][0]["ingest_failed_turns"], 0);
+        assert_eq!(report["ingest_failed_turns"], 0);
         assert_eq!(report["categories"]["adversarial"]["total"], 1);
 
         let requests = server.received_requests().await.unwrap();
@@ -1592,5 +1634,54 @@ mod tests {
         let log = std::fs::read_to_string(dir.path().join("bench_debug.log")).unwrap();
         assert_eq!(log.matches("MemCtx: ").count(), 3);
         assert!(log.contains("\"memories\":4"));
+    }
+
+    /// A turn whose ingestion call fails is counted, logged, and the run goes on.
+    #[tokio::test]
+    async fn a_failed_ingestion_turn_is_counted_and_logged() {
+        use serde_json::json;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(|req: &Request| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                let user = body["messages"][1]["content"].as_str().unwrap().to_owned();
+                let turn = user.rsplit('\n').next().unwrap();
+                if turn.contains("sold a painting") {
+                    return ResponseTemplate::new(400);
+                }
+                let content = json!({"store_memory": [{"summary": turn}]}).to_string();
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "choices": [{"message": {"role": "assistant", "content": content}}]
+                }))
+            })
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("locomo.json");
+        std::fs::write(&data, DATA).unwrap();
+        let conv = crate::data::load(&data, 0).unwrap().remove(0);
+        let llm = LlmClient::new("stub", &server.uri(), None, JudgeStyle::Recalld)
+            .unwrap()
+            .without_backoff();
+        let harness = Arc::new(Harness::new(embedders()));
+        let ingested = ingest_conversation(&harness, &conv, &llm, "t")
+            .await
+            .unwrap();
+        assert_eq!(ingested.stored, 3);
+        assert_eq!(ingested.failed_turns, 1);
+        assert_eq!(ingested.debug.matches("ingestion of turn").count(), 1);
+        assert!(ingested.debug.contains("t: ingestion of turn 3 failed"));
+
+        let report = LocomoReport {
+            total_turns: 4,
+            ingest_failed_turns: 1,
+            ..LocomoReport::default()
+        };
+        assert!(format_report(&report).contains("ingestion failed for 1 of 4 turns"));
     }
 }
