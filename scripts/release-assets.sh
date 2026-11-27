@@ -32,6 +32,9 @@ set -- knoggin-"$version"-*.tar.gz
 }
 
 stamp="s/@VERSION@/$version/g"
+unpacked=
+trap 'rm -rf "$unpacked"' EXIT
+trap 'exit 130' INT TERM
 for archive in "$@"; do
     target=${archive#knoggin-"$version"-}
     target=${target%.tar.gz}
