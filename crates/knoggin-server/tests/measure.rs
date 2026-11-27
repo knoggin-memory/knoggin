@@ -15,7 +15,7 @@
 //! - `seaweedfs`: the bucket self-test and an upload that outlasts its link (M7).
 //!
 //! Environment: `KNOGGIN_MEASURE_SIZE` (memories, default 1,500), `KNOGGIN_MEASURE_MEMORY_MIB`
-//! (`containers.memory_mib`, default 1,024; the spec says 4,096 at 75,000),
+//! (`containers.memory_mib`, default 1,536; the spec says 4,096 at 75,000),
 //! `KNOGGIN_MEASURE_IMAGE` (default `knoggin:measure`, built from the working tree without
 //! `SKIP_MODEL` when missing), `KNOGGIN_MEASURE_DIR` (default `target/measure`),
 //! `KNOGGIN_MEASURE_RUNS` (M2 runs, default 5), `KNOGGIN_MEASURE_FILL_ONLY=1` (`server`
@@ -70,7 +70,7 @@ fn env() -> Env {
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     Env {
         size: var("KNOGGIN_MEASURE_SIZE").map_or(1500, |v| v.parse().unwrap()),
-        memory_mib: var("KNOGGIN_MEASURE_MEMORY_MIB").map_or(1024, |v| v.parse().unwrap()),
+        memory_mib: var("KNOGGIN_MEASURE_MEMORY_MIB").map_or(1536, |v| v.parse().unwrap()),
         image: var("KNOGGIN_MEASURE_IMAGE").unwrap_or_else(|| "knoggin:measure".into()),
         dir: var("KNOGGIN_MEASURE_DIR")
             .map_or_else(|| Path::new(ROOT).join("target/measure"), PathBuf::from),

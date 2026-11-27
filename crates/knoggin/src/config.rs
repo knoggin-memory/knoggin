@@ -526,7 +526,7 @@ impl Default for Containers {
     fn default() -> Self {
         Self {
             user_net_cidr: "10.201.0.0/16".into(),
-            memory_mib: 1024,
+            memory_mib: 1536,
             pool_target: 2,
             max: 0,
             idle_seconds: 600,

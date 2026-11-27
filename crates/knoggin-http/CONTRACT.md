@@ -29,7 +29,7 @@ let router = store_layer(host.clone());
 ```
 
 `HostConfig::local(model)` is the daemon's configuration; a container sets `timing:
-SnapshotTiming::SERVER`, `memory_budget: Some((limit - 640 MiB) * 0.4)`, `idle_close:
+SnapshotTiming::SERVER`, `memory_budget: Some((limit - 928 MiB) * 0.4)`, `idle_close:
 Some(idleSeconds)`, `embed_allowance: Some(30 min)`, `web_url`, and `limits` from the claim.
 Fill the `OnceCell` before sending `ModelStatus::Ready`.
 

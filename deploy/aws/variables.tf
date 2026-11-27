@@ -111,7 +111,7 @@ variable "max_hosts" {
 variable "container_memory_mib" {
   description = "Memory of one user container: the task definition's limit and containers.memory_mib."
   type        = number
-  default     = 1024
+  default     = 1536
 }
 
 variable "pool_target" {

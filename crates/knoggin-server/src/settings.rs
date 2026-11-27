@@ -17,13 +17,13 @@ use crate::launcher::LogLevel;
 use crate::link::InternalSecret;
 
 /// The memory the model may take at its peak, kept out of a container's store budget.
-pub const MODEL_RESERVE_BYTES: u64 = 640 * 1024 * 1024;
+pub const MODEL_RESERVE_BYTES: u64 = 928 * 1024 * 1024;
 
 /// How many store budgets one user's containers may upload in an hour by default.
 pub const UPLOAD_BUDGETS_PER_HOUR: u64 = 720;
 
 /// The bytes all open stores of a container may hold together:
-/// `(memory_limit_bytes - 640 MiB) * 0.4` (tab "Server", memory budget).
+/// `(memory_limit_bytes - 928 MiB) * 0.4` (tab "Server", memory budget).
 pub fn store_budget(memory_limit_bytes: u64) -> u64 {
     memory_limit_bytes.saturating_sub(MODEL_RESERVE_BYTES) / 5 * 2
 }
@@ -240,7 +240,7 @@ fn default_user_net() -> Cidr {
 }
 
 fn default_memory_mib() -> u64 {
-    1024
+    1536
 }
 
 /// `containers.*` as the router reads them.
@@ -250,7 +250,7 @@ pub struct ContainerSettings {
     /// `containers.user_net_cidr` (`10.201.0.0/16`): one host only; the internal
     /// listener's allowed peers.
     pub user_net_cidr: Cidr,
-    /// `containers.memory_mib` (1,024): the limit the claim tells a container.
+    /// `containers.memory_mib` (1,536): the limit the claim tells a container.
     pub memory_mib: u64,
     /// `containers.pool_target` (2): ready containers to keep.
     pub pool_target: u32,
@@ -472,9 +472,9 @@ mod tests {
 
     #[test]
     fn budgets() {
-        // 1,024 MiB: (1024 - 640) MiB * 0.4 = 153.6 MiB.
-        let budget = store_budget(1024 * 1024 * 1024);
-        assert_eq!(budget, (384 * 1024 * 1024) / 5 * 2);
+        // 1,536 MiB: (1536 - 928) MiB * 0.4 = 243.2 MiB.
+        let budget = store_budget(1536 * 1024 * 1024);
+        assert_eq!(budget, (608 * 1024 * 1024) / 5 * 2);
         assert_eq!(store_budget(100), 0);
         let settings = RouterSettings {
             trusted_proxies: vec![],
@@ -491,7 +491,7 @@ mod tests {
             rollout: RolloutSettings::default(),
             log_level: LogLevel::Info,
         };
-        // About 108 GiB.
+        // About 171 GiB.
         assert_eq!(settings.upload_bytes_per_hour(), 720 * budget);
         assert_eq!(settings.storage.link_ttl_seconds, 300);
         assert_eq!(settings.internal.bind.port(), 8443);

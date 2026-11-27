@@ -88,7 +88,7 @@ Required variables:
 | `auth_web_client_secret_arn`, `internal_secret_arn`, `internal_cert_arn`, `internal_key_arn` | The four ARNs from step 2 |
 | `admin_subjects` or `admin_emails` | At least one. Subjects are recommended |
 
-Optional, with defaults: `instance_type` (`m8g.xlarge`), `min_hosts` (1), `max_hosts` (4), `container_memory_mib` (1024), `pool_target` (2), `retention_days` (7), `allowed_email_domains` (empty), `dns_allow` (empty), and `containers_per_host` (needed only for an instance type outside the module's table). The account setting `awsvpcTrunking` is turned on for the region.
+Optional, with defaults: `instance_type` (`m8g.xlarge`), `min_hosts` (1), `max_hosts` (4), `container_memory_mib` (1536), `pool_target` (2), `retention_days` (7), `allowed_email_domains` (empty), `dns_allow` (empty), and `containers_per_host` (needed only for an instance type outside the module's table). The account setting `awsvpcTrunking` is turned on for the region.
 
 When it is done, point your host name at the output `load_balancer_dns_name`, open `https://<your name>` and sign in. Agents connect to `https://<your name>/mcp` ([Connecting agents](connect-agents.md)).
 
@@ -98,13 +98,13 @@ When it is done, point your host name at the output `load_balancer_dns_name`, op
 
 ## Sizing
 
-Each user's container gets `container_memory_mib` (1,024 MiB) and a share of the host's CPU. Two things cap the containers on one host: its memory, less a reserve, and its limit on network interfaces.
+Each user's container gets `container_memory_mib` (1,536 MiB) and a share of the host's CPU. Two things cap the containers on one host: its memory, less a reserve, and its limit on network interfaces.
 
-| Host | Memory | Containers at 1,024 MiB | Price per hour (us-east-1) | Per container-hour |
+| Host | Memory | Containers at 1,536 MiB | Price per hour (us-east-1) | Per container-hour |
 | --- | --- | --- | --- | --- |
-| `m8g.large` | 8 GiB | 7 | $0.090 | $0.013 |
-| `m8g.xlarge` | 16 GiB | 15 | $0.180 | $0.012 |
-| `m8g.2xlarge` | 32 GiB | 30 | $0.359 | $0.012 |
+| `m8g.large` | 8 GiB | 4 | $0.090 | $0.023 |
+| `m8g.xlarge` | 16 GiB | 10 | $0.180 | $0.018 |
+| `m8g.2xlarge` | 32 GiB | 20 | $0.359 | $0.018 |
 
 These are estimates from AWS's documentation and prices of November 2026; they have not been measured on AWS yet. The module sets `containers.max` to `max_hosts` times the containers per host. Only active users hold a container: one parks after 10 idle minutes. CPU is shared, not reserved, so one busy user can slow the others on the same host.
 

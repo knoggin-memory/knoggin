@@ -202,11 +202,11 @@ run "user_task_definition" {
   assert {
     condition = (
       jsondecode(aws_ecs_task_definition.user.container_definitions)[0].privileged == false &&
-      jsondecode(aws_ecs_task_definition.user.container_definitions)[0].memory == 1024 &&
+      jsondecode(aws_ecs_task_definition.user.container_definitions)[0].memory == 1536 &&
       jsondecode(aws_ecs_task_definition.user.container_definitions)[0].stopTimeout == 120 &&
       length(setintersection(keys(jsondecode(aws_ecs_task_definition.user.container_definitions)[0]), ["environment", "secrets", "mountPoints"])) == 0
     )
-    error_message = "Not privileged, 1,024 MiB, a 120-second stop, and no environment, secret or mount of its own."
+    error_message = "Not privileged, 1,536 MiB, a 120-second stop, and no environment, secret or mount of its own."
   }
 }
 
@@ -562,12 +562,12 @@ run "router_config" {
       ], e.name) } == {
       KNOGGIN_SERVER__TRUSTED_PROXIES        = "10.0.240.0/24,10.0.241.0/24"
       KNOGGIN_SERVER__IMAGE_DIGEST           = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-      KNOGGIN_CONTAINERS__MEMORY_MIB         = "1024"
-      KNOGGIN_CONTAINERS__MAX                = "60"
+      KNOGGIN_CONTAINERS__MEMORY_MIB         = "1536"
+      KNOGGIN_CONTAINERS__MAX                = "40"
       KNOGGIN_LAUNCHER__ECS__TASK_DEFINITION = aws_ecs_task_definition.user.arn
       KNOGGIN_INTERNAL__ROUTER_URL           = "https://router.knoggin.internal:8443"
     }
-    error_message = "The router's config: the load balancer's subnets, the digest, one memory value for both, 4 hosts of 15."
+    error_message = "The router's config: the load balancer's subnets, the digest, one memory value for both, 4 hosts of 10."
   }
   assert {
     condition = toset([for e in jsondecode(aws_ecs_task_definition.router.container_definitions)[0].secrets : e.name]) == toset([

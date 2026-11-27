@@ -860,7 +860,7 @@ async fn a_stop_signal_parks_a_claimed_container_and_ends_a_pool_one_at_once() {
 
 #[tokio::test]
 async fn the_memory_budget_refuses_writes_and_locks_a_store_that_cannot_fit() {
-    const MODEL: u64 = 640 * 1024 * 1024;
+    const MODEL: u64 = 928 * 1024 * 1024;
     let rig = Rig::start(Options::default()).await;
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;

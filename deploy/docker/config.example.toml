@@ -56,12 +56,12 @@ token_file = "/run/secrets/launcher_token"
 # The range from which the launcher cuts each user's network. A second stack on the
 # same host may share it: the launcher skips ranges that are in use.
 user_net_cidr = "10.201.0.0/16"
-memory_mib = 1024
+memory_mib = 1536
 pool_target = 2
 # Required on one host. Rule of thumb: the host's memory less 2 GiB, divided by
 # memory_mib. The reserve is large because this host also runs the router, the
-# database and the proxy. 6 fits a host with 8 GiB.
-max = 6
+# database and the proxy. 4 fits a host with 8 GiB.
+max = 4
 
 [internal]
 secret_file = "/run/secrets/internal_secret"

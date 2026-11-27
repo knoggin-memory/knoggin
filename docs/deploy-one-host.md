@@ -36,7 +36,7 @@ A user's container loads that user's stores from the bucket, serves them, and pa
 From `deploy/docker/`:
 
 1. `cp .env.example .env`. Set `KNOGGIN_IMAGE` to the release image by digest (the release notes give it) and `KNOGGIN_DOMAIN` to your host name.
-2. `cp config.example.toml config.toml`. Fill in `[auth]`: the issuer, the web client ID, and who is an admin (`admin_subjects` is safer than `admin_emails`). Set who may sign in with `allowed_emails` or `allowed_email_domains`; with both empty, everyone your provider admits gets an account. Set `containers.max`: the host's memory less 2 GiB, divided by `containers.memory_mib` (1,024 by default). 6 fits a host with 8 GiB.
+2. `cp config.example.toml config.toml`. Fill in `[auth]`: the issuer, the web client ID, and who is an admin (`admin_subjects` is safer than `admin_emails`). Set who may sign in with `allowed_emails` or `allowed_email_domains`; with both empty, everyone your provider admits gets an account. Set `containers.max`: the host's memory less 2 GiB, divided by `containers.memory_mib` (1,536 by default). 4 fits a host with 8 GiB.
 3. `./make-secrets.sh`, once. It writes every secret into `./secrets` (folder mode 0700, files 0444) and asks for the web client secret. **Copy `secrets/master_key` and `secrets/state_key` somewhere away from this host.** Without either, the data cannot be read.
 4. `docker compose up -d`.
 5. Check: `docker compose exec router knoggin admin selftest` tests the database, the key and the bucket.
