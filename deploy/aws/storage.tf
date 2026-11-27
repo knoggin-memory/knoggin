@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Tab "Deployment", AWS: the bucket, the state database and the master key.
 
 # Snapshots. Versioning stays off: a kept old version would keep an erased store readable.

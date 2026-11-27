@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Tab "Deployment", AWS: the routers' internal name, and the DNS firewall. The VPC's
 # resolver answers every network interface whatever its security group says, and a name
 # lookup can carry data out, so every lookup outside the allow list is blocked. That holds

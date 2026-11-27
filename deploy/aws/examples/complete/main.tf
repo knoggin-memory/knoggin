@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # A minimal root module for the Knoggin AWS module. Fill in terraform.tfvars from
 # terraform.tfvars.example. The Secrets Manager entries are made and filled by hand first
 # (deploy-aws.md), so that no secret value sits in the state.

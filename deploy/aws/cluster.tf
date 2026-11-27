@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Tab "Deployment", AWS: the cluster, its capacity and the logs.
 
 # Trunking gives each user container its own network interface, so its security group

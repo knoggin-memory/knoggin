@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Tab "Deployment", AWS: the routers on Fargate behind a load balancer. They never run on
 # the user hosts.
 

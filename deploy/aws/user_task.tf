@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Tab "Deployment", "User task definition", and the rules for every user container.
 
 locals {

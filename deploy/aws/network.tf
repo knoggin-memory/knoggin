@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Tab "Deployment", AWS: the network and its rules. The module always makes its own VPC,
 # because these rules would change any VPC they were put on for everything else in it.
 

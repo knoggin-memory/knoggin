@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Tab "Deployment", AWS, Permissions. The user task has no role at all. Every policy here
 # is the module's own, so a test can read each statement.
 

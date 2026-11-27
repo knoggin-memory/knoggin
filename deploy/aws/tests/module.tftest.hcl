@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Tab "Deployment", "Checking the module without an account". Every run applies the module
 # against a mock provider: nothing is sent to AWS and no credential is needed.
 

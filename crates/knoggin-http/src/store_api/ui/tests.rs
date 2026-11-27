@@ -73,7 +73,14 @@ fn export(dir: &Path) {
         SessionToken,
         ErrorEnvelope,
     );
+    // Every source file starts with the licence line (tab "Engineering rules").
+    for (name, text) in files(dir) {
+        let path = dir.join(name);
+        std::fs::write(path, format!("{SPDX}\n{text}")).unwrap();
+    }
 }
+
+const SPDX: &str = "// SPDX-License-Identifier: AGPL-3.0-only";
 
 fn committed() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../ui/src/lib/api/types")
@@ -132,6 +139,7 @@ fn large_integers_are_numbers_and_times_are_strings() {
     export(fresh.path());
     let all = files(fresh.path());
     assert!(all.values().all(|text| !text.contains("bigint")));
+    assert!(all.values().all(|text| text.starts_with(SPDX)));
     assert!(all["MemoryPage.ts"].contains("total: number"));
     assert!(all["MemoryRow.ts"].contains("createdAt: string"));
     assert!(all["UiEvent.ts"].contains("\"kind\": \"recall\""));

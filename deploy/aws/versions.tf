@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Tab "Deployment", AWS. One module, one region. Nothing here was applied during the build:
 # it is checked with `tofu validate` and `tofu test` against mock providers.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # Tab "Deployment", "Variables and outputs" and "Sizing".
 
 variable "name" {
