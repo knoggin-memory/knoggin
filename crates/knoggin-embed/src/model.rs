@@ -41,12 +41,14 @@ pub struct PinnedFile {
     pub sha256: &'static str,
 }
 
-/// The graph.
+/// The graph: the published `model_q4.onnx` with `accuracy_level = 4` on every
+/// `MatMulNBits` node (measurement M5, `scripts/patch_q4_graph.py`). Only the project's
+/// release serves it; `repo_path` names the file it was made from.
 pub const GRAPH: PinnedFile = PinnedFile {
     repo_path: "onnx/model_q4.onnx",
     name: "model_q4.onnx",
-    size: 490_742,
-    sha256: "f9eeba97acddf139b8ee2ddf04bc30dceafa88de93fadf74d7644e0d61a477a9",
+    size: 494_100,
+    sha256: "1afd951bf447f631786cc1302921f94d4bc30f602ee6a61e8e517d0a3203c8a8",
 };
 /// The weights; the graph refers to them by this name.
 pub const WEIGHTS: PinnedFile = PinnedFile {
@@ -82,7 +84,7 @@ static IDENTITY: LazyLock<String> = LazyLock::new(|| {
     format!("embeddinggemma-2-q4-{DIMENSIONS}-{}", &hash[..16])
 });
 
-/// The identity string, for example `embeddinggemma-2-q4-768-80bc2e03328dae2f`.
+/// The identity string, for example `embeddinggemma-2-q4-768-1d894cac0c7bb07b`.
 pub fn identity_string() -> &'static str {
     &IDENTITY
 }
@@ -128,26 +130,35 @@ pub struct ModelSource {
 }
 
 impl ModelSource {
-    /// The pinned model: Hugging Face first, then the project's own release.
+    /// The pinned model: Hugging Face first, then the project's own release. The patched
+    /// graph comes from the release only, because Hugging Face serves the published one.
     pub fn pinned() -> Self {
         let files = FILES
             .iter()
-            .map(|f| SourceFile {
-                name: f.name.to_owned(),
-                size: f.size,
-                sha256: f.sha256.to_owned(),
-                urls: vec![
-                    format!(
-                        "https://huggingface.co/{REPOSITORY}/resolve/{COMMIT}/{}",
-                        f.repo_path
-                    ),
-                    format!(
-                        "{}/releases/download/model-{}/{}",
-                        env!("CARGO_PKG_REPOSITORY"),
-                        identity_string(),
-                        f.name
-                    ),
-                ],
+            .map(|f| {
+                let release = format!(
+                    "{}/releases/download/model-{}/{}",
+                    env!("CARGO_PKG_REPOSITORY"),
+                    identity_string(),
+                    f.name
+                );
+                let urls = if *f == GRAPH {
+                    vec![release]
+                } else {
+                    vec![
+                        format!(
+                            "https://huggingface.co/{REPOSITORY}/resolve/{COMMIT}/{}",
+                            f.repo_path
+                        ),
+                        release,
+                    ]
+                };
+                SourceFile {
+                    name: f.name.to_owned(),
+                    size: f.size,
+                    sha256: f.sha256.to_owned(),
+                    urls,
+                }
             })
             .collect();
         Self {
@@ -163,8 +174,9 @@ fn statvfs_free(path: &Path) -> io::Result<u64> {
     Ok(stat.f_bavail.saturating_mul(stat.f_frsize))
 }
 
-const MANUAL: &str = "to supply the files by hand, put model_q4.onnx, model_q4.onnx_data and \
-                      tokenizer.json from the pinned commit in that folder";
+const MANUAL: &str = "to supply the files by hand, put model_q4.onnx from the project's \
+                      model release and model_q4.onnx_data and tokenizer.json from the \
+                      pinned commit in that folder";
 
 /// Why the model files are not ready.
 #[derive(Debug, thiserror::Error)]
@@ -688,11 +700,11 @@ mod tests {
     fn identity_string_matches_the_spec() {
         assert_eq!(
             identity_json(),
-            r#"{"dimensions":768,"document_recipe":"doc-v1","graph_sha256":"f9eeba97acddf139b8ee2ddf04bc30dceafa88de93fadf74d7644e0d61a477a9","max_tokens":1024,"model":"google/embeddinggemma-2","normalization":"l2","precision":"q4","query_recipe":"query-v1","source":"onnx-community/embeddinggemma-2-ONNX@daa72c51243991dfcaf9f9137d2c573d8f7790c0","tokenizer_sha256":"4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4","weights_sha256":"c3975f2d1ab7a1878ae31a7d7a9b7804a827aff3800b60dfceafce21cac3df49"}"#
+            r#"{"dimensions":768,"document_recipe":"doc-v1","graph_sha256":"1afd951bf447f631786cc1302921f94d4bc30f602ee6a61e8e517d0a3203c8a8","max_tokens":1024,"model":"google/embeddinggemma-2","normalization":"l2","precision":"q4","query_recipe":"query-v1","source":"onnx-community/embeddinggemma-2-ONNX@daa72c51243991dfcaf9f9137d2c573d8f7790c0","tokenizer_sha256":"4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4","weights_sha256":"c3975f2d1ab7a1878ae31a7d7a9b7804a827aff3800b60dfceafce21cac3df49"}"#
         );
         assert_eq!(
             identity_string(),
-            "embeddinggemma-2-q4-768-80bc2e03328dae2f"
+            "embeddinggemma-2-q4-768-1d894cac0c7bb07b"
         );
         assert_eq!(identity().dimensions, 768);
     }
@@ -700,6 +712,13 @@ mod tests {
     #[test]
     fn pinned_sources_are_in_order() {
         let source = ModelSource::pinned();
+        assert_eq!(
+            source.files[0].urls,
+            [
+                "https://github.com/knoggin-memory/knoggin/releases/download/model-embeddinggemma-2-q4-768-1d894cac0c7bb07b/model_q4.onnx"
+            ]
+        );
+        assert_eq!(source.files[2].urls.len(), 2);
         let urls = &source.files[1].urls;
         assert_eq!(
             urls[0],
@@ -707,9 +726,9 @@ mod tests {
         );
         assert_eq!(
             urls[1],
-            "https://github.com/knoggin-memory/knoggin/releases/download/model-embeddinggemma-2-q4-768-80bc2e03328dae2f/model_q4.onnx_data"
+            "https://github.com/knoggin-memory/knoggin/releases/download/model-embeddinggemma-2-q4-768-1d894cac0c7bb07b/model_q4.onnx_data"
         );
-        assert_eq!(FILES.iter().map(|f| f.size).sum::<u64>(), 206_690_052);
+        assert_eq!(FILES.iter().map(|f| f.size).sum::<u64>(), 206_693_410);
     }
 
     #[test]

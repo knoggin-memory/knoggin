@@ -1,14 +1,16 @@
 name: Model release
 
 # Tab "Testing, CI, releases" and tab "Embeddings", Download and check: puts the pinned
-# model files on a release tagged model-<identity string>, the second download source of
-# `knoggin model fetch` and of the image's model stage. Started by hand.
+# model files on a release tagged model-<identity string>, a download source of `knoggin model
+# fetch` and of the image's model stage (the only one for the patched graph). Started by hand.
 #
-# graph = published: the three files from Hugging Face at the pinned commit, as they are.
-# graph = patched (measurement M5): the graph with accuracy_level = 4, made by
-#   scripts/patch_q4_graph.py, with a notice that says it was modified, plus the same
-#   weights and tokenizer. Give the identity string that the new graph_sha256 yields, and
-#   run this before the release that names it (docs/maintainers.md, M5).
+# graph = patched (measurement M5, the graph knoggin-embed pins): the graph with
+#   accuracy_level = 4, made by scripts/patch_q4_graph.py, with a notice that says it was
+#   modified, plus the same weights and tokenizer, under model-$PATCHED_IDENTITY. The
+#   graph's only download source, so run this before any build that pins it
+#   (docs/maintainers.md, M5).
+# graph = published: the three files from Hugging Face at the pinned commit, as they are,
+#   under model-$PUBLISHED_IDENTITY, for builds from before the M5 switch.
 
 on:
   workflow_dispatch:
@@ -16,12 +18,12 @@ on:
       graph:
         description: Which graph to publish
         type: choice
-        options: [published, patched]
-        default: published
+        options: [patched, published]
+        default: patched
       identity:
-        description: The identity string; required for the patched graph
+        description: The identity string of that graph, as a check
         type: string
-        default: embeddinggemma-2-q4-768-80bc2e03328dae2f
+        default: embeddinggemma-2-q4-768-1d894cac0c7bb07b
 
 permissions: {}
 
@@ -29,6 +31,8 @@ env:
   COMMIT: daa72c51243991dfcaf9f9137d2c573d8f7790c0
   PUBLISHED_GRAPH_SHA256: f9eeba97acddf139b8ee2ddf04bc30dceafa88de93fadf74d7644e0d61a477a9
   PATCHED_GRAPH_SHA256: 1afd951bf447f631786cc1302921f94d4bc30f602ee6a61e8e517d0a3203c8a8
+  PUBLISHED_IDENTITY: embeddinggemma-2-q4-768-80bc2e03328dae2f
+  PATCHED_IDENTITY: embeddinggemma-2-q4-768-1d894cac0c7bb07b
 
 jobs:
   # Downloads, checks and, for the patched graph, patches. No write permission: the patch
@@ -112,13 +116,13 @@ jobs:
           esac
           if [ "$GRAPH" = patched ]; then
             graph="$PATCHED_GRAPH_SHA256"
-            [ "$IDENTITY" != embeddinggemma-2-q4-768-80bc2e03328dae2f ] \
-              || { echo "::error::the patched graph needs its own identity string"; exit 1; }
+            [ "$IDENTITY" = "$PATCHED_IDENTITY" ] \
+              || { echo "::error::the patched graph has the identity $PATCHED_IDENTITY"; exit 1; }
             [ -s model/NOTICE-model_q4.onnx.txt ] || { echo "::error::the notice is missing"; exit 1; }
           else
             graph="$PUBLISHED_GRAPH_SHA256"
-            [ "$IDENTITY" = embeddinggemma-2-q4-768-80bc2e03328dae2f ] \
-              || { echo "::error::the published graph has the identity embeddinggemma-2-q4-768-80bc2e03328dae2f"; exit 1; }
+            [ "$IDENTITY" = "$PUBLISHED_IDENTITY" ] \
+              || { echo "::error::the published graph has the identity $PUBLISHED_IDENTITY"; exit 1; }
           fi
           printf '%s\n' \
             "$graph  model/model_q4.onnx" \
