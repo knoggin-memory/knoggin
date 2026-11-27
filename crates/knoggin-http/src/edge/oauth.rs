@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Sign-in with one OpenID Connect identity provider (tab "Sign-in and credentials", OAuth
-//! tokens and Web sign-in): discovery, the cached signing keys, the checks of access and
-//! ID tokens, the code exchange, and the allow-list. Knoggin is a resource server: it
-//! checks tokens and issues none.
+//! Sign-in with one OpenID Connect identity provider (OAuth tokens and web sign-in):
+//! discovery, the cached signing keys, the checks of access and ID tokens, the code
+//! exchange, and the allow-list. Knoggin is a resource server: it checks tokens and issues
+//! none.
 
 use std::collections::HashSet;
 use std::sync::{Arc, PoisonError, RwLock};
@@ -28,7 +28,7 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 /// Leeway on `exp` and `nbf`, in seconds.
 const LEEWAY: u64 = 60;
 
-/// The `auth.*` settings of mode `oauth` (tab "Config, CLI, local install").
+/// The `auth.*` settings of mode `oauth`.
 #[derive(Clone)]
 pub struct OauthConfig {
     /// `auth.issuer`.
@@ -262,8 +262,8 @@ impl Provider {
         Err(DiscoveryError::Unreachable)
     }
 
-    /// The cookie names and attributes for `public_url` (tab "Sign-in and credentials",
-    /// Sessions): `__Host-` cookies over `https`, plain names on a test-mode loopback.
+    /// The cookie names and attributes for `public_url`: `__Host-` cookies over `https`,
+    /// plain names on a test-mode loopback.
     pub(crate) fn cookies(&self) -> Cookies {
         if self.public_url.starts_with("https://") {
             Cookies {
@@ -348,8 +348,8 @@ impl Provider {
         cache.ok_at = Some(now);
     }
 
-    /// Checks a JWT's signature and its `exp`, `nbf`, `iss`, `aud` and `sub` (rules 1 to
-    /// 5), with every field of the `Validation` set, and returns its claims.
+    /// Checks a JWT's signature and its `exp`, `nbf`, `iss`, `aud` and `sub`, with every
+    /// field of the `Validation` set, and returns its claims.
     async fn verify(&self, token: &str, audiences: HashSet<String>) -> Result<Value, Refusal> {
         let header = jsonwebtoken::decode_header(token).map_err(|_| Refusal::Invalid("header"))?;
         if !matches!(header.alg, Algorithm::RS256 | Algorithm::ES256) {
@@ -381,14 +381,14 @@ impl Provider {
         Ok(claims)
     }
 
-    /// An agent's access token (rules 1 to 7).
+    /// An agent's access token: the checks of `verify`, then the two below.
     pub(crate) async fn check_access(&self, token: &str) -> Result<Identity, Refusal> {
         let p = &self.public_url;
         let mut audiences: HashSet<String> =
             [format!("{p}/mcp"), format!("{p}/mcp/plugin"), p.clone()].into();
         audiences.extend(self.config.audiences.iter().cloned());
         let claims = self.verify(token, audiences).await?;
-        // Rule 6: signs of an ID token from the web sign-in.
+        // An ID token from the web sign-in is refused: these are its signs.
         let aud_has_client = match claims.get("aud") {
             Some(Value::String(a)) => *a == self.config.web_client_id,
             Some(Value::Array(list)) => list.iter().any(|a| *a == *self.config.web_client_id),
@@ -401,14 +401,15 @@ impl Provider {
         {
             return Err(Refusal::Invalid("id_token"));
         }
-        // Rule 7: AuthKit's own agents.
+        // AuthKit's own agents are refused.
         if claims.get("sub_profile").and_then(Value::as_str) == Some("ai_agent") {
             return Err(Refusal::Invalid("ai_agent"));
         }
         Ok(identity(&claims, self.config.email_claim.as_deref()))
     }
 
-    /// The ID token of a web sign-in: rules 1 to 4, `aud` the client ID, and the nonce.
+    /// The ID token of a web sign-in: the checks of `verify`, `aud` the client ID, and the
+    /// nonce.
     pub(crate) async fn check_id_token(
         &self,
         token: &str,
@@ -559,8 +560,8 @@ fn identity(claims: &Value, email_claim: Option<&str>) -> Identity {
     }
 }
 
-/// The key with ID `kid`, if it fits `alg` (rule 2): an RSA key for `RS256`, a P-256 key
-/// for `ES256`; a stated `use` must be `sig` and a stated `alg` the token's.
+/// The key with ID `kid`, if it fits `alg`: an RSA key for `RS256`, a P-256 key for
+/// `ES256`; a stated `use` must be `sig` and a stated `alg` the token's.
 pub(crate) fn select_key(
     keys: &[Jwk],
     kid: &str,

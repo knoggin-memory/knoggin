@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The broker: the routes of the router's internal listener that user containers call
-//! (tab "Server", the broker). Open a store, begin and commit a snapshot, report a park,
+//! The broker: the routes of the router's internal listener that user containers call.
+//! Open a store, begin and commit a snapshot, report a park,
 //! and on one host the blob route that forwards snapshot bytes to the bucket.
 //!
 //! Every call proves the container token of the container it names, and must come from

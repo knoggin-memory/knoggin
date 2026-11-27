@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The `knoggin serve` role: one user container (tab "Server"). It listens on the
+//! The `knoggin serve` role: one user container. It listens on the
 //! internal link with a certificate it made itself, proves itself in `hello`, takes one
 //! user in `claim`, serves the store layer for that user behind the router token, saves
 //! through [`RouterBackend`], and parks (saves, reports `parked`, returns) after its idle

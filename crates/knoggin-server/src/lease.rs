@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Leases and the containers they name (tab "Server", States and How a store request is
-//! served): [`Fleet`] is what one router knows of the fleet, shared by the request path,
-//! the pool and the reconcile loop. It claims a container for a user (with the generation
-//! rule and the cap on new containers), waits for a container within the request's
+//! Leases and the containers they name: [`Fleet`] is what one router knows of the fleet, shared by
+//! the request path, the pool and the reconcile loop. It claims a container for a user (with the
+//! generation rule and the cap on new containers), waits for a container within the request's
 //! deadline, finishes a claim as an owned task, and runs "Mark gone".
 //!
 //! Every lease change is a conditional write on the record's version, and every write

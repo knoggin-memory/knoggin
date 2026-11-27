@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The isolation rules on the real one-host stack (tab "Security", the stack column of
-//! I1 to I3, I8 to I10, I12 to I14, I16 and I17), the Compose file checks and the
-//! Caddyfile log test (tab "Deployment", Checking the Compose stack). Two users, A and B,
+//! The isolation rules on the real one-host stack, the Compose file checks and the
+//! Caddyfile log test. Two users, A and B,
 //! each with a personal store and apps, behind the router of one stack.
 //!
 //! With `KNOGGIN_STACK_URL` and `KNOGGIN_STACK_CREDENTIALS` set, the same test runs
@@ -15,9 +14,9 @@
 //!   container, the probes from the services and the second stack: ECS cannot join a
 //!   task's namespace, so on AWS a one-off probe task in the user network replaces them,
 //!   and adds an upload to a bucket in another account;
-//! - the park of rule I10, which is seen in Docker's container list (on AWS a container
+//! - the park of an idle container, which is seen in Docker's container list (on AWS a container
 //!   parks only after 10 idle minutes);
-//! - the at-rest and log checks of rule I14, which read the database dump, the bucket
+//! - the at-rest and log checks, which read the database dump, the bucket
 //!   stand-in's files and the Compose logs (on AWS those are DynamoDB, S3 and CloudWatch,
 //!   which this test does not read).
 #![allow(
@@ -128,7 +127,7 @@ async fn isolation_on_the_one_host_stack() {
     assert_eq!(s.save(&b.token, None, &texts[2]).await.status, 201);
     let alive = s.keep_alive(vec![a.token.clone(), b.token.clone(), ax_key.clone()]);
 
-    // I1, I2, I3, I13: every store route, with a credential of A (or the admin) and a
+    // Every store route, with a credential of A (or the admin) and a
     // store that is not theirs to name, is refused and shows nothing of B's.
     let foreign = [
         ("A's session, B's store", &a.session, b.personal.as_str()),
@@ -168,7 +167,7 @@ async fn isolation_on_the_one_host_stack() {
                     !r.body.contains(&texts[2]),
                     "{what}: {method} {path} shows B's memory"
                 );
-                // I2: a session naming another user's store gets not_found (a body
+                // A session naming another user's store gets not_found (a body
                 // check of the route may refuse first; that is a refusal too).
                 if matches!(cred, Cred::Session(_)) && method == Method::GET {
                     assert_eq!(r.code(), "not_found", "{what}: {method} {path}: {}", r.body);
@@ -285,7 +284,7 @@ async fn isolation_on_the_one_host_stack() {
         );
     }
 
-    // I16: an access token reaches memories and the session route, nothing else.
+    // An access token reaches memories and the session route, nothing else.
     for (method, path) in [
         (Method::GET, "/v1/stores".to_owned()),
         (Method::POST, "/v1/stores".to_owned()),
@@ -311,7 +310,7 @@ async fn isolation_on_the_one_host_stack() {
         200
     );
 
-    // I14: the client of app X's last write, which X's record holds once the park saves.
+    // Sealed at rest: the client of app X's last write, which X's record holds once the park saves.
     let client = format!("client{sfx}");
     let mcp_text = format!("a-appx-mcp-{sfx}");
     let r = s
@@ -335,7 +334,8 @@ async fn isolation_on_the_one_host_stack() {
         .await;
     assert_eq!(r.status, 200, "{}", r.body);
     assert!(r.json()["result"]["isError"].is_null(), "{}", r.body);
-    // I9 and I10. The user containers' logs are read now, before they park.
+    // Network isolation and parking. The user containers' logs are read now, before they
+    // park.
     let user_logs = if let Some(c) = &deployed {
         // On AWS: from a probe task in the user network, only the router's internal
         // port answers, and an upload to another account's bucket is refused.
@@ -346,7 +346,7 @@ async fn isolation_on_the_one_host_stack() {
         local_containers(&s, &a, &b, alive).await
     };
 
-    // I12: a revoked key is refused on its next request.
+    // A revoked key is refused on its next request.
     let r = s
         .call(
             Method::DELETE,
@@ -363,7 +363,7 @@ async fn isolation_on_the_one_host_stack() {
         "revoked key",
     );
 
-    // I14 on the local stack: nothing at rest is plaintext, and no log holds a marker or
+    // On the local stack: nothing at rest is plaintext, and no log holds a marker or
     // a secret.
     let mut markers: Vec<String> = texts.to_vec();
     markers.extend([
@@ -396,7 +396,7 @@ async fn isolation_on_the_one_host_stack() {
         );
     }
 
-    // I17: once an admin removes B, B's key, session and token are refused at once.
+    // Once an admin removes B, B's key, session and token are refused at once.
     let r = s
         .call(
             Method::DELETE,
@@ -419,7 +419,7 @@ async fn isolation_on_the_one_host_stack() {
     }
 }
 
-/// Rules I9 and I10 on the local stack, through Docker: the probes from inside A's
+/// Network isolation and parking on the local stack, through Docker: the probes from inside A's
 /// container and from the services, the container's description, a second stack beside
 /// this one, and A's park once `alive` stops. Returns the user containers' logs, read
 /// before they park.
@@ -429,7 +429,7 @@ async fn local_containers(
     b: &stack::User,
     alive: stack::KeepAlive,
 ) -> String {
-    // I9: from inside A's container, only the router's internal port answers.
+    // From inside A's container, only the router's internal port answers.
     let ca = s.container_of(a).expect("A's container");
     let cb = s.container_of(b).expect("B's container");
     assert_ne!(ca.docker_id, cb.docker_id, "one container per user");
@@ -443,7 +443,7 @@ async fn local_containers(
     }
     drop(alive);
 
-    // I10: once idle, A's container parks; it no longer runs and its network is gone.
+    // Once idle, A's container parks; it no longer runs and its network is gone.
     assert!(
         eventually(Duration::from_secs(90), || async {
             !s.user_containers()
@@ -457,7 +457,7 @@ async fn local_containers(
     user_logs
 }
 
-/// Reads the merged Compose file and checks what tab "Deployment" fixes: capabilities,
+/// Reads the merged Compose file and checks what it must fix: capabilities,
 /// networks and each service's secret files; and the Caddyfile's two log settings.
 fn compose_file_checks(s: &Stack) {
     let v: Value =
@@ -567,7 +567,7 @@ fn compose_file_checks(s: &Stack) {
     );
 }
 
-/// Rule I9 from inside A's network namespace.
+/// Network isolation from inside A's network namespace.
 fn network_probes(s: &Stack, a: &stack::UserContainer, b: &stack::UserContainer) {
     let router = s.service_id("router");
     let router_here = addresses(&router)[&a.network].clone();
@@ -659,11 +659,11 @@ fn network_probes(s: &Stack, a: &stack::UserContainer, b: &stack::UserContainer)
             );
         }
     } else {
-        println!("skipped: the host-side checks of I9 run on Linux only");
+        println!("skipped: the host-side network checks run on Linux only");
     }
 }
 
-/// Rule I9: what the launcher's fixed description sets for safety (steps 2, 3 and 5),
+/// Network isolation: what the launcher's fixed description sets for safety (steps 2, 3 and 5),
 /// and no Compose service with NET_RAW.
 fn container_description(s: &Stack, c: &stack::UserContainer) {
     let v: Value = serde_json::from_str(&docker_ok(&["inspect", &c.docker_id])).unwrap();
@@ -722,7 +722,7 @@ fn container_description(s: &Stack, c: &stack::UserContainer) {
     }
 }
 
-/// Rule I9: from the network namespace of db, s3 and launcher, and from a place on the
+/// Network isolation: from the network namespace of db, s3 and launcher, and from a place on the
 /// edge network in place of the proxy, the router's internal port cannot be opened (it
 /// closes the connection without a byte).
 fn service_probes(s: &Stack) {
@@ -741,7 +741,7 @@ fn service_probes(s: &Stack) {
     );
 }
 
-/// Rule I9: a second stack on the same Docker host, under another project name and
+/// Network isolation: a second stack on the same Docker host, under another project name and
 /// prefix, leaves this stack's containers and networks alone.
 async fn second_stack_leaves_this_one_alone(s: &Stack, mine: &[&stack::UserContainer]) {
     let other = Stack::create(&[&s.prefix]);
@@ -786,7 +786,7 @@ async fn second_stack_leaves_this_one_alone(s: &Stack, mine: &[&stack::UserConta
     drop(other);
 }
 
-/// Rules I8 and I14: the bucket and a dump of the state database hold no marker and no
+/// Sealed at rest: the bucket and a dump of the state database hold no marker and no
 /// key secret, and no `doc` value in the dump parses as JSON.
 fn at_rest_checks(s: &Stack, markers: &[String], secrets: &[String]) {
     let dump = s.compose(&[

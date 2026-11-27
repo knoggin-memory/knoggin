@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The MCP endpoint through `store_layer` with an inserted context (tab "MCP", Tests that
-//! must exist): the protocol and transport rules ported from recalld, both tool sets,
-//! every tool, access recording, the client name, idempotency shared with REST.
+//! The MCP endpoint through `store_layer` with an inserted context: the protocol and
+//! transport rules ported from recalld, both tool sets, every tool, access recording, the
+//! client name, idempotency shared with REST.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

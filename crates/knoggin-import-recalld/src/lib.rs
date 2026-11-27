@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Reads a stopped recalld 2.x data directory and yields
-//! [`knoggin_core::transfer::TransferRecord`] lines in export-file order (tab "Config,
-//! CLI, local install", "Import from recalld").
+//! [`knoggin_core::transfer::TransferRecord`] lines in export-file order, for `knoggin
+//! import recalld`.
+//!
+//! Before reading, three steps: 1. find the store, and with it the lock files; 2. take a
+//! shared lock on each lock file that exists; 3. check the row `state` with
+//! `controlSchemaVersion` 2.
 //!
 //! The recalld directory is never changed. `meta.db` and `edges.db` are redb 2 files,
 //! which redb cannot open read-only, so they are copied into a private folder under the
@@ -308,7 +312,7 @@ struct InheritedDecay {
 fn read_meta(path: &Path) -> Result<Meta, ImportError> {
     let db = open_db(path)?;
     let tx = db.begin_read().map_err(db_error)?;
-    // Step 3 of "Before reading": the row `state` with `controlSchemaVersion` 2.
+    // Step 3 before reading: the row `state` with `controlSchemaVersion` 2.
     let control = match tx.open_table(CONTROL) {
         Ok(table) => table
             .get("state")

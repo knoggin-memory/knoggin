@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The one-host stack in tests (tab "Testing, CI, releases"): builds `knoggin:test` from
+//! The one-host stack in tests: builds `knoggin:test` from
 //! the working tree with `SKIP_MODEL=1` (once per test process; set
 //! `KNOGGIN_TEST_SKIP_BUILD=1` to use the image that is there), writes the secrets into a
 //! temporary directory as `make-secrets.sh` would, and brings up `deploy/docker/compose.yaml`
@@ -160,7 +160,7 @@ pub fn free_prefix(avoid: &[&str]) -> String {
         .expect("a free network prefix between 10.210 and 10.249")
 }
 
-/// Writes the secret files of tab "Deployment" into `dir` (mode 0700, files 0444), and
+/// Writes the stack's secret files into `dir` (mode 0700, files 0444), and
 /// returns every secret value, for the log searches.
 fn write_secrets(dir: &Path) -> Vec<String> {
     std::fs::create_dir(dir).unwrap();

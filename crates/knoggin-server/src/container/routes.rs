@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The container's routes (tab "Server", routes on the container): `hello`, `claim`,
+//! The container's routes: `hello`, `claim`,
 //! `park` and `status` for the router, and every forwarded store request, which passes
 //! the router token, the claim's user, the parking state and the 64 MiB of bodies in
 //! flight before the store layer sees it with a `RequestContext` rebuilt from the

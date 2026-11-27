@@ -467,7 +467,7 @@ mod tests {
     }
 
     #[test]
-    fn puts_are_update_item_with_the_specs_expressions() {
+    fn puts_are_update_item_with_the_fixed_expressions() {
         let doc = s(r#"{"x":"Grüße"}"#);
         let r = put(Cond::Any, None);
         assert_eq!(r.kind, Kind::Update);

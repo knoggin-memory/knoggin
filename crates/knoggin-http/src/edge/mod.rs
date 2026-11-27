@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The edge layer (tabs "Sign-in and credentials" and "REST API"): it checks the
-//! credential, resolves it to a user, one store and permissions, applies rate limits and
-//! the browser checks, and serves the control routes. The store layer behind it reads only
-//! the `RequestContext` the edge puts in the request extensions.
+//! The edge layer: it checks the credential, resolves it to a user, one store and
+//! permissions, applies rate limits and the browser checks, and serves the control routes.
+//! The store layer behind it reads only the `RequestContext` the edge puts in the request
+//! extensions.
 //!
 //! Both sign-in modes: the local socket, local web sessions, API keys, and with `oauth`
 //! access tokens, web sign-in and cookie sessions (`oauth`, `signin`).
@@ -104,7 +104,7 @@ impl AuthMode {
     }
 }
 
-/// The settings the edge reads (tab "Config, CLI, local install").
+/// The settings the edge reads.
 #[derive(Debug, Clone)]
 pub struct EdgeConfig {
     /// Daemon or router.

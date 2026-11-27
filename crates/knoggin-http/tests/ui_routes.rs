@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The web UI's read models and event stream against `store_layer` with an inserted
-//! context (tab "Web UI", Read-model routes and Live events; tab "REST API", Tests that
-//! must exist).
+//! context.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The edge layer of the local daemon in one process: the credential check with each
 //! credential kind, the control routes, the browser checks, rate limits and the mode
-//! routes (tabs "Sign-in and credentials" and "REST API", Tests that must exist).
+//! routes.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -503,7 +503,7 @@ async fn a_deleted_store_stops_its_keys_until_the_undo() {
         .local(Method::GET, &format!("/v1/stores/{app}/keys"), None)
         .await;
     assert_eq!(list.status, StatusCode::OK);
-    // I12: a key revoked while its store is deleted stays refused after the undo.
+    // A key revoked while its store is deleted stays refused after the undo.
     let gone = env
         .local(
             Method::DELETE,
@@ -809,8 +809,9 @@ async fn undoing_an_account_deletion_leaves_an_app_deleted_earlier_deleted() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
 }
 
-/// I3: an `Idempotency-Key` belongs to one store. The same key and body sent to app X and
-/// then to app Y run in both, and only a repeat to X is a replay.
+/// Each app's store is kept apart: an `Idempotency-Key` belongs to one store. The same key
+/// and body sent to app X and then to app Y run in both, and only a repeat to X is a
+/// replay.
 #[tokio::test]
 async fn an_idempotency_key_is_kept_per_store() {
     let env = EdgeEnv::new().await;

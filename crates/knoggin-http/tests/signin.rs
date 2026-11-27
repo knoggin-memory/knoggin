@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Sign-in (tab "Sign-in and credentials", Tests that must exist): access tokens, their
-//! reach, web sign-in and cookie sessions, users and admins, a local install with
-//! sign-in on, and the browser checks, all in one process against the edge layer with the
-//! test issuer. A server is the edge in the router's role on its public listener; the
-//! router itself (`knoggin-server`) is not in these tests.
+//! Sign-in: access tokens, their reach, web sign-in and cookie sessions, users and admins,
+//! a local install with sign-in on, and the browser checks, all in one process against the
+//! edge layer with the test issuer. A server is the edge in the router's role on its public
+//! listener; the router itself (`knoggin-server`) is not in these tests.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

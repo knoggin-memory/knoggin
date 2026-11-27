@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Build-time measurements M2, M3, M4 and the SeaweedFS half of M7 (tab "Overview",
-//! Build-time measurements). Ignored; run one size at a time, for example:
+//! Measurements: claim-to-first-answer time, peak memory of a user container, snapshot size
+//! and duration, and the SeaweedFS half of the bucket self-test and long upload (see
+//! `docs/maintainers.md`). Ignored; run one size at a time, for example:
 //!
 //! ```sh
 //! KNOGGIN_MEASURE_SIZE=15000 cargo test -p knoggin-server --test measure -- \
@@ -9,16 +10,17 @@
 //!
 //! - `server`: the one-host stack with the real model. Fills the personal store through
 //!   the import route from a `knoggin-bench gen-export` file and waits until the embedding
-//!   queue is empty (M2 says to measure only then), then measures M3, M2 and M4.
+//!   queue is empty (the first-answer time is measured only then), then measures peak memory, the
+//!   first-answer time and snapshots.
 //! - `local_daemon`: `knoggin daemon` in a temporary `KNOGGIN_HOME`, filled the same way,
-//!   for M4 on local disk.
-//! - `seaweedfs`: the bucket self-test and an upload that outlasts its link (M7).
+//!   for snapshots on local disk.
+//! - `seaweedfs`: the bucket self-test and an upload that outlasts its link.
 //!
 //! Environment: `KNOGGIN_MEASURE_SIZE` (memories, default 1,500), `KNOGGIN_MEASURE_MEMORY_MIB`
-//! (`containers.memory_mib`, default 1,536; the spec says 4,096 at 75,000),
+//! (`containers.memory_mib`, default 1,536; use 4,096 at 75,000),
 //! `KNOGGIN_MEASURE_IMAGE` (default `knoggin:measure`, built from the working tree without
 //! `SKIP_MODEL` when missing), `KNOGGIN_MEASURE_DIR` (default `target/measure`),
-//! `KNOGGIN_MEASURE_RUNS` (M2 runs, default 5), `KNOGGIN_MEASURE_FILL_ONLY=1` (`server`
+//! `KNOGGIN_MEASURE_RUNS` (first-answer runs, default 5), `KNOGGIN_MEASURE_FILL_ONLY=1` (`server`
 //! stops once the store is filled, for example to fill with a larger `memory_mib` and
 //! measure with the default).
 //!
@@ -534,7 +536,7 @@ async fn fill(
 }
 
 /// Times `n` saves, one after the other, for `secs` seconds: latencies in ms.
-/// The saves go to the namespace `m4-probe`, which is deleted afterwards, so that the
+/// The saves go to the namespace `save-wait-probe`, which is deleted afterwards, so that the
 /// store keeps its size from one run to the next.
 async fn save_loop(url: &str, token: Option<&str>, secs: u64) -> Vec<f64> {
     let http = reqwest::Client::new();
@@ -543,13 +545,13 @@ async fn save_loop(url: &str, token: Option<&str>, secs: u64) -> Vec<f64> {
         None => b,
     };
     let created = auth(http.post(format!("{url}/v1/namespaces")))
-        .json(&json!({ "name": "m4-probe" }))
+        .json(&json!({ "name": "save-wait-probe" }))
         .send()
         .await
         .unwrap()
         .status();
     if !(created.is_success() || created == 409) {
-        println!("save-wait loop skipped: creating m4-probe answered {created}");
+        println!("save-wait loop skipped: creating save-wait-probe answered {created}");
         return Vec::new();
     }
     let end = Instant::now() + Duration::from_secs(secs);
@@ -557,7 +559,7 @@ async fn save_loop(url: &str, token: Option<&str>, secs: u64) -> Vec<f64> {
     let mut i = 0;
     while Instant::now() < end {
         let b = auth(http.post(format!("{url}/v1/memories"))).json(&json!({
-            "namespace": "m4-probe",
+            "namespace": "save-wait-probe",
             "summary": format!("save-wait probe {i}: {}", words(120, i)),
         }));
         let t = Instant::now();
@@ -572,12 +574,12 @@ async fn save_loop(url: &str, token: Option<&str>, secs: u64) -> Vec<f64> {
         i += 1;
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    let deleted = auth(http.delete(format!("{url}/v1/namespaces/m4-probe?force=true")))
+    let deleted = auth(http.delete(format!("{url}/v1/namespaces/save-wait-probe?force=true")))
         .send()
         .await
         .unwrap()
         .status();
-    assert!(deleted.is_success(), "deleting m4-probe: {deleted}");
+    assert!(deleted.is_success(), "deleting save-wait-probe: {deleted}");
     out
 }
 
@@ -764,7 +766,7 @@ async fn server() {
         mib(estimate)
     );
 
-    // M3, empty store: a fresh container that opens only a new, empty app store. The
+    // Peak memory, empty store: a fresh container that opens only a new, empty app store. The
     // two-embeddings case there sets the model reserve.
     let created = s
         .call(
@@ -772,7 +774,7 @@ async fn server() {
             "/v1/stores",
             &Cred::None,
             &[],
-            Some(json!({ "name": format!("m3-empty-{}", rand_tag()) })),
+            Some(json!({ "name": format!("empty-store-{}", rand_tag()) })),
         )
         .await;
     assert_eq!(created.status, 201, "{}", created.body);
@@ -803,8 +805,8 @@ async fn server() {
     phases.push(row("two embeddings, empty store".into(), &w, t));
     drop(w);
 
-    // M2 run 1 and M3 load: park, then claim from a ready pool container.
-    let mut m2 = Vec::new();
+    // First-answer run 1 and the load's peak memory: park, then claim from a ready pool container.
+    let mut first_answer = Vec::new();
     wait_parked(&s).await;
     let before: HashMap<String, Mem> = s
         .user_containers()
@@ -817,7 +819,7 @@ async fn server() {
         .collect();
     let t = Instant::now();
     let a = get(&s, "/v1/memories?limit=1").await;
-    m2.push(t.elapsed().as_secs_f64());
+    first_answer.push(t.elapsed().as_secs_f64());
     assert_eq!(a.status, 200, "{}", a.body);
     let c = claimed(&s).expect("a claimed container");
     let loaded = read_mem(&c.docker_id);
@@ -856,7 +858,7 @@ async fn server() {
         mib(estimate)
     );
 
-    // M3: recall, snapshot, the two-embeddings case.
+    // Peak memory: recall, snapshot, the two-embeddings case.
     let w = Watch::start(&c.docker_id);
     let t = Instant::now();
     for i in 0..10 {
@@ -903,29 +905,33 @@ async fn server() {
     phases.push(row(format!("two embeddings, {} memories", e.size), &w, t));
     drop(w);
     print_phases(
-        &format!("M3 at {} memories, memory_mib {}", e.size, e.memory_mib),
+        &format!(
+            "peak memory at {} memories, memory_mib {}",
+            e.size, e.memory_mib
+        ),
         &phases,
     );
 
-    // M2, the other runs.
+    // First answer, the other runs.
     for _ in 1..e.runs {
         wait_parked(&s).await;
         let t = Instant::now();
         let a = get(&s, "/v1/memories?limit=1").await;
-        m2.push(t.elapsed().as_secs_f64());
+        first_answer.push(t.elapsed().as_secs_f64());
         assert_eq!(a.status, 200, "{}", a.body);
     }
     println!(
-        "\nM2 at {}: median {:.2} s, runs {}",
+        "\nfirst answer at {}: median {:.2} s, runs {}",
         e.size,
-        median(&m2),
-        m2.iter()
+        median(&first_answer),
+        first_answer
+            .iter()
             .map(|x| format!("{x:.2}"))
             .collect::<Vec<_>>()
             .join(", ")
     );
 
-    // M4 on SeaweedFS: the router sums the claimed containers' counters every 30 s, so
+    // Snapshots on SeaweedFS: the router sums the claimed containers' counters every 30 s, so
     // first claim and let one pass include the container; then saves for 45 s (a snapshot
     // at least every 30 s), then quiet until the next pass.
     for _ in 0..4 {
@@ -950,7 +956,7 @@ async fn server() {
         .await
         .json();
     println!(
-        "\nM4 SeaweedFS at {}: {n} snapshots, mean {:.0} ms, mean {:.1} MiB; newest object {:.1} MiB; {} saves: median {:.1} ms, longest {:.0} ms",
+        "\nsnapshots on SeaweedFS at {}: {n} snapshots, mean {:.0} ms, mean {:.1} MiB; newest object {:.1} MiB; {} saves: median {:.1} ms, longest {:.0} ms",
         e.size,
         d("knoggin_container_snapshot_millis_total") / n.max(1.0),
         d("knoggin_container_snapshot_bytes_total") / n.max(1.0) / MIB,
@@ -1103,7 +1109,7 @@ async fn local_daemon() {
     }
     files.sort();
     println!(
-        "\nM4 local disk at {}: {n} snapshots, mean {:.0} ms, mean {:.1} MiB; newest file {:.1} MiB; {} saves: median {:.1} ms, longest {:.0} ms",
+        "\nsnapshots on local disk at {}: {n} snapshots, mean {:.0} ms, mean {:.1} MiB; newest file {:.1} MiB; {} saves: median {:.1} ms, longest {:.0} ms",
         e.size,
         d("knoggin_snapshot_seconds_sum") * 1000.0 / n.max(1.0),
         d("knoggin_snapshot_bytes_sum") / n.max(1.0) / MIB,
@@ -1114,14 +1120,14 @@ async fn local_daemon() {
     );
 }
 
-// ------------------------------------------------------------------------------ M7
+// ---------------------------------------------------------------- bucket and long upload
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "measurement"]
 async fn seaweedfs() {
     let e = env();
-    let own = e.dir.join("m7");
-    let (s, s3_port) = measure_stack(&e, &own, "knmeasure-m7", true).await;
+    let own = e.dir.join("long-upload");
+    let (s, s3_port) = measure_stack(&e, &own, "knmeasure-upload", true).await;
     let selftest = s.knoggin(&["admin", "selftest"]);
     println!(
         "admin selftest (exit {:?}):\n{}",
@@ -1158,7 +1164,7 @@ async fn seaweedfs() {
         );
         let link = knoggin_server::ObjectStorage::presign_put_new(
             &bucket,
-            &format!("measure/m7-{name}-{}", now.millis()),
+            &format!("measure/upload-{name}-{}", now.millis()),
             (CHUNK * CHUNKS) as u64,
             Duration::from_secs(5),
             now,
@@ -1192,7 +1198,7 @@ async fn seaweedfs() {
                 let status = r.status();
                 let body = r.text().await.unwrap_or_default();
                 println!(
-                    "M7 {name} upload: {status} after {elapsed:.1} s (link lifetime 5 s) {}",
+                    "long upload {name}: {status} after {elapsed:.1} s (link lifetime 5 s) {}",
                     stack::tail(&body, 3)
                 );
             }
@@ -1204,7 +1210,7 @@ async fn seaweedfs() {
                     e = x.source();
                 }
                 println!(
-                    "M7 {name} upload: failed after {elapsed:.1} s (link lifetime 5 s){chain}"
+                    "long upload {name}: failed after {elapsed:.1} s (link lifetime 5 s){chain}"
                 );
             }
         }

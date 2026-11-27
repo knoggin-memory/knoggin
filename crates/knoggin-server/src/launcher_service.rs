@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `knoggin launcher` (tab "Deployment", The launcher service): the one process on one host
+//! `knoggin launcher`, the launcher service: the one process on one host
 //! that holds the Docker socket. It accepts four calls from the router, each with the shared
 //! token, and starts every user container from one description fixed in this file: no field
 //! of a request reaches a container's host settings. It acts only on containers and

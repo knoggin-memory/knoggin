@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The launcher service's API against a fake Docker Engine (bollard over HTTP to a stub on
-//! loopback), and `DockerLauncher` against the service in process (tab "Deployment", The
-//! launcher service). The fake holds other projects' containers and networks beside the
-//! launcher's own, and the tests check that none of them is ever changed.
+//! loopback), and `DockerLauncher` against the service in process. The fake holds other projects'
+//! containers and networks beside the launcher's own, and the tests check that none of them is ever
+//! changed.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -806,7 +806,8 @@ async fn docker_launcher_drives_the_service() {
     assert!(info.address.is_some());
     assert!(info.started_at.is_some() && info.ended.is_none());
     {
-        // The service set the router's address itself; the spec's never travels.
+        // The service set the router's address itself; the `ContainerSpec`'s `router_url` never
+        // travels.
         let f = r.fake.lock().unwrap();
         let env = f.containers[&handle.0].body["Env"].to_string();
         assert!(env.contains("KNOGGIN_ROUTER_URL=https://router:8443"));

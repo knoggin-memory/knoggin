@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The reconcile loop (tab "Server", The reconcile loop): one router at a time leads,
+//! The reconcile loop: one router at a time leads,
 //! through the record `leader/reconcile`, taken when absent or expired or when this
 //! router's build is newer than the holder's, and renewed every 10 seconds. Every 30
 //! seconds the leader runs one pass of thirteen steps, each safe to repeat. When the

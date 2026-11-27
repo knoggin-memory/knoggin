@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Web sign-in and its routes (tab "Sign-in and credentials", Web sign-in): the
-//! authorization-code flow with PKCE, the sealed login cookie, the callback's checks and
-//! user rules, cookie sessions and logout, and the protected-resource metadata.
+//! Web sign-in and its routes: the authorization-code flow with PKCE, the sealed login
+//! cookie, the callback's checks and user rules, cookie sessions and logout, and the
+//! protected-resource metadata.
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};

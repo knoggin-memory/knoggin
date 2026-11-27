@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The JSON shapes of the control routes (tab "REST API", Shared shapes and Control
-//! routes), with their OpenAPI schemas under the public names.
+//! The JSON shapes of the control routes, with their OpenAPI schemas under the public
+//! names.
 
 use knoggin_core::ops::{EmbeddingProgress, ModelState};
 use knoggin_core::time::{MILLIS_PER_DAY, Timestamp};
@@ -341,8 +341,8 @@ pub(crate) struct UserView {
     pub(crate) delete_after: Option<Timestamp>,
 }
 
-/// One snapshot of `GET /v1/admin/stores/{id}/snapshots`, which a server serves
-/// (milestone 6); its shape is here for the web UI's types.
+/// One snapshot of `GET /v1/admin/stores/{id}/snapshots`, which only a server serves; its
+/// shape is here for the web UI's types.
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "Snapshot")]

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `knoggin-bench`: the LoCoMo benchmark harness (measurement M1), `embed-compare` (M5) and
-//! `gen-export` (M2 to M4). A separate binary, not part of any release.
+//! `knoggin-bench`: the LoCoMo benchmark harness, `embed-compare` (the faster compute path
+//! measurement) and `gen-export` (large stores for the server measurements). A separate
+//! binary, not part of any release.
 #![allow(
     clippy::print_stdout,
     clippy::print_stderr,
@@ -30,11 +31,11 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Run the LoCoMo benchmark (measurement M1). Calls the model server at --llm-url;
+    /// Run the LoCoMo benchmark. Calls the model server at --llm-url;
     /// set BENCH_LLM_API_KEY for its bearer token and BENCH_JUDGE_STYLE=mem0 for Mem0's judge.
     Locomo(LocomoArgs),
     /// Embed every LoCoMo turn and question with two graphs and print the mean overlap of
-    /// the top 10 vector results per question (measurement M5).
+    /// the top 10 vector results per question.
     EmbedCompare {
         /// The LoCoMo data file, locomo10.json.
         #[arg(long)]
@@ -49,7 +50,7 @@ enum Command {
         #[command(flatten)]
         ort: OrtArg,
     },
-    /// Write an export-format file of synthetic memories (measurements M2 to M4).
+    /// Write an export-format file of synthetic memories for the server measurements.
     GenExport {
         /// How many memories.
         #[arg(long)]

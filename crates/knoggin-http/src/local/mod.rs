@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The local daemon's part of the edge (tabs "Sign-in and credentials", The local socket
-//! and the local web session, and "Config, CLI, local install", The local daemon): the
-//! Unix socket and its directory, the loopback listeners, the local web sessions and
-//! their routes, the daemon's versions of the three mode routes, the locked router, and
-//! the daemon's erase step.
+//! The local daemon's part of the edge: the Unix socket and its directory, the loopback
+//! listeners, the local web sessions and their routes, the daemon's versions of the three
+//! mode routes, the locked router, and the daemon's erase step.
 
 use std::collections::HashMap;
 use std::io;

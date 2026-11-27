@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The secrets of the internal link and their exact bytes (tab "Server", internal link):
+//! The secrets of the internal link and their exact bytes:
 //! `internal.secret`, a container's launch secret, the router and container tokens, the
 //! `hello` proof, nonces and certificate pins.
 

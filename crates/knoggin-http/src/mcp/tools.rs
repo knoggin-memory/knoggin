@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The 18 tools: titles, descriptions and hints as the MCP tab gives them, the two tool
+//! The 18 tools: titles, descriptions and hints as fixed text, the two tool
 //! sets, and each tool's call into the same `StoreHost` methods REST uses.
 
 use knoggin_core::ops::{
@@ -70,7 +70,7 @@ macro_rules! tool {
     };
 }
 
-/// Every tool, in the order of the MCP tab.
+/// Every tool, in its fixed order.
 pub(crate) static TOOLS: [Tool; 18] = [
     tool!("get_context", "Get Memory Context",
         "Load the user's long-term memory context in one call: the default namespace, the list of namespaces, and the most relevant memories for an optional topic. Call this once at the start of a task when earlier context could matter.",

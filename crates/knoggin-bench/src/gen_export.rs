@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `gen-export`: an export-format file of synthetic memories for the measurements that need
-//! large stores (M2, M3, M4). The distribution is fixed so that measurements compare: one
-//! namespace; a summary of 80 to 300 bytes on every memory; a full text of 300 to 3,000
-//! bytes on 70% of them; 3 tags from a pool of 200, 2 entities from a pool of 500 and 1
-//! topic from a pool of 50; `createdAt` is the time of writing; no edges. Lengths and picks
-//! are uniform, from a generator seeded with `--seed`. The text uses [`WORDS_FILE`].
+//! large stores (claim-to-first-answer time, peak memory of a user container, snapshot size
+//! and duration). The distribution is fixed so that measurements compare: one namespace; a
+//! summary of 80 to 300 bytes on every memory; a full text of 300 to 3,000 bytes on 70% of
+//! them; 3 tags from a pool of 200, 2 entities from a pool of 500 and 1 topic from a pool
+//! of 50; `createdAt` is the time of writing; no edges. Lengths and picks are uniform, from
+//! a generator seeded with `--seed`. The text uses [`WORDS_FILE`].
 
 use std::io::{self, Write};
 

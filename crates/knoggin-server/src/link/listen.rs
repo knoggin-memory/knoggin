@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The TLS listener of the link: the container's on `0.0.0.0:8443` and the router's
-//! internal one. Built with hyper-util and tokio-rustls (tab "Engineering rules", HTTP
-//! limits): timers set, a 30-second header read timeout, the TLS handshake bounded by the
-//! same time, HTTP/2 keep-alive and stream limits. The protocol comes from ALPN, so the
-//! server never waits unbounded to guess it.
+//! The TLS listener of the link: the container's on `0.0.0.0:8443` and the router's internal one.
+//! Built with hyper-util and tokio-rustls, with HTTP limits: timers set, a 30-second header read
+//! timeout, the TLS handshake bounded by the same time, HTTP/2 keep-alive and stream limits. The
+//! protocol comes from ALPN, so the server never waits unbounded to guess it.
 
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};

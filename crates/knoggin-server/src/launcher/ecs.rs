@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `EcsLauncher`: user containers as ECS tasks of the family `knoggin-user` (tab
-//! "Deployment", How `EcsLauncher` starts a container). `launch` is one `RunTask` with the
-//! capacity provider, `binpack` on memory, the user subnets and security groups without a
-//! public address, `startedBy` `knoggin-pool`, the tag `knoggin:container-id` and a container
-//! override that sets the five environment values and nothing else. No user identifier goes
-//! into a tag, an override or `startedBy`: those show in the console and in CloudTrail.
+//! `EcsLauncher`: user containers as ECS tasks of the family `knoggin-user`. `launch` is one
+//! `RunTask` with the capacity provider, `binpack` on memory, the user subnets and security groups
+//! without a public address, `startedBy` `knoggin-pool`, the tag `knoggin:container-id` and a
+//! container override that sets the five environment values and nothing else. No user identifier
+//! goes into a tag, an override or `startedBy`: those show in the console and in CloudTrail.
 //! `describe` and `list` read `DescribeTasks` (with tags) and mark the tasks whose host is
-//! `DRAINING` (`DescribeContainerInstances`); a task the API does not know is left out, so
-//! the router treats it as unknown. `stop` is `StopTask` with the reason.
+//! `DRAINING` (`DescribeContainerInstances`); a task the API does not know is left out, so the
+//! router treats it as unknown. `stop` is `StopTask` with the reason.
 
 use std::collections::{BTreeSet, HashMap};
 use std::net::{Ipv4Addr, SocketAddrV4};
@@ -486,7 +485,7 @@ mod tests {
         );
     }
 
-    /// `RunTask` carries exactly what the tab gives: the revision of the spec, one task, the
+    /// `RunTask` carries exactly this: the revision of the spec, one task, the
     /// capacity provider, binpack on memory, the network without a public address,
     /// `startedBy`, the ID tag, and an override of the five environment values only.
     #[tokio::test]

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The `knoggin admin` commands that act on a server (tab "Config, CLI, local install",
-//! Server commands): restore, master-key rotation, `retire-before`, the snapshot list and
-//! the self-test with its five bucket checks (tab "Server"). They read and write the state
+//! The `knoggin admin` commands that act on a server: restore, master-key rotation,
+//! `retire-before`, the snapshot list and the self-test with its five bucket checks. They
+//! read and write the state
 //! database, the bucket and the key provider directly; where a running router must act,
 //! they write a request that the reconcile loop carries out. The binary prints.
 
@@ -137,8 +137,8 @@ impl Admin {
             .value)
     }
 
-    /// `admin restore --store <id> --snapshot <name>`, steps 1 to 3 (tab "Server",
-    /// Restore): checks the object exists, writes `restore_from`, asks the owner's
+    /// `admin restore --store <id> --snapshot <name>`, steps 1 to 3 of a restore:
+    /// checks the object exists, writes `restore_from`, asks the owner's
     /// container to park, and waits up to `wait` for the lease to be parked.
     pub async fn restore(
         &self,
@@ -360,7 +360,7 @@ pub async fn rotate_master_key(
     Ok((kek_id, count))
 }
 
-/// One of the five bucket checks (tab "Server", Bucket self-test).
+/// One of the five checks of the bucket self-test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BucketStep {
     /// 1. A signed create-only upload succeeds.

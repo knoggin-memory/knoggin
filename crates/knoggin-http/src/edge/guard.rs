@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The router's start-up guards for sign-in (tab "Sign-in and credentials", The two
-//! modes, Start-up guard), as plain functions so that they are tested without a router.
-//! The daemon's own guards are in the binary.
+//! The router's start-up guards for sign-in, as plain functions so that they are tested
+//! without a router. The daemon's own guards are in the binary.
 
 use knoggin_state::users::LOCAL_IDENTITY;
 use knoggin_state::{StateError, Users};

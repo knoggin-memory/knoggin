@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The broker in process, called the way a container calls it (tab "Server": the broker,
-//! its limits and the one-host blob route; tab "Security": rows I5, I6 and I7). The test
+//! The broker in process, called the way a container calls it: its routes, its limits and
+//! the one-host blob route, and that no container reaches another user's stores, uses
+//! another container's identity, or keeps working once replaced. The test
 //! holds containers' tokens itself, as the fleet tests may.
 #![allow(
     clippy::unwrap_used,
@@ -105,13 +106,15 @@ async fn every_call_proves_its_container_and_its_lease() {
     let (status, body) = send(id_b, a.user, id_a, paths::open(a.store)).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(code(&body).0, "lease_lost");
-    // I6: A's user with B's whole valid identity; A's lease names another container.
+    // No container uses another's identity: A's user with B's whole valid identity; A's lease names
+    // another container.
     let (status, body) = send(id_b, a.user, id_b, paths::open(a.store)).await;
     assert_eq!(
         (status, code(&body).0.as_str()),
         (StatusCode::CONFLICT, "lease_lost")
     );
-    // I5: B's container asks for A's store on every store route.
+    // No container reaches another user's stores: B's container asks for A's store on
+    // every store route.
     for path in [
         paths::open(a.store),
         paths::snapshots(a.store),
@@ -200,7 +203,7 @@ async fn every_call_proves_its_container_and_its_lease() {
         StatusCode::NOT_FOUND
     );
 
-    // I7: once the lease names another container, the old one gets lease_lost.
+    // Once the lease names another container, the old one gets lease_lost.
     let _new = holder(&rig, a.user, g + 1).await;
     let (status, body) = open(&rig, id_a, a, "").await;
     assert_eq!(
@@ -722,11 +725,11 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
     assert_eq!(status, StatusCode::CONFLICT);
 }
 
-/// I5 on the blob route: another user's container, with its own valid lease, holding
-/// valid links to A's objects, is refused with `not_found` before anything reaches the
-/// bucket, for a download and an upload alike.
+/// No container reaches another user's stores on the blob route: another user's container, with its
+/// own valid lease, holding valid links to A's objects, is refused with `not_found` before anything
+/// reaches the bucket, for a download and an upload alike.
 #[tokio::test]
-async fn i5_the_blob_route_refuses_another_users_objects_before_the_bucket() {
+async fn the_blob_route_refuses_another_users_objects_before_the_bucket() {
     let rig = Rig::start(Options::default()).await;
     let (a, b) = (rig.account().await, rig.account().await);
     let g = rig.generation();

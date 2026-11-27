@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The OpenAPI 3.1 document of `/v1` (tab "REST API", The OpenAPI document), generated
-//! with `utoipa`. The control routes carry their annotations on their handlers; the store
-//! routes, whose handlers live in `store_api`, are described by the annotated stubs below.
-//! A copy is committed at `docs/openapi.json`; a test fails when the two differ.
+//! The OpenAPI 3.1 document of `/v1`, generated with `utoipa`. The control routes carry
+//! their annotations on their handlers; the store routes, whose handlers live in
+//! `store_api`, are described by the annotated stubs below. A copy is committed at
+//! `docs/openapi.json`; a test fails when the two differ.
 
 use std::path::Path;
 use std::sync::LazyLock;
@@ -198,7 +198,7 @@ fn export() {}
 #[allow(dead_code)]
 fn import() {}
 
-// The web UI's read models (tab "Web UI"). None reads the `Knoggin-Namespace` header.
+// The web UI's read models. None reads the `Knoggin-Namespace` header.
 
 #[utoipa::path(get, path = "/v1/ui/graph", tag = "ui",
     params(UiStore, ("namespace" = Option<String>, Query), ("edgeOffset" = Option<u32>, Query)),

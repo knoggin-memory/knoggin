@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Launching and the pool (tab "Server", Launching and the pool): the record is written
+//! Launching and the pool: the record is written
 //! `starting` before the launcher is called; the rest of a launch (the handle, waiting
 //! for the address, `hello` with its proof, `ready`) runs as a task of the router's own,
 //! bounded by 120 seconds. After a refused launch a router launches at most once a minute.

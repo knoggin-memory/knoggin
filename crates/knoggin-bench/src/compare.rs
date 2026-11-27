@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `embed-compare` (measurement M5): embeds every LoCoMo turn and question with two graphs
-//! and reports how much the top 10 vector results per question agree. A turn is embedded
-//! as a memory in recipe `doc-v1` (summary `Speaker: text`, the turn's time, no labels); a
-//! question in recipe `query-v1`; a question is searched among its own conversation's turns.
+//! `embed-compare` (the faster compute path measurement): embeds every LoCoMo turn and
+//! question with two graphs and reports how much the top 10 vector results per question
+//! agree. A turn is embedded as a memory in recipe `doc-v1` (summary `Speaker: text`, the
+//! turn's time, no labels); a question in recipe `query-v1`; a question is searched among
+//! its own conversation's turns.
 
 use std::time::Instant;
 

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Listeners built with hyper-util's automatic HTTP/1 and HTTP/2 builder (tab "Engineering
-//! rules", HTTP limits): timers set, the header read timeout, HTTP/2 keep-alive and stream
-//! limits, and a first-byte timeout, because the automatic builder waits for the first
-//! bytes without one. Each connection's requests carry the [`Arrival`] of their listener.
+//! Listeners built with hyper-util's automatic HTTP/1 and HTTP/2 builder, with the HTTP
+//! limits: timers set, the header read timeout, HTTP/2 keep-alive and stream limits, and a
+//! first-byte timeout, because the automatic builder waits for the first bytes without one.
+//! Each connection's requests carry the [`Arrival`] of their listener.
 
 use std::future::Future;
 use std::io;

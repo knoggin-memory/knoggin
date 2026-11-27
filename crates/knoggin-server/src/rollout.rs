@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Rollout (tab "Server", Rollout): the rollout record at a router's start, and the
+//! Rollout: the rollout record at a router's start, and the
 //! leader's rollout steps on each pass. A user container never changes build in place:
 //! it parks, and the next claim takes a container of the claim build. On one host the
 //! claim build is the router's own and the record's `claim` and `desired` are not used.

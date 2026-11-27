@@ -4,7 +4,7 @@
 //! These are also the REST payload types and the MCP result types: `camelCase`,
 //! unknown request fields refused. Request fields with a fixed default hold the value
 //! itself, filled in by serde, so that leaving a field out and sending its default hash
-//! the same (tab "Engine", Idempotency). A field whose absence means something that
+//! the same for idempotency. A field whose absence means something that
 //! varies (`createdAt`, a namespace that is only a check) stays an `Option`.
 //!
 //! A path parameter that is part of a request (`id`, `name`) is a field marked

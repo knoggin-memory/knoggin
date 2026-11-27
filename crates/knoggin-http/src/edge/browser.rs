@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The browser safety checks that do not depend on the credential (tab "Sign-in and
-//! credentials", Browser safety checks), the internal-header check, and the response
-//! headers every answer carries.
+//! The browser safety checks that do not depend on the credential, the internal-header
+//! check, and the response headers every answer carries.
 
 use axum::body::HttpBody;
 use axum::extract::Request;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The router's panic guard, alone in its own test binary (tab "Engineering rules"): a
+//! The router's panic guard, alone in its own test binary: a
 //! handler panics with a marker in its message; the request gets `internal` with its
 //! request ID, the log line is fixed, and the marker is in no log output.
 #![allow(

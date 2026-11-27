@@ -42,7 +42,7 @@ pub struct PinnedFile {
 }
 
 /// The graph: the published `model_q4.onnx` with `accuracy_level = 4` on every
-/// `MatMulNBits` node (measurement M5, `scripts/patch_q4_graph.py`). Only the project's
+/// `MatMulNBits` node (the faster compute path, `scripts/patch_q4_graph.py`). Only the project's
 /// release serves it; `repo_path` names the file it was made from.
 pub const GRAPH: PinnedFile = PinnedFile {
     repo_path: "onnx/model_q4.onnx",
@@ -697,7 +697,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn identity_string_matches_the_spec() {
+    fn identity_string_is_the_pinned_one() {
         assert_eq!(
             identity_json(),
             r#"{"dimensions":768,"document_recipe":"doc-v1","graph_sha256":"1afd951bf447f631786cc1302921f94d4bc30f602ee6a61e8e517d0a3203c8a8","max_tokens":1024,"model":"google/embeddinggemma-2","normalization":"l2","precision":"q4","query_recipe":"query-v1","source":"onnx-community/embeddinggemma-2-ONNX@daa72c51243991dfcaf9f9137d2c573d8f7790c0","tokenizer_sha256":"4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4","weights_sha256":"c3975f2d1ab7a1878ae31a7d7a9b7804a827aff3800b60dfceafce21cac3df49"}"#

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Idempotent writes: `run_idempotent` and the input of the request hash.
 //!
-//! The engine does not hash: `knoggin-core` takes no cryptography crate (tab
-//! "Workspace and crates"), and every SHA-256 in Knoggin comes from `aws-lc-rs` (tab
-//! "Engineering rules"). [`request_hash_input`] builds the exact bytes, and the host
-//! hashes them with `aws_lc_rs::digest::SHA256` before calling [`Store::run_idempotent`].
+//! The engine does not hash: `knoggin-core` takes no cryptography crate, and every SHA-256 in
+//! Knoggin comes from `aws-lc-rs`. [`request_hash_input`] builds the exact bytes, and the
+//! host hashes them with `aws_lc_rs::digest::SHA256` before calling [`Store::run_idempotent`].
 
 use serde::Serialize;
 use serde_json::Value;

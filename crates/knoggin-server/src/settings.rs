@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The server-only settings (tab "Config, CLI, local install", Settings): what the router,
+//! The server-only settings: what the router,
 //! the lifecycle task and the launcher service read beyond the edge and store layers'
 //! settings in `knoggin_http`. The binary fills them from the file and the environment,
 //! with secrets already read from their files. A user container reads none of these: it
@@ -23,7 +23,7 @@ pub const MODEL_RESERVE_BYTES: u64 = 928 * 1024 * 1024;
 pub const UPLOAD_BUDGETS_PER_HOUR: u64 = 720;
 
 /// The bytes all open stores of a container may hold together:
-/// `(memory_limit_bytes - 928 MiB) * 0.4` (tab "Server", memory budget).
+/// `(memory_limit_bytes - 928 MiB) * 0.4`, the memory budget.
 pub fn store_budget(memory_limit_bytes: u64) -> u64 {
     memory_limit_bytes.saturating_sub(MODEL_RESERVE_BYTES) / 5 * 2
 }
@@ -180,7 +180,7 @@ pub enum LauncherSettings {
     Docker(DockerSettings),
 }
 
-/// `launcher.ecs.*` (tab "Deployment").
+/// `launcher.ecs.*`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EcsSettings {

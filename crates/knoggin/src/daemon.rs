@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The local daemon (tab "Config, CLI, local install", The local daemon): its start-up in
+//! The local daemon: its start-up in
 //! order, locked mode, the listeners, the background tasks and the shut-down; and the
 //! process side of `knoggin start`, `stop` and `state use-previous`.
 
@@ -136,7 +136,7 @@ pub(crate) fn check_settings(config: &Config, test_mode: bool) -> anyhow::Result
     Ok(())
 }
 
-/// Step 3's rule for an existing key file (tab "Snapshots and keys"): this user's own
+/// Step 3's rule for an existing key file: this user's own
 /// regular file, with no permission bit for group or others.
 fn check_key_file(path: &Path) -> anyhow::Result<()> {
     use std::os::unix::fs::MetadataExt;

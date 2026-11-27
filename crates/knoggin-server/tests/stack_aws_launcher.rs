@@ -133,7 +133,7 @@ async fn ecs_launcher_on_moto() {
         }
     }
 
-    // The cluster, two hosts, and the user task definition of the tab "Deployment".
+    // The cluster, two hosts, and the user task definition.
     let raw = aws_sdk_ecs::Client::from_conf(moto_config(&endpoint));
     raw.create_cluster()
         .cluster_name(CLUSTER)

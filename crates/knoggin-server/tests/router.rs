@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The router's lease, claim, "Mark gone", pool, reconcile, rollout and forwarding rules
-//! (tab "Server", Tests that must exist), run against stub containers that the fake
+//! run against stub containers that the fake
 //! launcher starts in this process, over one shared in-memory state database.
 #![allow(
     clippy::unwrap_used,

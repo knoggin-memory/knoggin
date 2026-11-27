@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The bodies of the container's routes that a router calls (tab "Server", routes on the
-//! container): `hello`, `claim`, `park` and `status`, and the route paths. The router
-//! builds them, the container answers them; both sides use these types so that they
-//! agree. The broker's bodies belong to the broker.
+//! The bodies of the container's routes that a router calls: `hello`, `claim`, `park` and `status`,
+//! and the route paths. The router builds them, the container answers them; both sides use these
+//! types so that they agree. The broker's bodies belong to the broker.
 
 use knoggin_core::ops::ModelState;
 use knoggin_core::{StoreId, UserId};

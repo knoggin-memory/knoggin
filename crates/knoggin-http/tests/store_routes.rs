@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The store routes against `store_layer` with an inserted context, the fake model and a
-//! `LocalBackend` in a temporary folder (tab "REST API", Tests that must exist).
+//! `LocalBackend` in a temporary folder.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

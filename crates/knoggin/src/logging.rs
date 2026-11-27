@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Logging (tab "Engineering rules", Logging): plain text on stderr for the daemon and the
+//! Logging: plain text on stderr for the daemon and the
 //! command line, JSON on stdout for server roles, `log.level` for Knoggin's own crates and
 //! `warn` for every other crate, and the daemon's own log file, rotated at 10 MiB.
 

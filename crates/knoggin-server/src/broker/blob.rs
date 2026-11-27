@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The one-host blob route: `GET` and `PUT /internal/v1/blob/<object key>` (tab "Server",
-//! the broker). A user container has no road to the bucket; its signed links point here,
+//! The one-host blob route: `GET` and `PUT /internal/v1/blob/<object key>` of the
+//! broker. A user container has no road to the bucket; its signed links point here,
 //! and the router forwards each request to the deployment's own bucket, for an object of
 //! the caller's own stores only, with the signed query and the signed headers and nothing
 //! else. The bytes stream through; nothing is kept.

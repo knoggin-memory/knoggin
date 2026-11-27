@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The local install's acceptance check (tab "Overview", Build order) as one scripted
-//! session in a temporary home, in test mode.
+//! The local install end to end, as one scripted session in a temporary home, in test
+//! mode.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

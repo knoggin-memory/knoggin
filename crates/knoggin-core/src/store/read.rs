@@ -41,7 +41,7 @@ fn bad_cursor() -> EngineError {
     EngineError::invalid("cursor", "cursor is not one this server gave out")
 }
 
-/// A cursor is base64url text (tab "REST API"), so the tag it may name does not
+/// A cursor is base64url text, so the tag it may name does not
 /// travel in clear.
 fn encode_cursor(plain: &str) -> String {
     URL_SAFE_NO_PAD.encode(plain)

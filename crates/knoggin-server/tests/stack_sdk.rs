@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The Python SDK's contract tests against the one-host stack (tabs "Testing, CI, releases"
-//! and "SDK and integrations"): the same calls the SDK tier makes against a daemon, here
-//! against the router, once with an app's API key and once with a user's OAuth access
-//! token. That is what "works against both versions" means. Needs `uv` on `PATH`; the
-//! tests run with `uv run --locked pytest tests/contract` in `sdk/python`, given the
-//! address as `KNOGGIN_TEST_URL` and the credential as `KNOGGIN_TEST_API_KEY`.
+//! The Python SDK's contract tests against the one-host stack: the same calls the SDK tier makes
+//! against a daemon, here against the router, once with an app's API key and once with a user's
+//! OAuth access token. That is what "works against both versions" means. Needs `uv` on `PATH`; the
+//! tests run with `uv run --locked pytest tests/contract` in `sdk/python`, given the address as
+//! `KNOGGIN_TEST_URL` and the credential as `KNOGGIN_TEST_API_KEY`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

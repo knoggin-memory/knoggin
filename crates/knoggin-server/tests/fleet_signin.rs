@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The sign-in tests that name the router (tab "Sign-in and credentials", Tests that must
-//! exist): an access token's reach on a server, the browser checks on the router, and
-//! the router's start-up guards, against the test issuer, with routers started through
-//! `router::run_router` and real containers behind them.
+//! The sign-in tests that name the router: an access token's reach on a server, the browser checks
+//! on the router, and the router's start-up guards, against the test issuer, with routers started
+//! through `router::run_router` and real containers behind them.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

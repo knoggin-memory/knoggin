@@ -70,7 +70,7 @@ impl Store {
         self.last_write_client.clone_from(&ctx.client);
     }
 
-    /// Saves one memory (tab "Engine", "Saving a memory"). `vector` is the document
+    /// Saves one memory. `vector` is the document
     /// embedding when the host already has it. One that is not valid for the store's
     /// model counts as a failed embedding: the memory is saved `Pending` with one
     /// failure, as `apply_embedding` treats the same vector.

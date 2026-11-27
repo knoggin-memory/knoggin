@@ -613,7 +613,7 @@ async fn a_store_over_what_is_left_of_the_budget_opens_for_reading_only() {
     host.store_memory(&ctx2, mem("fits now"), None)
         .await
         .unwrap();
-    // `full` lasts until a write to the store succeeds (tab "Server").
+    // `full` lasts until a write to the store succeeds.
     assert!(!host.store_status(second).full);
 }
 

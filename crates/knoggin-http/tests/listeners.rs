@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The daemon's listeners over real sockets: the Unix socket and its modes, the path
-//! limit, a stale socket file, the loopback pair, a TCP request without a credential, and
-//! the first-byte timeout (tab "Engineering rules", HTTP limits).
+//! The daemon's listeners over real sockets: the Unix socket and its modes, the path limit,
+//! a stale socket file, the loopback pair, a TCP request without a credential, and the
+//! first-byte timeout.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `KmsKeyProvider`: data keys wrapped by one KMS key (tab "Snapshots and keys", KMS
-//! wrapping). `generate` is `GenerateDataKey` with `KeySpec = AES_256`; `unwrap` is `Decrypt`
-//! with `KeyId` set to the configured key. Both carry the encryption context
-//! `{ "knoggin:store": "<store id>" }`, so a blob opens only for its own store, and the
-//! router's role may use the key only with that context key. KMS rotates its own key
+//! `KmsKeyProvider`: data keys wrapped by one KMS key. `generate` is `GenerateDataKey` with
+//! `KeySpec = AES_256`; `unwrap` is `Decrypt` with `KeyId` set to the configured key. Both carry
+//! the encryption context `{ "knoggin:store": "<store id>" }`, so a blob opens only for its own
+//! store, and the router's role may use the key only with that context key. KMS rotates its own key
 //! material and keeps the old material, so old blobs keep working and nothing is re-wrapped.
 
 use std::time::Duration;

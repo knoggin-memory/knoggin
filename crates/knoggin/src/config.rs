@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The config loader (tab "Config, CLI, local install", Config file): one strict TOML
+//! The config loader: one strict TOML
 //! schema for every role, in four layers (defaults, the file, `KNOGGIN_<PATH>` variables,
 //! flags), and secrets that come only from `<key>_file` or their environment variable.
 
@@ -748,7 +748,7 @@ impl Config {
             None => (default_file(env, role), false),
         };
         let read = if role == Role::Serve {
-            // A user container reads no config file (tab "Config, CLI, local install").
+            // A user container reads no config file.
             Err(std::io::Error::from(std::io::ErrorKind::NotFound))
         } else {
             std::fs::read_to_string(&path)

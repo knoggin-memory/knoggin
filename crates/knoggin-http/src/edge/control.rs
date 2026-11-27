@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The control routes that are the same code in both modes (tab "REST API", Control
-//! routes): health, the session, stores, API keys, the account and the admin's users.
-//! The credential check ran before every one of them and left a [`Caller`].
+//! The control routes that are the same code in both modes: health, the session, stores,
+//! API keys, the account and the admin's users. The credential check ran before every one
+//! of them and left a [`Caller`].
 
 use std::collections::HashMap;
 

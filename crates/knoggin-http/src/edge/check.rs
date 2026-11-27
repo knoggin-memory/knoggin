@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The credential check, steps 3 to 13 (tab "Sign-in and credentials", Credential check,
-//! in order), the store selection of the store routes, the per-credential bucket, the
-//! per-user caps, the bookkeeping writes, and the 60-second re-check of long transfers.
+//! The credential check, steps 3 to 13 in order, the store selection of the store routes,
+//! the per-credential bucket, the per-user caps, the bookkeeping writes, and the 60-second
+//! re-check of long transfers.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -1287,7 +1287,7 @@ mod tests {
 
     /// The re-check of an open transfer (an event stream, an export, an import) runs the
     /// credential check again, so it fails once the API key is revoked, once its store is
-    /// deleted, and once its user is removed (rules I12 and I17).
+    /// deleted, and once its user is removed.
     #[tokio::test]
     async fn the_transfer_recheck_fails_for_a_revoked_key_a_deleted_store_or_a_removed_user() {
         use knoggin_crypto::KeyProvider;

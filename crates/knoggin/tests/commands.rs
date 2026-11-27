@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The local commands against a daemon in a temporary home, with their exit codes (tab
-//! "Config, CLI, local install", Tests that must exist: Commands, recalld import).
+//! The local commands against a daemon in a temporary home, with their exit codes, and
+//! the recalld import.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

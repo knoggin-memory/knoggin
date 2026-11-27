@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The internal link between routers and containers (tab "Server", internal link): TLS
+//! The internal link between routers and containers: TLS
 //! 1.3 with certificates pinned by their SHA-256 and no authority trusted, launch secrets
 //! and the two tokens derived from them, the `hello` proof, the clients and the listener,
 //! and the bodies of the container's internal routes.

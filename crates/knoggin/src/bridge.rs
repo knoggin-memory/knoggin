@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `knoggin mcp`: the stdio bridge (tab "MCP", Transports, stdio). One JSON-RPC message
+//! `knoggin mcp`: the stdio bridge. One JSON-RPC message
 //! per line in, one per line out; each message goes to the daemon over its Unix socket as
 //! `POST /mcp` (or `/mcp/plugin`), or with `--url` to a remote server. It holds no tool
 //! logic.

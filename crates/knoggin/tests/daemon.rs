@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The daemon's start-up, locked mode and shut-down (tab "Config, CLI, local install",
-//! Tests that must exist: Daemon), each in a temporary home in test mode.
+//! The daemon's start-up, locked mode and shut-down, each in a temporary home in test
+//! mode.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

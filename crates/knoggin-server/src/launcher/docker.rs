@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `DockerLauncher`: the router's client of the launcher service on one host (tab
-//! "Deployment", The launcher service). The router holds no Docker socket; it sends the
-//! container ID and three environment values, and the service does the rest.
+//! `DockerLauncher`: the router's client of the launcher service on one host. The router holds no
+//! Docker socket; it sends the container ID and three environment values, and the service does the
+//! rest.
 
 use std::net::SocketAddrV4;
 use std::time::Duration;

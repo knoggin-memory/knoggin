@@ -4,7 +4,7 @@
 //!
 //! Ported from recalld `src/rif/` (activation, plasticity, the engine's
 //! `compute_effects`) and `RifProcessorAdapter::compute_suppressions` in
-//! `src/search/adapters.rs`. Two differences, both in the spec: a neighbor's strength
+//! `src/search/adapters.rs`. Two deliberate differences: a neighbor's strength
 //! is computed at `now`, and where two memories share several edges the one with the
 //! highest activation counts, not the first recalld added.
 

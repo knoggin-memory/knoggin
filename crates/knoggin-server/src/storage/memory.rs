@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `MemoryStorage`, the bucket of the fast tests (tab "Testing, CI, releases", stand-ins):
+//! `MemoryStorage`, the stand-in bucket of the fast tests:
 //! a small HTTP server on a loopback port that keeps objects in memory. Its links are real
 //! addresses, signed with an HMAC and an expiry in query parameters named as S3's
 //! (`X-Amz-Algorithm` to `X-Amz-Signature`, and `x-id`), so the code that downloads and

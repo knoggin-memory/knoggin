@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Rate limits and per-user caps of the edge layer (tab "Server", Rate limits): token
-//! buckets in memory, and counters of open exports, imports and requests in flight.
+//! Rate limits and per-user caps of the edge layer: token buckets in memory, and counters
+//! of open exports, imports and requests in flight.
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -87,9 +87,8 @@ impl<K: Hash + Eq> Buckets<K> {
     }
 }
 
-/// The bucket an address is counted in (tab "Server", Rate limits): an IPv4 address (an
-/// IPv4-mapped IPv6 address counts as that IPv4 address) is its own bucket; IPv6
-/// addresses share one per /64.
+/// The bucket an address is counted in: an IPv4 address (an IPv4-mapped IPv6 address counts
+/// as that IPv4 address) is its own bucket; IPv6 addresses share one per /64.
 pub fn address_key(ip: IpAddr) -> IpAddr {
     match ip.to_canonical() {
         IpAddr::V6(v6) => IpAddr::V6(Ipv6Addr::from(u128::from(v6) & !((1u128 << 64) - 1))),

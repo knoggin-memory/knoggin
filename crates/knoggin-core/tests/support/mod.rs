@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Shared by the property tests: the word list, the random operation generator and the
-//! harness that applies operations to a store (tab "Engine", "Index rules").
+//! harness that applies operations to a store.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

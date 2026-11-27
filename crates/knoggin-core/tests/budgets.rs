@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Latency budgets (measurement M9, tab "Engine", "Latency budgets"). Ignored by
+//! Latency budgets (the engine latency measurement in docs/maintainers.md). Ignored by
 //! default; run with
 //! `cargo nextest run -p knoggin-core --release --locked --run-ignored only -E 'binary(budgets)'`.
 //!

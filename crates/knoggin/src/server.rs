@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The server roles' wiring (tab "Config, CLI, local install", Server commands): builds the
+//! The server roles' wiring: builds the
 //! settings, the state database, the key provider, the bucket and the launcher from the
 //! config, and runs `knoggin router`, `serve`, `lifecycle` and `launcher`. Every setting a
 //! role needs is checked before it connects to anything, so a refusal is quick and says
@@ -330,7 +330,7 @@ fn launcher_setting(config: &Config) -> anyhow::Result<LauncherSetting> {
         .map_err(|e| anyhow!("launcher.docker.url: {e}"))
 }
 
-/// `launcher.ecs.*` (tab "Deployment"): every value is needed, and containers reach the
+/// `launcher.ecs.*`: every value is needed, and containers reach the
 /// router at `internal.router_url`.
 fn ecs_settings(config: &Config) -> anyhow::Result<EcsSettings> {
     let e = &config.launcher.ecs;

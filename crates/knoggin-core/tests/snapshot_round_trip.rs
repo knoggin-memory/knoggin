@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Snapshot round trip (tab "Engine", "Index rules"): over random sequences of every
-//! operation, `decode(encode(store))` encoded again gives the same bytes after each step,
-//! and the decoded store holds the same observable state with every invariant intact.
+//! Snapshot round trip: over random sequences of every operation, `decode(encode(store))`
+//! encoded again gives the same bytes after each step, and the decoded store holds the
+//! same observable state with every invariant intact.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -19,7 +19,7 @@ use proptest::prelude::*;
 use support::{Harness, op};
 
 proptest! {
-    // 256 cases, pinned so that PROPTEST_CASES cannot lower it (tab "Engineering rules").
+    // 256 cases, pinned so that PROPTEST_CASES cannot lower it.
     #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 2_000, ..ProptestConfig::default() })]
 
     #[test]

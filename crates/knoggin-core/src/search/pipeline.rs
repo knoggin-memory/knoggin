@@ -7,7 +7,7 @@
 //! 1399, the "contract V1" path) and the helpers it calls: `fuse_scores`,
 //! `expand_graph_candidates`, `apply_filters`, `passes_filters`, `apply_rif`,
 //! `apply_boosts`, `compute_composite_score` and `resolve_supersedes`, with the
-//! supersedes tests. The step numbers are those of the spec tab "Engine".
+//! supersedes tests. The numbered steps below follow the pipeline in order.
 
 use std::collections::{BTreeMap, BTreeSet};
 
