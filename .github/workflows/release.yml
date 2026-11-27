@@ -37,25 +37,46 @@ jobs:
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-      # release-please bumps workspace.package.version; Cargo.lock follows here, on the
-      # release pull request's branch.
+      # release-please bumps workspace.package.version and sdk/python/pyproject.toml;
+      # Cargo.lock and sdk/python/uv.lock follow here, on the release pull request's
+      # branch, because CI's `--locked` checks fail on a lock file that names the old one.
       - if: steps.release.outputs.pr
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
           persist-credentials: false
       - if: steps.release.outputs.pr
-        name: Cargo.lock follows the new version
+        name: Install uv
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/uv.whl" https://files.pythonhosted.org/packages/3d/aa/26d64642d808de4a652579ef950d7cd2d37f080a8babf9c67c6b75fc4c3f/uv-0.13.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19  $RUNNER_TEMP/uv.whl" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          unzip -j -o "$RUNNER_TEMP/uv.whl" uv-0.13.9.data/scripts/uv -d "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP/bin/uv"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - if: steps.release.outputs.pr
+        name: The lock files follow the new version
         env:
           BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
           GH_TOKEN: ${{ github.token }}
         run: |
           rustup toolchain install
           cargo update --workspace
-          if git diff --quiet -- Cargo.lock; then exit 0; fi
+          # Only the project's own entry in uv.lock changes: it is set in place, and uv
+          # checks the result offline, so nothing is resolved again.
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("sdk/python/pyproject.toml", "rb"))["project"]["version"])')
+          awk -v v="$version" '
+            /^\[\[package\]\]$/ { p = 0 }
+            /^name = "knoggin"$/ { p = 1 }
+            p && /^version = / { $0 = "version = \"" v "\""; p = 0 }
+            { print }
+          ' sdk/python/uv.lock > "$RUNNER_TEMP/uv.lock"
+          mv "$RUNNER_TEMP/uv.lock" sdk/python/uv.lock
+          (cd sdk/python && uv lock --offline --check)
+          if git diff --quiet -- Cargo.lock sdk/python/uv.lock; then exit 0; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git commit --signoff --message "chore: update Cargo.lock for the release" -- Cargo.lock
+          git commit --signoff --message "chore: update the lock files for the release" -- Cargo.lock sdk/python/uv.lock
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
 
   # The web UI is the same on every target, so it is built once and handed to each build.
