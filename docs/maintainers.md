@@ -60,7 +60,7 @@ Before the first release:
 
 1. Register the PyPI project `knoggin` with a trusted publisher: this repository, workflow `release.yml`, environment `pypi`.
 2. Make the M5 switch (below), so that the first release ships the patched graph.
-3. Create the release App, which release-please uses to open its pull requests (the workflow's own token may not open them, and its pull requests would start no CI):
+3. Done on 2026-11-27: the App is `knoggin-release` (bot `knoggin-release[bot]`, user ID 362108219), with both secrets set and the sign-off below pointed at it. To set it up again: create the release App, which release-please uses to open its pull requests (the workflow's own token may not open them, and its pull requests would start no CI):
    1. In the organization's settings, Developer settings, GitHub Apps, create an App named for example `knoggin-release`. Turn the webhook off. Repository permissions: Contents read and write, Pull requests read and write (Metadata read comes with them). Nothing else.
    2. Install it on `knoggin-memory/knoggin` only.
    3. Generate a private key, and copy the App's Client ID.
