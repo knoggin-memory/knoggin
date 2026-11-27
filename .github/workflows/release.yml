@@ -181,6 +181,35 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # The real-model tier (tab "Testing, CI, releases") runs before a release as well as
+  # weekly; nothing is tagged or published unless it passes. The model is downloaded,
+  # not restored from a cache, like everything else a release builds from.
+  real-model:
+    needs: release-please
+    if: needs.release-please.outputs.created == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.release-please.outputs.tag }}
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Install cargo-nextest
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/nextest.tar.gz" https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-unknown-linux-gnu.tar.gz
+          echo "d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a  $RUNNER_TEMP/nextest.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/nextest.tar.gz" -C "$HOME/.cargo/bin" cargo-nextest
+      # Both downloads check every file against its pinned SHA-256.
+      - run: scripts/fetch-onnxruntime.sh x86_64-unknown-linux-gnu
+      - run: cargo run --locked -p knoggin-embed --example fetch_model -- --dir "$RUNNER_TEMP/models"
+      - run: cargo nextest run -p knoggin-embed --locked --run-ignored only -E 'binary(real_model)'
+        env:
+          KNOGGIN_MODEL__DIR: ${{ runner.temp }}/models
+          ORT_DYLIB_PATH: ${{ github.workspace }}/target/onnxruntime/x86_64-unknown-linux-gnu/libonnxruntime.so
+
   # One image per platform on a native runner, pushed by digest only; the image job joins
   # them under the release's tags.
   image-build:
@@ -230,7 +259,7 @@ jobs:
   # that passed all of that gets the tag X.Y.Z. X.Y and latest move after the release is
   # published (image-tags).
   image:
-    needs: [release-please, image-build]
+    needs: [release-please, image-build, real-model]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -306,7 +335,7 @@ jobs:
           retention-days: 1
 
   publish:
-    needs: [release-please, build, image]
+    needs: [release-please, build, real-model, image]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: release

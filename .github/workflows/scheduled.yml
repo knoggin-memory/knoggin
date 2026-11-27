@@ -79,9 +79,23 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/nextest.tar.gz" https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-unknown-linux-gnu.tar.gz
           echo "d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a  $RUNNER_TEMP/nextest.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/nextest.tar.gz" -C "$HOME/.cargo/bin" cargo-nextest
-      # Both downloads check every file against its pinned SHA-256.
+      # The model directory is cached under the pinned source commit and file hashes,
+      # the inputs of the model identity, so it is downloaded again only when they change.
+      - id: model
+        name: Cache key from the pinned model files
+        run: |
+          key=$(grep -E '^pub const (REPOSITORY|COMMIT)|^    sha256: "' crates/knoggin-embed/src/model.rs | sha256sum | cut -c1-16)
+          echo "key=model-$key" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/models
+          key: ${{ steps.model.outputs.key }}
+      # Both downloads check every file against its pinned SHA-256. The hash marks are
+      # removed first, so a restored file is hashed again too.
       - run: scripts/fetch-onnxruntime.sh x86_64-unknown-linux-gnu
-      - run: cargo run --locked -p knoggin-embed --example fetch_model -- --dir "$RUNNER_TEMP/models"
+      - run: |
+          find "$RUNNER_TEMP/models" -name '*.ok' -type f -delete 2>/dev/null || true
+          cargo run --locked -p knoggin-embed --example fetch_model -- --dir "$RUNNER_TEMP/models"
       - run: cargo nextest run -p knoggin-embed --locked --run-ignored only -E 'binary(real_model)'
         env:
           KNOGGIN_MODEL__DIR: ${{ runner.temp }}/models
