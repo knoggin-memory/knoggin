@@ -1,5 +1,8 @@
-# Add to ~/.hermes/config.yaml. The bridge sends the key in KNOGGIN_API_KEY.
+# Add to ~/.hermes/config.yaml. Hermes passes a stdio server only the variables listed under env,
+# so the bridge gets KNOGGIN_API_KEY from there; keep the key itself in ~/.hermes/.env.
 mcp_servers:
   knoggin:
     command: knoggin
     args: [mcp, --url, "https://memory.example.com/mcp"]
+    env:
+      KNOGGIN_API_KEY: "${KNOGGIN_API_KEY}"

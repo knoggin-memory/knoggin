@@ -1,0 +1,5 @@
+# Add to ~/.grok/config.toml. Grok signs in when it first connects.
+[mcp_servers.knoggin]
+url = "https://memory.example.com/mcp"
+# To use an API key instead of signing in (Grok expands the variable when it loads the file):
+# headers = { Authorization = "Bearer ${KNOGGIN_API_KEY}" }

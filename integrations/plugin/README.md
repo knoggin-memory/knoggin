@@ -1,10 +1,9 @@
 <!--
-UNVERIFIED 2026-11-26. The vendors' current plugin documentation could not be read from
-the build machine (the build contacts no outside service). The files follow the formats
-of the plugins installed on that machine: Claude Code 2.1.332 (its official marketplace)
-and Codex CLI 0.172.0 (its curated and bundled plugins). `claude plugin validate` passes
-on this folder and on the marketplace file. Check both formats against the vendors' docs
-before submitting to a directory.
+Checked on 2026-11-27 against code.claude.com/docs/en/plugins-reference, code.claude.com/docs/en/plugin-marketplaces,
+developers.openai.com/codex/plugins/build and learn.chatgpt.com/docs/developer-commands. Codex now documents a portable
+format (`plugin.json` and `mcp.json` at the plugin's root, with a `type` on every server); this build uses the
+`.codex-plugin/plugin.json` manifest, which those docs keep as a compatibility fallback, in the form of the Codex
+plugins installed on the build machine. `claude plugin validate` passes on this folder and on the marketplace file.
 -->
 
 # Knoggin plugin
@@ -53,7 +52,7 @@ To use a Knoggin server, change the entry to the server's plugin address, `<addr
 - **Claude Code:** in the installed plugin's `.mcp.json`, replace the `knoggin` entry with `{ "type": "http", "url": "https://memory.example.com/mcp/plugin" }`.
 - **Codex:** in the installed plugin's `mcp.json`, replace it with `{ "type": "http", "url": "https://memory.example.com/mcp/plugin" }`.
 
-Use your server's address in place of `memory.example.com`. Neither format lets an entry switch between a command and an address, so the plugin cannot ask for the address at install.
+Use your server's address in place of `memory.example.com`. Claude Code can ask for a value when a plugin is enabled (`userConfig`), but neither format lets an entry switch between a command and an address on whether a value was given, so the plugin ships the local entry.
 
 ## More
 

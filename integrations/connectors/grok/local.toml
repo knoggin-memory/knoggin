@@ -1,0 +1,4 @@
+# Add to ~/.grok/config.toml
+[mcp_servers.knoggin]
+command = "knoggin"
+args = ["mcp"]

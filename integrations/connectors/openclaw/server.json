@@ -1,0 +1,11 @@
+{
+  "mcp": {
+    "servers": {
+      "knoggin": {
+        "url": "https://memory.example.com/mcp",
+        "transport": "streamable-http",
+        "auth": "oauth"
+      }
+    }
+  }
+}

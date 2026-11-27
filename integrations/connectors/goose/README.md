@@ -1,4 +1,4 @@
-<!-- UNVERIFIED 2026-11-26: Goose's documentation was not read (the build contacts no outside service). The snippets follow its `extensions` setting as known on that date. -->
+<!-- Checked against goose-docs.ai/docs/getting-started/using-extensions and goose-docs.ai/docs/guides/config-files on 2026-11-27. -->
 
 # Goose
 

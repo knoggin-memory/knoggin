@@ -1,12 +1,24 @@
-<!-- UNVERIFIED 2026-11-26: OpenClaw's documentation was not read (the build contacts no outside service), and its MCP config format was not known well enough to write a snippet. Only the steps and the skill ship. The skill folder layout follows OpenClaw skills seen on the build machine. -->
+<!-- Checked against docs.openclaw.ai/tools/mcp, docs.openclaw.ai/cli/mcp/transports and docs.openclaw.ai/tools/skills on 2026-11-27. -->
 
 # OpenClaw
 
-There is no snippet for OpenClaw: add Knoggin as an MCP server through OpenClaw's own MCP settings.
+Merge one snippet into OpenClaw's config, under `mcp.servers`, or set the same entry with `openclaw mcp set`.
 
-- **Local install:** a server that runs the command `knoggin mcp`. It talks to the daemon over its Unix socket and needs no address or key.
-- **Server:** a server that runs `knoggin mcp --url https://memory.example.com/mcp`, with your server's address, and with your API key in the variable `KNOGGIN_API_KEY` of the environment OpenClaw starts it in. If your OpenClaw connects to MCP addresses itself, give it `https://memory.example.com/mcp` and the header `Authorization: Bearer` followed by the key from that variable.
+**Local install:** `local.json`. OpenClaw starts `knoggin mcp`, which talks to the daemon over its Unix socket and needs no address or key.
+
+```sh
+openclaw mcp set knoggin '{"command":"knoggin","args":["mcp"]}'
+```
+
+**Server:** `server.json`, with your server's address in place of `memory.example.com`. Keep `"transport": "streamable-http"`: without it OpenClaw uses the older SSE transport, which Knoggin does not speak. Then sign in; OpenClaw opens your identity provider's page, and when you are done you are back in OpenClaw. Knoggin shows no page of its own.
+
+```sh
+openclaw mcp set knoggin '{"url":"https://memory.example.com/mcp","transport":"streamable-http","auth":"oauth"}'
+openclaw mcp login knoggin
+```
+
+To use an API key instead of signing in, replace `"auth": "oauth"` with `"headers": {"Authorization": "Bearer ${KNOGGIN_API_KEY}"}` and set `KNOGGIN_API_KEY` in the environment OpenClaw runs in.
 
 OpenClaw can run tools without asking. If yours does, give it a read-only key (`knoggin keys create --read-only --name openclaw`, or a read-only key from the server's web UI).
 
-**The skill.** Copy `skills/knoggin-memory` to your OpenClaw skills folder, for example `~/.openclaw/skills/`.
+**The skill.** Copy `skills/knoggin-memory` to `~/.openclaw/skills/`.

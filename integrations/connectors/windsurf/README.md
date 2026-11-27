@@ -1,8 +1,8 @@
-<!-- UNVERIFIED 2026-11-26: Windsurf's documentation was not read (the build contacts no outside service). The snippets follow its `mcp_config.json` as known on that date. -->
+<!-- UNVERIFIED 2026-11-27: the `mcpServers` entries were checked against docs.devin.ai/desktop/cascade/mcp and docs.devin.ai/cli/extensibility/mcp/configuration, but the file's place was not: Windsurf is now Devin Desktop, and its docs name both `~/.config/devin/mcp_config.json` (that MCP page) and `~/.codeium/mcp_config.json` (docs.devin.ai/desktop/devin-desktop-faq). -->
 
-# Windsurf
+# Windsurf (Devin Desktop)
 
-Merge one snippet into `~/.codeium/windsurf/mcp_config.json`, then refresh the MCP servers in Windsurf.
+Windsurf is now called Devin Desktop. Open its MCP config file from the app (its docs name `~/.config/devin/mcp_config.json`), merge one snippet into it, then refresh the MCP servers.
 
 - **Local install:** `local.json`. Windsurf starts `knoggin mcp`, which talks to the daemon over its Unix socket.
 - **Server:** `server.json`, with your server's address in place of `memory.example.com`. The bridge `knoggin mcp --url` sends the key in `KNOGGIN_API_KEY` and refuses an address that is not `https`, so the key never travels in the clear. Set the variable in the environment Windsurf starts in.
