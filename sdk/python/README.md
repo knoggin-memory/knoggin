@@ -1,5 +1,7 @@
 # knoggin
 
+<!-- mcp-name: io.github.knoggin-memory/knoggin -->
+
 The Python client for [Knoggin](https://github.com/knoggin-memory/knoggin), long-term memory for AI agents.
 It works against a local Knoggin daemon and against a Knoggin server: both serve the same REST API.
 

@@ -4,6 +4,6 @@
 
 `server.json` describes Knoggin for the official MCP Registry: a local server that `uvx knoggin mcp` starts, from the PyPI package `knoggin`. On a fresh machine that command installs the Knoggin binary first, then runs the stdio bridge to the local daemon.
 
-Publishing needs proof that the project owns the name `io.github.knoggin-memory/knoggin`: a sign-in as the GitHub organization `knoggin-memory`. The registry also checks the PyPI package for the line `mcp-name: io.github.knoggin-memory/knoggin` in its README. Both are owner steps (prerequisite P3). The build only checks the file.
+Publishing needs proof that the project owns the name `io.github.knoggin-memory/knoggin`: a sign-in as the GitHub organization `knoggin-memory`. The registry also checks the PyPI package's README for the line `mcp-name: io.github.knoggin-memory/knoggin`; `sdk/python/README.md` carries it in an HTML comment, which PyPI does not show. The sign-in is an owner step (prerequisite P3). The build only checks the files.
 
 The versions follow the shared release version. Bump them with every release.

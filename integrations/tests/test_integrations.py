@@ -128,6 +128,8 @@ def test_registry_entry_shape() -> None:
     assert package["transport"] == {"type": "stdio"}
     assert [a["value"] for a in package["packageArguments"]] == ["mcp"]
     assert package["version"] == entry["version"]
+    readme = (ROOT / "sdk" / "python" / "README.md").read_text(encoding="utf-8")
+    assert f"mcp-name: {entry['name']}" in readme, "the PyPI README names the registry entry"
 
 
 def test_versions_follow_the_release_version() -> None:
