@@ -1,0 +1,9 @@
+{
+  "mcp": {
+    "knoggin": {
+      "type": "remote",
+      "url": "https://memory.example.com/mcp",
+      "enabled": true
+    }
+  }
+}

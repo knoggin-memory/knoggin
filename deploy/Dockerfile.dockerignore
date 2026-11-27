@@ -1,0 +1,17 @@
+# The image's build context is the repository root; send only what the stages copy.
+*
+!Cargo.toml
+!Cargo.lock
+!about.toml
+!about.hbs
+!.cargo/
+!crates/
+!scripts/
+!third_party/
+!ui/
+ui/node_modules/
+ui/dist/
+ui/.svelte-kit/
+ui/test-results/
+ui/playwright-report/
+**/target/

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Drives recalld to make the data directory of tests/fixtures/recalld-data/.
 
 Run through scripts/make-recalld-data-fixture.sh, with `python3 -I`. Standard

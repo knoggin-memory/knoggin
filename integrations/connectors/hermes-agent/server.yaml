@@ -1,0 +1,5 @@
+# Add to ~/.hermes/config.yaml. The bridge sends the key in KNOGGIN_API_KEY.
+mcp_servers:
+  knoggin:
+    command: knoggin
+    args: [mcp, --url, "https://memory.example.com/mcp"]

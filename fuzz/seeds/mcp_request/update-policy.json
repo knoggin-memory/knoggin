@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"update_namespace_policy","arguments":{"name":"work","policy":{"initialStability":5.0,"phaseThresholds":{"fullToSummary":0.7,"summaryToGhost":0.3,"ghostToDelete":0.05}},"dryRun":true}}}

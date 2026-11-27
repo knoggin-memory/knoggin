@@ -1,0 +1,5 @@
+# Add to ~/.hermes/config.yaml
+mcp_servers:
+  knoggin:
+    command: knoggin
+    args: [mcp]

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "knoggin": {
+      "command": "knoggin",
+      "args": ["mcp", "--url", "https://memory.example.com/mcp"],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}

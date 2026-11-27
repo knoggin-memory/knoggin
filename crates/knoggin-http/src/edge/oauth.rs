@@ -206,7 +206,10 @@ pub(crate) struct Provider {
     test_mode: bool,
     client: reqwest::Client,
     discovery: RwLock<Option<Arc<Discovery>>>,
-    keys: tokio::sync::Mutex<KeyCache>,
+    /// Never held across a fetch.
+    keys: RwLock<KeyCache>,
+    /// Held by the one fetch of the key set that runs at a time.
+    fetching: tokio::sync::Mutex<()>,
     clock: Clock,
 }
 
@@ -223,7 +226,8 @@ impl Provider {
             public_url: public_url.trim_end_matches('/').to_owned(),
             test_mode,
             discovery: RwLock::new(None),
-            keys: tokio::sync::Mutex::new(KeyCache::default()),
+            keys: RwLock::new(KeyCache::default()),
+            fetching: tokio::sync::Mutex::new(()),
             clock,
         })
     }
@@ -277,32 +281,52 @@ impl Provider {
     }
 
     /// The key for `kid`, fetching the set when it is an hour old or does not hold the
-    /// ID (at most once per 30 seconds). Keys older than 24 hours are not used.
+    /// ID (at most once per 30 seconds). Keys older than 24 hours are not used. One fetch
+    /// runs at a time: a token with an unknown key ID waits for it, since it may bring
+    /// the key, and a token with a known one is checked against the keys held meanwhile.
     async fn decoding_key(&self, kid: &str, alg: Algorithm) -> Result<DecodingKey, Refusal> {
         let discovery = self.discovery().ok_or(Refusal::Unavailable)?;
         let now = (self.clock)();
-        let mut cache = self.keys.lock().await;
-        let may_fetch = |c: &KeyCache| c.tried_at.is_none_or(|t| now - t >= REFETCH_MS);
-        if cache.ok_at.is_none_or(|t| now - t >= REFRESH_MS) && may_fetch(&cache) {
-            self.refresh(&mut cache, &discovery, now).await;
-        }
-        let known = |c: &KeyCache| {
-            c.keys
-                .iter()
-                .any(|k| k.common.key_id.as_deref() == Some(kid))
+        let (wanted, unknown) = self.wants_fetch(kid, now);
+        let fetching = if unknown {
+            Some(self.fetching.lock().await)
+        } else if wanted {
+            self.fetching.try_lock().ok()
+        } else {
+            None
         };
-        if !known(&cache) && may_fetch(&cache) {
-            self.refresh(&mut cache, &discovery, now).await;
+        // Looked at again: the fetch this waited for may have done it.
+        if fetching.is_some() && self.wants_fetch(kid, now).0 {
+            self.refresh(&discovery, now).await;
         }
+        drop(fetching);
+        let cache = self.keys.read().unwrap_or_else(PoisonError::into_inner);
         if cache.ok_at.is_none_or(|t| now - t > STALE_MS) {
             return Err(Refusal::Unavailable);
         }
         select_key(&cache.keys, kid, alg).map_err(Refusal::Invalid)
     }
 
-    /// Replaces the whole set on success; keeps the old one on failure.
-    async fn refresh(&self, cache: &mut KeyCache, d: &Discovery, now: i64) {
-        cache.tried_at = Some(now);
+    /// Whether the set should be fetched for `kid` now (it is an hour old or lacks the ID,
+    /// and no fetch began in the last 30 seconds), and whether the ID is unknown.
+    fn wants_fetch(&self, kid: &str, now: i64) -> (bool, bool) {
+        let c = self.keys.read().unwrap_or_else(PoisonError::into_inner);
+        let unknown = !c
+            .keys
+            .iter()
+            .any(|k| k.common.key_id.as_deref() == Some(kid));
+        let due = c.ok_at.is_none_or(|t| now - t >= REFRESH_MS);
+        let may = c.tried_at.is_none_or(|t| now - t >= REFETCH_MS);
+        ((due || unknown) && may, unknown)
+    }
+
+    /// Replaces the whole set on success; keeps the old one on failure. The cache is
+    /// locked only to note the attempt and to store the result, not during the fetch.
+    async fn refresh(&self, d: &Discovery, now: i64) {
+        self.keys
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .tried_at = Some(now);
         let list = match get_json(&self.client, d.jwks_uri.clone()).await {
             Ok(doc) => doc.get("keys").and_then(Value::as_array).cloned(),
             Err(()) => None,
@@ -315,10 +339,12 @@ impl Provider {
             return;
         };
         // One key at a time: a key the library does not know is skipped, not fatal.
-        cache.keys = list
+        let keys = list
             .into_iter()
             .filter_map(|k| serde_json::from_value(k).ok())
             .collect();
+        let mut cache = self.keys.write().unwrap_or_else(PoisonError::into_inner);
+        cache.keys = keys;
         cache.ok_at = Some(now);
     }
 
@@ -450,6 +476,10 @@ pub(crate) struct Cookies {
 
 /// The client for the provider: no redirects and `https` only, outside test mode.
 fn client(follow_redirects: bool, https_only: bool) -> Result<reqwest::Client, reqwest::Error> {
+    client_builder(follow_redirects, https_only).build()
+}
+
+fn client_builder(follow_redirects: bool, https_only: bool) -> reqwest::ClientBuilder {
     // No pooled connections: the calls are rare, and a pooled one could outlive the
     // provider's address.
     reqwest::Client::builder()
@@ -461,7 +491,6 @@ fn client(follow_redirects: bool, https_only: bool) -> Result<reqwest::Client, r
             reqwest::redirect::Policy::none()
         })
         .https_only(https_only)
-        .build()
 }
 
 async fn get_json(client: &reqwest::Client, url: Url) -> Result<Value, ()> {
@@ -683,87 +712,252 @@ mod tests {
         );
     }
 
-    /// A stub that redirects every address elsewhere: outside test mode the client does
-    /// not follow it, for the discovery document and for the keys.
-    #[tokio::test]
-    async fn a_redirect_on_discovery_or_the_key_fetch_is_refused() {
+    fn oauth_config(issuer: &str) -> OauthConfig {
+        OauthConfig {
+            issuer: issuer.to_owned(),
+            audiences: vec![],
+            provider_name: "x".into(),
+            web_client_id: "c".into(),
+            web_client_secret: Sensitive::new("s".into()),
+            admin_emails: vec![],
+            admin_subjects: vec![],
+            allowed_emails: vec![],
+            allowed_email_domains: vec![],
+            email_claim: None,
+            session_max_days: 7,
+            session_idle_hours: 24,
+        }
+    }
+
+    /// A local stub over `https` on 127.0.0.1, with a certificate from a test CA that
+    /// only these tests trust (`testdata/`, made once with `openssl`; the CA's key was
+    /// not kept). `make` gets the stub's base address. Returns that address.
+    async fn https_stub(make: impl FnOnce(&str) -> axum::Router) -> String {
+        use rustls::pki_types::pem::PemObject;
+        use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+        let cert = CertificateDer::from_pem_slice(include_bytes!("testdata/stub-leaf.pem"));
+        let key = PrivateKeyDer::from_pem_slice(include_bytes!("testdata/stub-leaf.key"));
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(vec![cert.unwrap()], key.unwrap())
+        .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let base = format!("http://{addr}");
-        let doc = json!({ "issuer": base, "authorization_endpoint": format!("{base}/a"),
-            "token_endpoint": format!("{base}/t"), "jwks_uri": format!("{base}/jwks") });
-        let app = axum::Router::new()
-            .route(
-                "/moved/openid-configuration",
-                axum::routing::get(move || {
-                    let d = doc.clone();
-                    async move { axum::Json(d) }
-                }),
-            )
-            .route(
-                "/moved/jwks",
-                axum::routing::get(|| async { axum::Json(json!({ "keys": [rsa(json!({}))] })) }),
-            )
-            .fallback(|uri: http::Uri| async move {
-                let to = match uri.path() {
-                    "/jwks" => "/moved/jwks",
-                    _ => "/moved/openid-configuration",
-                };
-                axum::response::Redirect::temporary(to)
-            });
-        let server = tokio::spawn(async move { axum::serve(listener, app).await });
+        let base = format!("https://{}", listener.local_addr().unwrap());
+        let app = make(&base);
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                let (acceptor, app) = (acceptor.clone(), app.clone());
+                tokio::spawn(async move {
+                    let Ok(tls) = acceptor.accept(tcp).await else {
+                        return;
+                    };
+                    let _ = hyper_util::server::conn::auto::Builder::new(
+                        hyper_util::rt::TokioExecutor::new(),
+                    )
+                    .serve_connection(
+                        hyper_util::rt::TokioIo::new(tls),
+                        hyper_util::service::TowerToHyperService::new(app),
+                    )
+                    .await;
+                });
+            }
+        });
+        base
+    }
+
+    /// A provider for `issuer` as a process runs it: outside test mode its client follows
+    /// no redirect and takes only `https`; here it also trusts the stub's CA. In test
+    /// mode (the control) it follows redirects.
+    fn provider(issuer: &str, test_mode: bool, clock: Clock) -> Provider {
         let mut p = Provider::new(
-            OauthConfig {
-                issuer: base.clone(),
-                audiences: vec![],
-                provider_name: "x".into(),
-                web_client_id: "c".into(),
-                web_client_secret: Sensitive::new("s".into()),
-                admin_emails: vec![],
-                admin_subjects: vec![],
-                allowed_emails: vec![],
-                allowed_email_domains: vec![],
-                email_claim: None,
-                session_max_days: 7,
-                session_idle_hours: 24,
-            },
+            oauth_config(issuer),
             "https://memory.example".into(),
-            true,
-            Arc::new(|| 0),
+            test_mode,
+            clock,
         )
         .unwrap();
-        // Test mode follows the redirect, so the stub itself works.
-        p.discover().await.unwrap();
-        assert!(p.decoding_key("r1", Algorithm::RS256).await.is_ok());
-        // Outside test mode: no redirect is followed (plain http stays allowed here only
-        // because the stub has no certificate).
-        p.client = client(false, false).unwrap();
-        *p.discovery.write().unwrap() = None;
+        let ca = reqwest::Certificate::from_pem(include_bytes!("testdata/stub-ca.pem")).unwrap();
+        p.client = client_builder(test_mode, !test_mode)
+            .tls_certs_only([ca])
+            .build()
+            .unwrap();
+        p
+    }
+
+    /// A discovery document at `issuer`, its token endpoint with `scheme`.
+    fn document(issuer: &str, scheme: &str) -> Value {
+        let token = format!("{issuer}/token").replacen("https", scheme, 1);
+        json!({ "issuer": issuer, "authorization_endpoint": format!("{issuer}/authorize"),
+            "token_endpoint": token, "jwks_uri": format!("{issuer}/jwks") })
+    }
+
+    fn serve_json(v: Value) -> axum::routing::MethodRouter {
+        axum::routing::get(move || {
+            let v = v.clone();
+            async move { axum::Json(v) }
+        })
+    }
+
+    /// The discovery cases with `test_mode` false against a stub that serves crafted
+    /// documents over `https`: another issuer, an `http` endpoint, and a redirect on the
+    /// discovery fetch or on the key fetch are each refused. A sound document works.
+    #[tokio::test]
+    async fn discovery_outside_test_mode_against_a_stub() {
+        let base = https_stub(|base| {
+            let wk = "/.well-known/openid-configuration";
+            let keys = json!({ "keys": [rsa(json!({}))] });
+            axum::Router::new()
+                .route(
+                    &format!("/good{wk}"),
+                    serve_json(document(&format!("{base}/good"), "https")),
+                )
+                .route("/good/jwks", serve_json(keys.clone()))
+                .route(
+                    &format!("/mismatch{wk}"),
+                    serve_json(document(&format!("{base}/mismatch/"), "https")),
+                )
+                .route(
+                    &format!("/plain{wk}"),
+                    serve_json(document(&format!("{base}/plain"), "http")),
+                )
+                .route(
+                    &format!("/there/moved{wk}"),
+                    serve_json(document(&format!("{base}/moved"), "https")),
+                )
+                .route("/there/moved/jwks", serve_json(keys.clone()))
+                .route(
+                    &format!("/keys-moved{wk}"),
+                    serve_json(document(&format!("{base}/keys-moved"), "https")),
+                )
+                .route("/there/keys-moved/jwks", serve_json(keys))
+                .fallback(|uri: http::Uri| async move {
+                    axum::response::Redirect::temporary(&format!("/there{}", uri.path()))
+                })
+        })
+        .await;
+        let clock: Clock = Arc::new(|| 0);
+        let off = |path: &str| provider(&format!("{base}{path}"), false, clock.clone());
+        let good = off("/good");
+        good.discover().await.unwrap();
+        assert!(good.decoding_key("r1", Algorithm::RS256).await.is_ok());
+        match off("/mismatch").discover().await {
+            Err(DiscoveryError::IssuerMismatch { expected, found }) => {
+                assert_eq!(found, format!("{expected}/"));
+            }
+            other => panic!("{other:?}"),
+        }
         assert!(matches!(
-            p.discover().await,
+            off("/plain").discover().await,
+            Err(DiscoveryError::Insecure("token_endpoint"))
+        ));
+        // A redirect on the discovery fetch is not followed.
+        assert!(matches!(
+            off("/moved").discover().await,
             Err(DiscoveryError::Unreachable)
         ));
-        *p.discovery.write().unwrap() = Some(Arc::new(Discovery {
-            authorization_endpoint: Url::parse(&format!("{base}/a")).unwrap(),
-            token_endpoint: Url::parse(&format!("{base}/t")).unwrap(),
-            jwks_uri: Url::parse(&format!("{base}/jwks")).unwrap(),
-            client_secret_post: false,
-        }));
-        *p.keys.lock().await = KeyCache::default();
+        // Nor on the key fetch: no key, so no token is accepted.
+        let keys_moved = off("/keys-moved");
+        keys_moved.discover().await.unwrap();
         assert_eq!(
-            p.decoding_key("r1", Algorithm::RS256).await.err(),
+            keys_moved.decoding_key("r1", Algorithm::RS256).await.err(),
             Some(Refusal::Unavailable)
         );
-        // And the real client of a process outside test mode refuses plain http at all.
+        // The control: in test mode the same redirects are followed.
+        let on = |path: &str| provider(&format!("{base}{path}"), true, clock.clone());
+        on("/moved").discover().await.unwrap();
+        let keys_moved = on("/keys-moved");
+        keys_moved.discover().await.unwrap();
         assert!(
-            client(false, true)
-                .unwrap()
-                .get(format!("{base}/moved/jwks"))
-                .send()
+            keys_moved
+                .decoding_key("r1", Algorithm::RS256)
                 .await
-                .is_err()
+                .is_ok()
         );
-        server.abort();
+    }
+
+    /// The key cache is not locked during a fetch. A token with an unknown key ID waits
+    /// for the one fetch that runs, and is not fetched for again; a token with a known key
+    /// is checked against the keys held meanwhile, even when the hourly refresh is due.
+    #[tokio::test]
+    async fn one_key_fetch_at_a_time_and_known_keys_do_not_wait_for_it() {
+        use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        let (h, g) = (hits.clone(), gate.clone());
+        let base = https_stub(move |base| {
+            axum::Router::new()
+                .route(
+                    "/i/.well-known/openid-configuration",
+                    serve_json(document(&format!("{base}/i"), "https")),
+                )
+                .route(
+                    "/i/jwks",
+                    axum::routing::get(move || {
+                        let (h, g) = (h.clone(), g.clone());
+                        async move {
+                            if h.fetch_add(1, Ordering::SeqCst) == 0 {
+                                return axum::Json(json!({ "keys": [rsa(json!({}))] }));
+                            }
+                            let _held = g.acquire().await.unwrap();
+                            axum::Json(
+                                json!({ "keys": [rsa(json!({})), rsa(json!({ "kid": "r2" }))] }),
+                            )
+                        }
+                    }),
+                )
+        })
+        .await;
+        let now = Arc::new(AtomicI64::new(0));
+        let n = now.clone();
+        let p = Arc::new(provider(
+            &format!("{base}/i"),
+            false,
+            Arc::new(move || n.load(Ordering::SeqCst)),
+        ));
+        p.discover().await.unwrap();
+        assert!(p.decoding_key("r1", Algorithm::RS256).await.is_ok());
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        // A new key ID 31 seconds later starts a fetch, which the stub holds.
+        now.store(31_000, Ordering::SeqCst);
+        let first = tokio::spawn({
+            let p = p.clone();
+            async move { p.decoding_key("r2", Algorithm::RS256).await.is_ok() }
+        });
+        while hits.load(Ordering::SeqCst) < 2 {
+            tokio::task::yield_now().await;
+        }
+        let second = tokio::spawn({
+            let p = p.clone();
+            async move { p.decoding_key("r2", Algorithm::RS256).await.is_ok() }
+        });
+        // One thread: this lets the second check read the clock and queue for the fetch.
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        let soon = Duration::from_secs(2);
+        let known = tokio::time::timeout(soon, p.decoding_key("r1", Algorithm::RS256));
+        assert!(
+            known
+                .await
+                .expect("a known key waited for the fetch")
+                .is_ok()
+        );
+        now.store(31_000 + REFRESH_MS, Ordering::SeqCst);
+        let due = tokio::time::timeout(soon, p.decoding_key("r1", Algorithm::RS256));
+        assert!(due.await.expect("the hourly refresh waited").is_ok());
+        assert!(
+            !second.is_finished(),
+            "an unknown key waits for the running fetch"
+        );
+        gate.add_permits(10);
+        assert!(first.await.unwrap());
+        assert!(second.await.unwrap());
+        assert_eq!(hits.load(Ordering::SeqCst), 2, "one fetch for both");
     }
 
     #[test]

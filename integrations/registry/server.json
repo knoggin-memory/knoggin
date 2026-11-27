@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.knoggin-memory/knoggin",
+  "description": "Long-term memory for AI agents: short text memories, found again by meaning.",
+  "repository": {
+    "url": "https://github.com/knoggin-memory/knoggin",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "websiteUrl": "https://github.com/knoggin-memory/knoggin",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "knoggin",
+      "version": "0.1.0",
+      "runtimeHint": "uvx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "KNOGGIN_API_KEY",
+          "description": "Optional. An app's API key: the local Knoggin then serves that app's store instead of your personal one.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}

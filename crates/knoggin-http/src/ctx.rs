@@ -41,6 +41,10 @@ pub mod headers {
     pub const CREDENTIAL_ID: HeaderName = HeaderName::from_static("knoggin-credential-id");
     /// Internal: the protocol version of the link.
     pub const PROTOCOL: HeaderName = HeaderName::from_static("knoggin-protocol");
+    /// Internal: the container that calls a router.
+    pub const CONTAINER_ID: HeaderName = HeaderName::from_static("knoggin-container-id");
+    /// Internal: `parking` on a container's 503 while it parks.
+    pub const INTERNAL_STATUS: HeaderName = HeaderName::from_static("knoggin-internal-status");
 }
 
 /// The protocol version of the internal link that this build speaks.
@@ -303,6 +307,63 @@ pub fn namespace_header(map: &HeaderMap) -> Result<Option<String>, ApiError> {
     Ok(Some(text.to_owned()))
 }
 
+/// Whether a call on the internal link carries exactly one `Knoggin-Protocol` that this
+/// build speaks. A call without it, or with another version, is refused with `internal`.
+pub fn link_protocol_ok(map: &HeaderMap) -> bool {
+    one(map, &headers::PROTOCOL).is_ok_and(|v| v == PROTOCOL_VERSION)
+}
+
+/// The token of a call on the internal link: exactly one `Authorization: Bearer <token>`.
+pub fn link_bearer(map: &HeaderMap) -> Option<&str> {
+    let value = one(map, &http::header::AUTHORIZATION).ok()?;
+    value.strip_prefix("Bearer ").filter(|t| !t.is_empty())
+}
+
+/// The identity headers of a container's call to a router: `Knoggin-User-Id` and
+/// `Knoggin-Container-Id`, each exactly once and a UUID.
+pub fn link_identity(map: &HeaderMap) -> Option<(UserId, Uuid)> {
+    let uuid = |name: &HeaderName| Uuid::parse_str(one(map, name).ok()?).ok();
+    Some((
+        UserId::from_uuid(uuid(&headers::USER_ID)?),
+        uuid(&headers::CONTAINER_ID)?,
+    ))
+}
+
+/// Writes a container's identity on a call to a router: its user, its ID, its token
+/// (`bearer` is the whole `Authorization` value) and `Knoggin-Protocol`, replacing any
+/// that are there.
+pub fn write_link_identity(
+    map: &mut HeaderMap,
+    user: UserId,
+    container: Uuid,
+    bearer: HeaderValue,
+) {
+    write_link_bearer(map, bearer);
+    map.insert(headers::USER_ID, uuid_value(&user.uuid()));
+    map.insert(headers::CONTAINER_ID, uuid_value(&container));
+}
+
+/// Writes a router's token (`bearer` is the whole `Authorization` value) and
+/// `Knoggin-Protocol` on a call to a container, replacing any that are there.
+pub fn write_link_bearer(map: &mut HeaderMap, bearer: HeaderValue) {
+    map.insert(http::header::AUTHORIZATION, bearer);
+    map.insert(
+        headers::PROTOCOL,
+        HeaderValue::from_static(PROTOCOL_VERSION),
+    );
+}
+
+fn uuid_value(id: &Uuid) -> HeaderValue {
+    let mut buf = Uuid::encode_buffer();
+    #[expect(
+        clippy::expect_used,
+        reason = "a hyphenated UUID is always a valid header value"
+    )]
+    let value = HeaderValue::from_str(id.hyphenated().encode_lower(&mut buf))
+        .expect("a UUID is a valid header value");
+    value
+}
+
 fn one<'a>(map: &'a HeaderMap, name: &HeaderName) -> Result<&'a str, ApiError> {
     let mut values = map.get_all(name).iter();
     match (values.next(), values.next()) {
@@ -396,6 +457,40 @@ mod tests {
                 .code,
             Code::InvalidArgument
         );
+    }
+
+    #[test]
+    fn link_headers() {
+        let user = UserId::from_uuid(Uuid::now_v7());
+        let container = Uuid::now_v7();
+        let mut map = HeaderMap::new();
+        assert!(!link_protocol_ok(&map));
+        assert_eq!(link_bearer(&map), None);
+        map.append(headers::USER_ID, HeaderValue::from_static("client-sent"));
+        write_link_identity(
+            &mut map,
+            user,
+            container,
+            HeaderValue::from_static("Bearer abc"),
+        );
+        assert!(link_protocol_ok(&map));
+        assert_eq!(link_bearer(&map), Some("abc"));
+        assert_eq!(link_identity(&map), Some((user, container)));
+        let mut twice = map.clone();
+        twice.append(headers::CONTAINER_ID, HeaderValue::from_static("x"));
+        assert_eq!(link_identity(&twice), None);
+        twice.append(
+            http::header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer abc"),
+        );
+        assert_eq!(link_bearer(&twice), None);
+        for bad in ["Bearer ", "bearer abc", "Basic abc"] {
+            let mut m = HeaderMap::new();
+            m.insert(http::header::AUTHORIZATION, HeaderValue::from_static(bad));
+            assert_eq!(link_bearer(&m), None, "{bad}");
+        }
+        map.insert(headers::PROTOCOL, HeaderValue::from_static("2"));
+        assert!(!link_protocol_ok(&map));
     }
 
     #[test]

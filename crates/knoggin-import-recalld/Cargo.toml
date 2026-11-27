@@ -10,6 +10,7 @@ repository.workspace = true
 [lints]
 workspace = true
 
+
 [dependencies]
 crc32fast = { workspace = true }
 knoggin-core = { path = "../knoggin-core" }

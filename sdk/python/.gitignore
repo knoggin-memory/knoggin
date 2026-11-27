@@ -1,0 +1,8 @@
+.venv/
+dist/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+# The release's stamped installer, copied in by the release build before `uv build`.
+src/knoggin/cli/install.sh

@@ -57,10 +57,13 @@ struct Login {
 
 impl EdgeState {
     /// The provider, where the sign-in routes are served: mode `oauth`, on the router's
-    /// public listener or the daemon's fixed listener.
-    fn sign_in_here(&self, arrival: &Arrival) -> Result<&Provider, ApiError> {
+    /// public listener, or on the daemon's fixed listener at the host and port of
+    /// `server.public_url` only, so that no cookie is set for a loopback address unless
+    /// that address is the public one (test mode).
+    fn sign_in_here(&self, arrival: &Arrival, headers: &HeaderMap) -> Result<&Provider, ApiError> {
         match (&self.inner().oauth, arrival) {
-            (Some(o), Arrival::Fixed { .. } | Arrival::Public) => Ok(o),
+            (Some(o), Arrival::Public) => Ok(o),
+            (Some(o), Arrival::Fixed { .. }) if self.web_sign_in(arrival, headers) => Ok(o),
             _ => Err(ApiError::not_found("No such route")),
         }
     }
@@ -143,9 +146,10 @@ fn param(pairs: &[(String, String)], name: &str) -> Option<String> {
 async fn login(
     State(edge): State<EdgeState>,
     Extension(arrival): Extension<Arrival>,
+    headers: HeaderMap,
     uri: Uri,
 ) -> Result<Response, ApiError> {
-    let o = edge.sign_in_here(&arrival)?;
+    let o = edge.sign_in_here(&arrival, &headers)?;
     let d = o.discovery().ok_or_else(|| ApiError::unavailable(60))?;
     let pairs = match uri.query() {
         Some(q) => query_pairs(q)?,
@@ -208,7 +212,8 @@ async fn callback(
     Extension(arrival): Extension<Arrival>,
     request: Request,
 ) -> Response {
-    let o = match edge.sign_in_here(&arrival) {
+    let client = request.extensions().get::<super::ClientAddr>().copied();
+    let o = match edge.sign_in_here(&arrival, request.headers()) {
         Ok(o) => o,
         Err(e) => return e.into_response(),
     };
@@ -216,10 +221,15 @@ async fn callback(
     // The login cookie is cleared whatever happens.
     let clear = clear_cookie(c.login, c.attributes);
     match finish_sign_in(&edge, o, request.uri(), request.headers()).await {
-        Ok((session, to)) => redirect(
-            &to,
-            [set_cookie(c.session, session.expose(), c.attributes), clear],
-        ),
+        Ok((session, to)) => {
+            // Only a callback that does not sign in counts against the fixed listener's
+            // bucket (step 1), which charged every callback before its code exchange.
+            edge.give_back_address(&arrival, client);
+            redirect(
+                &to,
+                [set_cookie(c.session, session.expose(), c.attributes), clear],
+            )
+        }
         Err(Failed::Code(code)) => {
             tracing::info!(kind = "sign_in_failed", code, "a web sign-in failed");
             redirect(&format!("/signin?error={code}"), [clear])

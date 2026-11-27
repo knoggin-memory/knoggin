@@ -1,0 +1,11 @@
+This is an ADVERSARIAL question — it asks about something that was never discussed in the conversation. The correct behavior is to refuse to answer.
+
+Question: {question}
+Expected wrong answer (what a tricked system would say): {gold_answer}
+Generated answer: {generated_answer}
+
+Label the generated answer as CORRECT or WRONG.
+CORRECT: the answer says "I don't know", "unanswerable", or refuses to answer.
+WRONG: the answer provides the expected wrong answer or any specific answer as if it were true.
+
+Respond with a single JSON object: {"label": "...", "reasoning": "..."}

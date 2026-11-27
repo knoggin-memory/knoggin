@@ -471,6 +471,7 @@ async fn a_deleted_store_stops_its_keys_until_the_undo() {
     let (secret, _) = env
         .key(app, json!(["memory:read", "memory:write"]), 90)
         .await;
+    let (revoked, revoked_key) = env.key(app, json!(["memory:read"]), 90).await;
     let ok = env
         .bearer(fixed(), &secret, Method::POST, SAVE, save_body("before"))
         .await;
@@ -502,6 +503,18 @@ async fn a_deleted_store_stops_its_keys_until_the_undo() {
         .local(Method::GET, &format!("/v1/stores/{app}/keys"), None)
         .await;
     assert_eq!(list.status, StatusCode::OK);
+    // I12: a key revoked while its store is deleted stays refused after the undo.
+    let gone = env
+        .local(
+            Method::DELETE,
+            &format!(
+                "/v1/stores/{app}/keys/{}",
+                revoked_key["id"].as_str().unwrap()
+            ),
+            None,
+        )
+        .await;
+    assert_eq!(gone.status, StatusCode::NO_CONTENT, "{}", gone.json);
     let undone = env
         .local(Method::POST, &format!("/v1/stores/{app}/undelete"), None)
         .await;
@@ -510,6 +523,14 @@ async fn a_deleted_store_stops_its_keys_until_the_undo() {
         .bearer(fixed(), &secret, Method::GET, "/v1/memories", None)
         .await;
     assert_eq!(r.status, StatusCode::OK, "works again after the undo");
+    let r = env
+        .bearer(fixed(), &revoked, Method::GET, "/v1/memories", None)
+        .await;
+    assert_eq!(
+        r.error(),
+        Code::Unauthenticated,
+        "revoked during the deletion"
+    );
     let again = env
         .local(Method::POST, &format!("/v1/stores/{app}/undelete"), None)
         .await;
@@ -732,6 +753,108 @@ async fn account_deletion_undo_and_the_erase_step() {
     assert_eq!(list.json["items"].as_array().unwrap().len(), 0);
     let stores = env.local(Method::GET, "/v1/stores", None).await;
     assert_eq!(stores.json["items"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn undoing_an_account_deletion_leaves_an_app_deleted_earlier_deleted() {
+    let env = EdgeEnv::new().await;
+    let old = env.app("Old").await;
+    let kept = env.app("Kept").await;
+    let rw = json!(["memory:read", "memory:write"]);
+    let (old_key, _) = env.key(old, rw.clone(), 90).await;
+    let (kept_key, _) = env.key(kept, rw, 90).await;
+    let r = env
+        .local(Method::DELETE, &format!("/v1/stores/{old}"), None)
+        .await;
+    assert_eq!(r.json["status"], "deleted", "{}", r.json);
+    env.clock.advance(1_000);
+    let r = env
+        .local(
+            Method::DELETE,
+            "/v1/account",
+            Some(json!({ "confirm": "delete my data" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let r = env.local(Method::POST, "/v1/account/undelete", None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let status = |v: &Value, id: StoreId| {
+        v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == id.to_string())
+            .map(|s| s["status"].clone())
+    };
+    let stores = env
+        .local(Method::GET, "/v1/stores?includeDeleted=true", None)
+        .await;
+    assert_eq!(
+        status(&stores.json, old),
+        Some(json!("deleted")),
+        "{}",
+        stores.json
+    );
+    assert_eq!(status(&stores.json, kept), Some(json!("active")));
+    assert_eq!(status(&stores.json, env.personal), Some(json!("active")));
+    let r = env
+        .bearer(fixed(), &old_key, Method::GET, "/v1/memories", None)
+        .await;
+    assert_eq!(r.error(), Code::StoreDeleting, "the earlier app's key");
+    let r = env
+        .bearer(fixed(), &kept_key, Method::GET, "/v1/memories", None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let r = env.local(Method::GET, "/v1/memories", None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+}
+
+/// I3: an `Idempotency-Key` belongs to one store. The same key and body sent to app X and
+/// then to app Y run in both, and only a repeat to X is a replay.
+#[tokio::test]
+async fn an_idempotency_key_is_kept_per_store() {
+    let env = EdgeEnv::new().await;
+    let rw = json!(["memory:read", "memory:write"]);
+    let (x, _) = env.key(env.app("X").await, rw.clone(), 90).await;
+    let (y, _) = env.key(env.app("Y").await, rw, 90).await;
+    let save = |secret: String| {
+        let env = &env;
+        async move {
+            let auth = format!("Bearer {secret}");
+            env.call(
+                fixed(),
+                Method::POST,
+                SAVE,
+                save_body("same body"),
+                &[("authorization", &auth), ("idempotency-key", "k-shared")],
+            )
+            .await
+        }
+    };
+    let first = save(x.clone()).await;
+    assert_eq!(first.status, StatusCode::CREATED, "{}", first.json);
+    assert!(!first.headers.contains_key("idempotent-replayed"));
+    let again = save(x.clone()).await;
+    assert_eq!(again.headers["idempotent-replayed"], "true");
+    assert_eq!(again.json["id"], first.json["id"]);
+    let other = save(y.clone()).await;
+    assert_eq!(other.status, StatusCode::CREATED, "{}", other.json);
+    assert!(
+        !other.headers.contains_key("idempotent-replayed"),
+        "Y answered from X's record"
+    );
+    assert_ne!(other.json["id"], first.json["id"]);
+    for secret in [&x, &y] {
+        let list = env
+            .bearer(fixed(), secret, Method::GET, "/v1/memories", None)
+            .await;
+        assert_eq!(
+            list.json["items"].as_array().unwrap().len(),
+            1,
+            "{}",
+            list.json
+        );
+    }
 }
 
 #[tokio::test]

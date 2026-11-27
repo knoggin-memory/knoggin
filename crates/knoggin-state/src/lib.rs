@@ -5,6 +5,7 @@
 
 pub mod api_keys;
 pub mod db;
+pub mod dynamodb;
 pub mod erase;
 mod keys;
 pub mod leases;
@@ -21,7 +22,8 @@ pub mod users;
 
 pub use api_keys::{ApiKeys, NewApiKey};
 pub use db::{Clock, Cond, Item, MAX_WRITES, StateDb, StateError, Write, system_clock};
-pub use erase::{EraseReport, erase};
+pub use dynamodb::DynamoDb;
+pub use erase::{EraseReport, ThinTarget, erase, thin_targets};
 pub use leases::{Containers, Leases};
 pub use local::LocalFileDb;
 pub use meta::{Meta, rewrap_master_key};

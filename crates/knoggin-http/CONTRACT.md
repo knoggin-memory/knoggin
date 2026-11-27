@@ -29,7 +29,7 @@ let router = store_layer(host.clone());
 ```
 
 `HostConfig::local(model)` is the daemon's configuration; a container sets `timing:
-SnapshotTiming::SERVER`, `memory_budget: Some((limit - 640 MiB) * 0.4)`, `idle_close:
+SnapshotTiming::SERVER`, `memory_budget: Some((limit - 928 MiB) * 0.4)`, `idle_close:
 Some(idleSeconds)`, `embed_allowance: Some(30 min)`, `web_url`, and `limits` from the claim.
 Fill the `OnceCell` before sending `ModelStatus::Ready`.
 
@@ -139,14 +139,16 @@ the MCP client names an open store has seen (at most 32, with when), for `/v1/ui
   `RequestContext`. `Credential` has `Oauth` (an access token) and `Cookie` (a browser
   session from web sign-in) beside the local ones.
 - Sign-in (milestone 5): set `EdgeConfig::auth_mode = Oauth`, `public_url`, `test_mode` and
-  `oauth: Some(OauthConfig { .. })`, then call `edge.discover().await` at start (and again
-  while it answers `DiscoveryError::Unreachable`; the other errors stop a start).
+  `oauth: Some(OauthConfig { .. })`, then call `edge.discover().await` (and again while it
+  answers `DiscoveryError::Unreachable`). The daemon does this in a background task and
+  serves at once; the router's other errors stop its start.
   `edge::oauth` checks tokens and caches the signing keys; `edge::signin` serves
   `/auth/login`, `/auth/callback`, `POST /auth/logout` (also the local web session's
   logout) and the protected-resource metadata. The router's start-up guards are
   `edge::guard::{router_settings, router_users, check_public_url}`.
 - The test issuer: `testing::issuer::TestIssuer::start(test_mode)` (or `serve`), with
-  `url`, `claims`, `mint`, `mint_with`, `rotate_keys`, `remove_key`, `kids` and `secrets`;
+  `url`, `claims`, `mint`, `mint_with`, `rotate_keys`, `remove_key`, `kids`, `secrets`,
+  `token_requests` and `require_basic`;
   its client secret is `TEST_SECRET`.
 - `local`: `prepare_run_dir`, `bind_socket`, `bind_loopback(port)` (127.0.0.1 and [::1]),
   `web_label` + `web_authority` (the web listener's origin), `LocalSessions`, `erase_step`

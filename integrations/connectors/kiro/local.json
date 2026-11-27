@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "knoggin": {
+      "command": "knoggin",
+      "args": ["mcp"],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}

@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+#
+# The stack tests' override (tab "Deployment", Checking the Compose stack), used with
+# compose.yaml and the profiles local-s3 and test. It is the only file that turns test
+# mode on. The harness (crates/knoggin-server/tests/support/stack.rs) sets
+# KNOGGIN_TEST_PORT, KNOGGIN_TEST_ISSUER_PORT, KNOGGIN_NET_PREFIX and KNOGGIN_SECRETS_DIR;
+# the port defaults below only let `docker compose config` run without them.
+
+x-test: &test
+  image: knoggin:test
+  volumes:
+    - ./config.test.toml:/etc/knoggin/config.toml:ro
+
+services:
+  router:
+    <<: *test
+    environment:
+      KNOGGIN_TEST_MODE: "1"
+      KNOGGIN_SERVER__PUBLIC_URL: http://127.0.0.1:${KNOGGIN_TEST_PORT:-18080}
+      # Requests through the published port arrive from the host's address on edge.
+      KNOGGIN_SERVER__TRUSTED_PROXIES: ${KNOGGIN_NET_PREFIX:-10.200}.0.1/32
+    ports:
+      - "127.0.0.1:${KNOGGIN_TEST_PORT:-18080}:8080"
+    depends_on:
+      test-issuer: { condition: service_started, required: false }
+
+  launcher:
+    image: knoggin:test
+    environment:
+      KNOGGIN_TEST_MODE: "1"
+    volumes:
+      - ./config.test.toml:/etc/knoggin/config.toml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  lifecycle:
+    <<: *test
+
+  test-issuer:
+    image: knoggin:test
+    profiles: [test]
+    command: [test-issuer, --bind, "0.0.0.0:9000", --issuer-url, "http://test-issuer:9000"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    environment:
+      KNOGGIN_TEST_MODE: "1"
+    networks: [edge]
+    ports:
+      - "127.0.0.1:${KNOGGIN_TEST_ISSUER_PORT:-19000}:9000"

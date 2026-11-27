@@ -135,6 +135,15 @@ fn apps_keys_export_import_and_reembed() {
     let r = home.json(&["reembed", "--app", "notes"]);
     assert_eq!(r["embedding"]["pending"], 0, "{r}");
     assert_eq!(home.run(&["healthcheck"]).code, 0);
+    // `--url` calls the address as given, as the Compose health check does.
+    let base = match home.address() {
+        a if a.starts_with("http") => a,
+        a => format!("http://{a}"),
+    };
+    let ready = format!("{base}/readyz");
+    assert_eq!(home.run(&["healthcheck", "--url", &ready]).code, 0);
+    let missing = format!("{base}/readyz/readyz");
+    assert_eq!(home.run(&["healthcheck", "--url", &missing]).code, 1);
     assert_eq!(
         home.json(&["status"])["stores"].as_array().unwrap().len(),
         2
@@ -188,6 +197,46 @@ fn import_recalld_prints_the_expected_counts() {
         .filter(|e| e.file_name().to_string_lossy().starts_with("import-"))
         .collect();
     assert!(left.is_empty());
+    d.stop();
+}
+
+#[test]
+fn import_reads_the_export_fixtures() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/export");
+    let home = Home::new();
+    let mut d = home.daemon();
+    let good = dir.join("good.jsonl");
+    let r = home.json(&["import", good.to_str().unwrap()]);
+    assert_eq!(r, json!({ "imported": 16, "skipped": 1, "errors": [] }));
+    // The bad file in a store of its own: exit code 1 and the listed error lines.
+    home.json(&["apps", "create", "Bad"]);
+    let bad = dir.join("bad.jsonl");
+    let o = home.run(&[
+        "import",
+        bad.to_str().unwrap(),
+        "--app",
+        "bad",
+        "--on-conflict",
+        "error",
+        "--json",
+    ]);
+    assert_eq!(o.code, 1, "{}{}", o.stdout, o.stderr);
+    let r = o.json();
+    let expected: Value =
+        serde_json::from_slice(&std::fs::read(dir.join("bad-expected.json")).unwrap()).unwrap();
+    let lines = |v: &Value| -> Vec<(Value, Value)> {
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["line"].clone(), e["code"].clone()))
+            .collect()
+    };
+    assert_eq!(lines(&r), lines(&expected), "{r}");
+    assert_eq!(
+        (&r["imported"], &r["skipped"]),
+        (&expected["imported"], &expected["skipped"])
+    );
     d.stop();
 }
 

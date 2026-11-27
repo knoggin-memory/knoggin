@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "knoggin": {
+      "type": "http",
+      "url": "https://memory.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer $COPILOT_MCP_KNOGGIN_API_KEY"
+      },
+      "tools": [
+        "get_context",
+        "recall_memories",
+        "get_memory",
+        "find_similar_memories",
+        "list_memories",
+        "list_namespaces",
+        "list_tags",
+        "namespace_stats"
+      ]
+    }
+  }
+}

@@ -29,7 +29,7 @@ Everything stays on your machine, encrypted at rest under `~/.knoggin/`. The emb
 docker compose up -d
 ```
 
-`deploy/docker/README.md` lists the settings to fill in first. On AWS, use the OpenTofu module in `deploy/aws/`; `docs/deploy-aws.md` covers variables, sizing and upgrades.
+`deploy/docker/README.md` lists the settings to fill in first. On AWS, use the OpenTofu module in `deploy/aws/`; [`docs/deploy-aws.md`](docs/deploy-aws.md) covers variables, sizing and upgrades.
 
 ## Connect an agent
 
@@ -37,7 +37,7 @@ docker compose up -d
 - **Server:** point the agent at `https://<your server>/mcp`. The agent signs in through your identity provider.
 - **Code:** the Python SDK (`pip install knoggin`) works against both.
 
-`docs/connect-agents.md` has a section per agent, and `integrations/connectors/` has the config snippets.
+[Connecting agents](docs/connect-agents.md) has a section per agent, and [`integrations/connectors/`](integrations/connectors) has the config snippets. Claude Code and Codex can also install the [Knoggin plugin](integrations/plugin/README.md).
 
 ## Verify a release
 
@@ -55,22 +55,34 @@ cosign verify ghcr.io/knoggin-memory/knoggin@sha256:<digest> \
 
 ## Limits
 
-Knoggin encrypts everything at rest, but some things it does not defend against. The main ones:
+Knoggin encrypts everything at rest, but some things it does not defend against:
 
-- The operator of a deployment can read every store.
-- On one host, the router and every user container share one kernel: a container escape reaches everything.
-- A local install does not defend against other programs that run as you.
-- A crash loses the changes since the last snapshot, normally a few seconds.
-- A forgotten memory stays in older encrypted snapshots until they expire.
-- Knoggin cannot stop an agent from being misled by a memory it reads.
+1. The operator of a deployment can read every store.
+2. A container escape reaches the other containers on the same host; on one host it reaches everything.
+3. A compromised router reads everything, and on one host it can also delete snapshots.
+4. Whoever can write to the state database controls every account.
+5. A local install does not defend against other programs that run as you, nor against someone with both the key file and the data folder.
+6. A local data folder replaced by an older copy is accepted, and keys revoked since then work again.
+7. Another account on the same machine can take the daemon's TCP port while Knoggin is stopped, and receive an API key sent to it. The socket is not exposed this way.
+8. A crash loses the changes since the last snapshot, a forget included: usually a few seconds.
+9. A forgotten memory stays in older encrypted snapshots until they expire.
+10. Rotating the master key does not help against a key that has already leaked.
+11. Removing a person at the identity provider does not end their sessions and API keys.
+12. Knoggin cannot stop an agent from being misled by a memory it reads.
+13. There is no cap on how much a user stores over time.
+14. With sign-in on and no allow-list, everyone the identity provider admits gets an account.
+15. Apps separate stores, not people.
+16. A sign-in token for one of the three addresses (`/mcp`, `/mcp/plugin`, the REST API) works on all three.
+17. A store key taken from a compromised container keeps opening that store's later snapshots.
 
-[SECURITY.md](SECURITY.md) lists all of them, and says how to report a vulnerability.
+[SECURITY.md](SECURITY.md) and [Security](docs/security.md) explain each one. SECURITY.md also says how to report a vulnerability.
 
 ## Docs
 
 - [Getting started](docs/getting-started.md)
 - [Local install](docs/local-install.md) and [moving from recalld](docs/migrate-from-recalld.md)
 - Deploying [on one host](docs/deploy-one-host.md) or [on AWS](docs/deploy-aws.md)
+- [Connecting agents](docs/connect-agents.md)
 - [Sign-in](docs/sign-in.md), [apps and keys](docs/apps-and-keys.md), [the Python SDK](docs/python-sdk.md)
 - [Security](docs/security.md) and [operations](docs/operations.md)
 - [Contributing](CONTRIBUTING.md)

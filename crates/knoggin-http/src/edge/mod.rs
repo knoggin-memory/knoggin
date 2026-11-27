@@ -19,6 +19,7 @@ pub(crate) mod shapes;
 mod signin;
 pub(crate) mod ui;
 
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -49,6 +50,12 @@ use crate::error::{ApiError, shape_answer};
 use crate::host::StoreHost;
 use crate::local::LocalSessions;
 use crate::settings::{DEFAULT_BODY_BYTES, StoreLimits};
+
+/// The client address of a request on the router's public listener: the peer, or behind
+/// a trusted proxy the right-most forwarded address that is not one. The router's
+/// listener puts it in the request extensions; the per-address limits key on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ClientAddr(pub IpAddr);
 
 /// Which listener a request arrived on. Each listener tags its requests (see [`listen`]);
 /// a request without a tag is refused as `internal`.
@@ -123,6 +130,13 @@ pub struct EdgeConfig {
     pub per_credential: Rate,
     /// The daemon's fixed bucket for requests that do not pass the credential check.
     pub unauthenticated: Rate,
+    /// The router's `limits.per_address_rps` and `_burst`, charged on the public listener
+    /// for a request without a credential or with a refused one, beside a fixed ceiling
+    /// of ten times that rate and burst that counts every request. `None` on the daemon.
+    pub per_address: Option<Rate>,
+    /// The router's `limits.per_user_rps` and `_burst`, over all of a user's credentials
+    /// (step 12). `None` on the daemon.
+    pub per_user: Option<Rate>,
     /// The request timeout of the control routes.
     pub limits: StoreLimits,
     /// `KNOGGIN_TEST_MODE=1`: an `http` issuer and redirects from it are accepted.
@@ -152,6 +166,8 @@ impl EdgeConfig {
                 per_second: 20.0,
                 burst: 20.0,
             },
+            per_address: None,
+            per_user: None,
             limits: StoreLimits::default(),
             test_mode: false,
             oauth: None,
@@ -180,6 +196,9 @@ pub(crate) struct Inner {
     pub(crate) local_user: Option<UserId>,
     pub(crate) per_credential: Buckets<CredentialKey>,
     pub(crate) unauthenticated: Buckets<()>,
+    pub(crate) per_address: Option<Buckets<IpAddr>>,
+    pub(crate) address_ceiling: Option<Buckets<IpAddr>>,
+    pub(crate) per_user: Option<Buckets<UserId>>,
     pub(crate) caps: Caps,
     pub(crate) ready: AtomicBool,
 }
@@ -270,6 +289,14 @@ impl EdgeState {
             local_user,
             per_credential: Buckets::new(config.per_credential),
             unauthenticated: Buckets::new(config.unauthenticated),
+            per_address: config.per_address.map(Buckets::new),
+            address_ceiling: config.per_address.map(|r| {
+                Buckets::new(Rate {
+                    per_second: r.per_second * 10.0,
+                    burst: r.burst * 10.0,
+                })
+            }),
+            per_user: config.per_user.map(Buckets::new),
             caps: Caps::default(),
             ready: AtomicBool::new(true),
             config,
@@ -296,6 +323,33 @@ impl EdgeState {
     /// Sets what `/readyz` answers.
     pub fn set_ready(&self, ready: bool) {
         self.0.ready.store(ready, Ordering::Relaxed);
+    }
+
+    /// Step 1 on the listeners that have an address bucket: the daemon's fixed bucket, or
+    /// the router's bucket per client address. Other listeners are not charged.
+    pub(crate) fn charge_address(
+        &self,
+        arrival: &Arrival,
+        client: Option<ClientAddr>,
+    ) -> Result<(), ApiError> {
+        match (arrival, &self.0.per_address, client) {
+            (Arrival::Fixed { .. }, _, _) => self.0.unauthenticated.take(&(), "address"),
+            (Arrival::Public, Some(b), Some(ClientAddr(ip))) => {
+                b.take(&limits::address_key(ip), "address")
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Gives back what [`Self::charge_address`] took, for a sign-in that worked.
+    pub(crate) fn give_back_address(&self, arrival: &Arrival, client: Option<ClientAddr>) {
+        match (arrival, &self.0.per_address, client) {
+            (Arrival::Fixed { .. }, _, _) => self.0.unauthenticated.give_back(&()),
+            (Arrival::Public, Some(b), Some(ClientAddr(ip))) => {
+                b.give_back(&limits::address_key(ip));
+            }
+            _ => {}
+        }
     }
 
     pub(crate) fn now(&self) -> i64 {
@@ -345,7 +399,13 @@ pub(crate) async fn fallback(request: Request) -> Response {
 /// bucket and the browser checks (steps 1 and 2), then the response headers and the error
 /// shape on the way out.
 async fn entry(State(edge): State<EdgeState>, mut request: Request, next: Next) -> Response {
-    let id = Uuid::now_v7();
+    // An outer layer (the router's panic guard) may have made the ID already.
+    let id = request
+        .extensions()
+        .get::<RequestId>()
+        .and_then(|r| r.header_value().to_str().ok())
+        .and_then(|t| Uuid::parse_str(t).ok())
+        .unwrap_or_else(Uuid::now_v7);
     if let Ok(value) = HeaderValue::from_str(&id.to_string()) {
         request.extensions_mut().insert(RequestId::new(value));
     }
@@ -360,17 +420,26 @@ async fn entry(State(edge): State<EdgeState>, mut request: Request, next: Next) 
             ApiError::internal().into_response()
         }
         Some(arrival) => {
-            // Step 1, the daemon's fixed bucket (the UI's files are not counted), then step
-            // 2, the browser checks.
-            let charged = match arrival {
-                Arrival::Fixed { .. }
-                    if !ui::is_ui(&request)
-                        && !check::sends_credential(request.headers(), edge.0.config.auth_mode) =>
-                {
-                    edge.0.unauthenticated.take(&(), "address")
+            // Step 1: the router's fixed ceiling per address counts every request; the
+            // daemon's fixed bucket and the router's bucket per address count a request
+            // without a credential (the UI's files are not counted). Then step 2, the
+            // browser checks.
+            let client = request.extensions().get::<ClientAddr>().copied();
+            let ceiling = match (&arrival, &edge.0.address_ceiling, client) {
+                (Arrival::Public, Some(b), Some(ClientAddr(ip))) => {
+                    b.take(&limits::address_key(ip), "address")
                 }
                 _ => Ok(()),
             };
+            let charged = ceiling.and_then(|()| {
+                if !ui::is_ui(&request)
+                    && !check::sends_credential(request.headers(), edge.session_cookie())
+                {
+                    edge.charge_address(&arrival, client)
+                } else {
+                    Ok(())
+                }
+            });
             match charged.and_then(|()| browser::check(&request, &arrival, edge.0.public.as_ref()))
             {
                 Ok(()) => next.run(request).await,

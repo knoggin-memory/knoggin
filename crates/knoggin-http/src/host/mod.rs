@@ -84,6 +84,8 @@ pub const LOCK_RETRY: Duration = Duration::from_secs(60);
 const MAX_SNAPSHOT_TRIES: usize = 3;
 /// A store that answered `OverBudget` refuses writes with this `Retry-After`.
 const UPLOAD_BLOCKED_RETRY: u32 = 60;
+/// `Retry-After` of a write to a restored store whose first save has not committed.
+const RESTORING_RETRY: u32 = 2;
 
 /// What a host is built with.
 #[derive(Debug, Clone)]
@@ -221,6 +223,10 @@ pub(crate) struct OpenStore {
     full: AtomicBool,
     read_only: AtomicBool,
     upload_blocked: AtomicBool,
+    /// Opened from a snapshot an admin chose to restore, and no save of it committed yet:
+    /// the store is saved at once and takes no client write until then, so that nothing
+    /// is saved under a name the next open would pass over (tab "Server", Restore).
+    restoring: AtomicBool,
     dropped: AtomicBool,
     last_request: Mutex<Instant>,
     /// The MCP client names seen, with when each was last seen; in memory only.
@@ -276,7 +282,7 @@ impl OpenStore {
     }
 
     fn unsaved(&self) -> bool {
-        *lock(&self.current) != *lock(&self.saved)
+        self.restoring.load(Ordering::Relaxed) || *lock(&self.current) != *lock(&self.saved)
     }
 
     /// Refused a write for the budget, or served for reading only.
@@ -780,6 +786,7 @@ impl StoreHost {
             full: AtomicBool::new(false),
             read_only: AtomicBool::new(false),
             upload_blocked: AtomicBool::new(false),
+            restoring: AtomicBool::new(restored.is_some()),
             dropped: AtomicBool::new(false),
             last_request: Mutex::new(Instant::now()),
             clients: Mutex::new(Vec::new()),
@@ -865,6 +872,9 @@ impl StoreHost {
     fn admit(&self, open: &OpenStore, kind: WriteKind) -> Result<(), ApiError> {
         if kind == WriteKind::Bookkeeping {
             return Ok(());
+        }
+        if open.restoring.load(Ordering::Relaxed) {
+            return Err(ApiError::unavailable(RESTORING_RETRY));
         }
         if open.upload_blocked.load(Ordering::Relaxed) {
             return Err(ApiError::new(

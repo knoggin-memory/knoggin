@@ -1,0 +1,9 @@
+You are evaluating conversational AI memory recall.
+You must respond with exactly one JSON object containing two keys:
+- "label": either "CORRECT" or "WRONG" (uppercase, no other values)
+- "reasoning": a brief explanation of your judgment
+
+Example response format:
+{"label": "CORRECT", "reasoning": "The generated answer matches the gold answer."}
+
+Output ONLY the JSON object. No markdown fences, no extra text.

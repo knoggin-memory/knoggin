@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-only
 # Makes tests/fixtures/recalld-data/: a recalld data directory made by recalld
 # at the reference commit through its own REST API, and beside its files the
 # lines the importer yields from it (expected-export.jsonl) and the counts that

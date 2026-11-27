@@ -1,0 +1,169 @@
+name: Scheduled
+
+# Tab "Testing, CI, releases": daily the advisory check and a Grype scan of the latest
+# released image; weekly the real-model tier and the fuzz tier. A failure opens an issue.
+
+on:
+  schedule:
+    - cron: "23 4 * * *" # daily
+    - cron: "47 5 * * 1" # weekly, Mondays
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  CARGO_BUILD_WARNINGS: deny
+  CARGO_TERM_COLOR: always
+
+jobs:
+  advisories:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Install cargo-deny
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/deny.tar.gz" https://github.com/EmbarkStudios/cargo-deny/releases/download/0.21.0/cargo-deny-0.21.0-x86_64-unknown-linux-musl.tar.gz
+          echo "a2170b854ff697e79e39c4c538981c9c1bdd803addbae6719a4cb66b4585a903  $RUNNER_TEMP/deny.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/deny.tar.gz" -C "$HOME/.cargo/bin" --strip-components=1 cargo-deny-0.21.0-x86_64-unknown-linux-musl/cargo-deny
+      - run: cargo deny check advisories
+
+  grype:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Install grype
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/grype.tar.gz" https://github.com/anchore/grype/releases/download/v0.122.1/grype_0.122.1_linux_amd64.tar.gz
+          echo "f1ba7e2917ee1395618de20a98da0aa7c0fb1788927797651047c50502a37538  $RUNNER_TEMP/grype.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/grype.tar.gz" -C "$RUNNER_TEMP/bin" grype
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Scan the latest released image
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag=$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --exclude-pre-releases \
+            --json tagName --jq '[.[] | select(.tagName | startswith("v"))][0].tagName // ""')
+          if [ -z "$tag" ]; then
+            echo "No release yet: nothing to scan."
+            exit 0
+          fi
+          echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          for platform in linux/amd64 linux/arm64; do
+            echo "== $platform"
+            grype "registry:ghcr.io/knoggin-memory/knoggin:${tag#v}" --platform "$platform" --only-fixed --fail-on critical
+          done
+
+  real-model:
+    if: github.event.schedule == '47 5 * * 1' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Install cargo-nextest
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/nextest.tar.gz" https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-x86_64-unknown-linux-gnu.tar.gz
+          echo "d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a  $RUNNER_TEMP/nextest.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/nextest.tar.gz" -C "$HOME/.cargo/bin" cargo-nextest
+      # The model directory is cached under the pinned source commit and file hashes,
+      # the inputs of the model identity, so it is downloaded again only when they change.
+      - id: model
+        name: Cache key from the pinned model files
+        run: |
+          key=$(grep -E '^pub const (REPOSITORY|COMMIT)|^    sha256: "' crates/knoggin-embed/src/model.rs | sha256sum | cut -c1-16)
+          echo "key=model-$key" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/models
+          key: ${{ steps.model.outputs.key }}
+      # Both downloads check every file against its pinned SHA-256. The hash marks are
+      # removed first, so a restored file is hashed again too.
+      - run: scripts/fetch-onnxruntime.sh x86_64-unknown-linux-gnu
+      - run: |
+          find "$RUNNER_TEMP/models" -name '*.ok' -type f -delete 2>/dev/null || true
+          cargo run --locked -p knoggin-embed --example fetch_model -- --dir "$RUNNER_TEMP/models"
+      - run: cargo nextest run -p knoggin-embed --locked --run-ignored only -E 'binary(real_model)'
+        env:
+          KNOGGIN_MODEL__DIR: ${{ runner.temp }}/models
+          ORT_DYLIB_PATH: ${{ github.workspace }}/target/onnxruntime/x86_64-unknown-linux-gnu/libonnxruntime.so
+
+  # Each target five minutes on the nightly that fuzz/rust-toolchain.toml pins. The
+  # committed fixtures and fuzz/seeds/ seed the corpora; a crash is kept as an artifact and becomes a
+  # regression test in the crate that owns the code.
+  fuzz:
+    if: github.event.schedule == '47 5 * * 1' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [snapshot_container, snapshot_content, mcp_request, export_line, recalld_record]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: fuzz
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: rustup toolchain install
+      - name: Install cargo-fuzz
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/fuzz.tar.gz" https://github.com/rust-fuzz/cargo-fuzz/releases/download/0.13.2/cargo-fuzz-0.13.2-x86_64-unknown-linux-musl.tar.gz
+          echo "b5b704018b63e0f151c17a057ac53b5111e1db545d1b9f72fee79f08a545931c  $RUNNER_TEMP/fuzz.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/fuzz.tar.gz" -C "$HOME/.cargo/bin" cargo-fuzz
+      - name: Seed the corpus
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p "corpus/$TARGET"
+          if [ -d "seeds/$TARGET" ]; then cp "seeds/$TARGET"/* "corpus/$TARGET/"; fi
+          case "$TARGET" in
+            snapshot_container) cp ../tests/fixtures/snapshots/v1/*.kgs "corpus/$TARGET/" ;;
+            export_line) cp ../tests/fixtures/recalld-data/expected-export.jsonl ../tests/fixtures/export/*.jsonl "corpus/$TARGET/" ;;
+          esac
+      # cargo fuzz has no --locked; fetching with it first fails on a stale Cargo.lock,
+      # and the build after it then uses the lock file as it is.
+      - run: cargo fetch --locked
+      - name: Fuzz for five minutes
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo fuzz run "$TARGET" -- -max_total_time=300
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: fuzz/artifacts/
+          retention-days: 30
+
+  report:
+    needs: [advisories, grype, real-model, fuzz]
+    if: failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Scheduled checks failed on $(date -u +%Y-%m-%d)" \
+            --body "A scheduled job failed: $RUN_URL"

@@ -24,7 +24,7 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header};
 use knoggin_core::Sensitive;
 use knoggin_core::time::MILLIS_PER_DAY;
 use knoggin_http::edge::{
-    Arrival, AuthMode, EdgeConfig, EdgeParts, EdgeState, OauthConfig, Role, edge_layer,
+    Arrival, AuthMode, EdgeConfig, EdgeParts, EdgeState, OauthConfig, Rate, Role, edge_layer,
 };
 use knoggin_http::error::Code;
 use knoggin_http::local::{LocalState, mode_routes};
@@ -66,6 +66,16 @@ impl S {
     }
 
     async fn at(role: Role, public: &str, f: impl FnOnce(&mut OauthConfig)) -> Self {
+        Self::with(role, public, f, |_| {}).await
+    }
+
+    /// With the `auth.*` settings changed by `f` and the edge's by `g`.
+    async fn with(
+        role: Role,
+        public: &str,
+        f: impl FnOnce(&mut OauthConfig),
+        g: impl FnOnce(&mut EdgeConfig),
+    ) -> Self {
         let issuer = TestIssuer::start(true).await.unwrap();
         assert!(TestIssuer::start(false).await.is_err(), "test mode only");
         let mut oauth = OauthConfig {
@@ -93,6 +103,7 @@ impl S {
             c.test_mode = true;
             c.public_url = Some(public.into());
             c.oauth = Some(oauth);
+            g(c);
             config = Some(c.clone());
         })
         .await;
@@ -549,18 +560,42 @@ async fn a_token_reaches_memories_and_the_session_route_only() {
             let r = s.token(&t, m.clone(), &p, body).await;
             assert_eq!(r.error(), Code::PermissionDenied, "{role:?} {m} {p}");
         }
-        // The store is never named with a token.
+        // The store is never named with a token: not the personal store, not an app of
+        // the same user, not another user's store, to read or to write.
         let auth = format!("Bearer {t}");
-        let personal = s.e.personal.to_string();
-        let r = s
-            .call(
-                Method::GET,
-                "/v1/namespaces",
-                None,
-                &[("authorization", &auth), ("knoggin-store", &personal)],
+        let cookie = s.sign_in("alice").await.unwrap();
+        let personal = s
+            .cookie(&cookie, Method::GET, "/v1/session", None)
+            .await
+            .json["personalStoreId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let app = s
+            .cookie(
+                &cookie,
+                Method::POST,
+                "/v1/stores",
+                Some(json!({ "name": "notes" })),
             )
             .await;
-        assert_eq!(r.error(), Code::InvalidArgument, "{role:?}");
+        assert_eq!(app.status, StatusCode::CREATED, "{role:?}: {}", app.json);
+        let app = app.json["id"].as_str().unwrap().to_owned();
+        let (_, theirs) = s.e.other_user("bob").await;
+        for store in [personal.clone(), app, theirs.to_string()] {
+            let named = [("authorization", auth.as_str()), ("knoggin-store", &store)];
+            let r = s.call(Method::GET, "/v1/namespaces", None, &named).await;
+            assert_eq!(r.error(), Code::InvalidArgument, "{role:?} read {store}");
+            let r = s
+                .call(
+                    Method::POST,
+                    "/v1/memories",
+                    Some(json!({ "summary": "elsewhere" })),
+                    &named,
+                )
+                .await;
+            assert_eq!(r.error(), Code::InvalidArgument, "{role:?} write {store}");
+        }
         let r = s
             .token(
                 &t,
@@ -768,6 +803,78 @@ async fn web_sign_in_sessions_and_their_cookies() {
     let r = s.cookie(&value, Method::GET, "/v1/session", None).await;
     assert_eq!(r.json["signedIn"], false);
     assert_eq!(r.json["signedOutReason"], "expired");
+}
+
+/// Step 1 on the daemon's fixed listener: a request to a sign-in route is charged to the
+/// bucket of requests without a credential whatever cookies it carries, before its code
+/// exchange, so one login cookie and its `state` cannot drive a flood of token requests.
+/// A callback that signs in gives its token back.
+#[tokio::test]
+async fn failed_callbacks_are_charged_to_the_fixed_bucket_before_the_exchange() {
+    let s = S::with(
+        Role::Local,
+        PUBLIC,
+        |_| {},
+        |c| {
+            c.unauthenticated = Rate {
+                per_second: 0.001,
+                burst: 5.0,
+            }
+        },
+    )
+    .await;
+    // A whole sign-in costs one token, for `/auth/login`.
+    s.sign_in("alice").await.unwrap();
+    assert_eq!(s.issuer.token_requests(), 1);
+    // One more login (4 tokens left, 3 after it), then callbacks with made-up codes.
+    let (login, path, _) = s.begin("alice", "/").await;
+    let state = path
+        .split(['?', '&'])
+        .find_map(|p| p.strip_prefix("state="))
+        .unwrap()
+        .to_owned();
+    let only_login = format!("__Host-login={login}");
+    let with_session = format!("__Host-login={login}; __Host-session=stale");
+    for (i, cookie) in [&only_login, &with_session, &only_login]
+        .into_iter()
+        .enumerate()
+    {
+        let r = s
+            .call(
+                Method::GET,
+                &format!("/auth/callback?code=made-up-{i}&state={state}"),
+                None,
+                &[("cookie", cookie)],
+            )
+            .await;
+        assert_eq!(location(&r), "/signin?error=provider_error", "{i}");
+    }
+    assert_eq!(s.issuer.token_requests(), 4);
+    // The bucket is empty: the next failed callback is refused before any exchange.
+    for cookie in [&only_login, &with_session] {
+        let r = s
+            .call(
+                Method::GET,
+                &format!("/auth/callback?code=made-up-9&state={state}"),
+                None,
+                &[("cookie", cookie)],
+            )
+            .await;
+        assert_eq!(r.error(), Code::RateLimited, "{}", r.json);
+        assert!(r.headers.contains_key(header::RETRY_AFTER));
+    }
+    assert_eq!(
+        s.issuer.token_requests(),
+        4,
+        "no request reached the token endpoint"
+    );
+    // So are a login and a request with a cookie that is not the session cookie.
+    let r = s.call(Method::GET, "/auth/login", None, &[]).await;
+    assert_eq!(r.error(), Code::RateLimited);
+    let r = s
+        .call(Method::GET, "/v1/session", None, &[("cookie", "other=1")])
+        .await;
+    assert_eq!(r.error(), Code::RateLimited);
 }
 
 #[tokio::test]
@@ -1125,6 +1232,14 @@ async fn a_local_install_with_sign_in_on() {
         .await;
     assert_eq!(r.json["webSignIn"], false);
     assert_eq!(r.json["auth"], "oauth");
+    // Nor does sign-in itself: no login cookie is set for the loopback address.
+    for path in ["/auth/login", "/auth/callback?code=c&state=s"] {
+        for host in ["127.0.0.1:7690", "localhost:7690", "[::1]:7690"] {
+            let r = s.call(Method::GET, path, None, &[("host", host)]).await;
+            assert_eq!(r.error(), Code::NotFound, "{path} at {host}");
+            assert!(set_cookies(&r).is_empty(), "{path} at {host}");
+        }
+    }
     // A `knoggin open` session reports no email, and sign-in is not served on its listener.
     let code = s.e.local.new_code(s.e.clock.now()).unwrap();
     let local = s.e.local.redeem(&code, s.e.clock.now()).unwrap().unwrap();
@@ -1220,6 +1335,16 @@ async fn test_mode_cookies_on_a_loopback_address() {
         .await;
     assert_eq!(r.json["signedIn"], true, "{}", r.json);
     assert_eq!(r.json["webSignIn"], true);
+    // Another loopback name for the same listener is not the public address.
+    let r = s
+        .call(
+            Method::GET,
+            "/auth/login",
+            None,
+            &[("host", "localhost:7690")],
+        )
+        .await;
+    assert_eq!(r.error(), Code::NotFound);
 }
 
 #[tokio::test]

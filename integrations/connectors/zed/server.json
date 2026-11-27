@@ -1,0 +1,8 @@
+{
+  "context_servers": {
+    "knoggin": {
+      "command": "knoggin",
+      "args": ["mcp", "--url", "https://memory.example.com/mcp"]
+    }
+  }
+}

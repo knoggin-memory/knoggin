@@ -1,0 +1,5 @@
+# cargo-fuzz needs a nightly compiler (sanitizers, -Zsanitizer). Pinned by date: the
+# newest nightly at least 7 days old on 2026-11-26. Only fuzz/ uses it.
+[toolchain]
+channel = "nightly-2026-11-19"
+profile = "minimal"

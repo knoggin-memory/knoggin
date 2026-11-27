@@ -428,16 +428,22 @@ pub fn fill_request_id(response: Response, id: Uuid) -> Response {
     }
 }
 
+/// Marks an answer that a router relays from a container as it is: its body is already
+/// the container's JSON error or JSON-RPC answer, so no layer replaces it.
+#[derive(Debug, Clone, Copy)]
+pub struct Relayed;
+
 /// The shared way out of the store layer and the edge: turns the bare answers of library
 /// layers (a 413, 504, 405, 404 or 500 without an `ApiError`) into `ApiError`s, except an
-/// MCP answer, which keeps its JSON-RPC body; puts the request ID in every error body; and
-/// marks the answer `Cache-Control: no-store`.
+/// MCP answer and a relayed one, which keep their bodies; puts the request ID in every
+/// error body; and marks the answer `Cache-Control: no-store`.
 pub(crate) fn shape_answer(mut response: Response, id: Option<Uuid>) -> Response {
     if response.extensions().get::<ApiError>().is_none()
         && response
             .extensions()
             .get::<crate::mcp::Answered>()
             .is_none()
+        && response.extensions().get::<Relayed>().is_none()
         && let Some(e) = ApiError::from_bare_status(response.status())
     {
         let allow = response.headers().get(header::ALLOW).cloned();

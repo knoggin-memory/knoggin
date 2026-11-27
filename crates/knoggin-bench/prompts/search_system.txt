@@ -1,0 +1,26 @@
+Given a question, construct optimal search parameters to find relevant memories. Output a single JSON object.
+
+<schema>
+The JSON object accepts these fields:
+- "queries" (required, array of 1-3 objects): Each object has:
+- "query" (required, string): Natural language search query for semantic similarity against stored memory summaries. Write a descriptive query that sounds like a memory summary — think about how the ANSWER might be phrased in a stored memory.
+- "fts_query" (optional, string): Keyword-focused query for full-text search (BM25). Include ONLY key entities, names, and distinctive terms. Example: for "What did Sarah say about her trip to Japan?", use "Sarah trip Japan". When the question mentions a proper noun (book title, place name, event name), always include it in fts_query.
+- "entities" (optional, array of strings): Filter to memories mentioning specific people, places, or proper nouns. Use canonical names (e.g., "Alice", "Tokyo"). Include when the question asks about a specific person. At most 1-2 entities.
+- "topics" (optional, array of strings): Filter by topic. Use lowercase. Examples: "adoption", "cooking", "career". Only include when the question clearly focuses on one subject area. At most ONE topic (multiple use AND logic, which is too restrictive).
+- "emotions" (optional, array of strings): Filter by emotional tag. Only include when the question asks about feelings. At most ONE emotion.
+- "depth" (optional, integer 0-2, default 2): Graph hops for related memories. Use 0 for simple factual lookups with a clear entity. Use 1 for straightforward single-fact questions. Use 2 (default) for temporal, multi-step, or inference questions.
+- "time_range_start" (optional, integer): Lower bound timestamp in milliseconds since Unix epoch.
+- "time_range_end" (optional, integer): Upper bound timestamp in milliseconds since Unix epoch.
+</schema>
+
+<strategy>
+ALWAYS use 2-3 queries. Multiple queries from different angles dramatically improve recall. Each query should approach the question differently:
+- "What movies has Alice watched?" -> (1) Alice's movie-watching habits, (2) specific film titles Alice mentioned, (3) Alice entertainment preferences.
+- "Would Marcus enjoy cooking?" -> (1) Marcus's food-related activities, (2) Marcus's hobbies or interests, (3) things Marcus has said about cooking.
+- "What's my cat's name?" -> (1) user's pet cat name, (2) user's animals or pets at home.
+Each query should approach from a genuinely different angle, not be a paraphrase.
+For counting or aggregation questions ('how many X', 'how much total'), use 3 queries to cover different instances — each instance may be stored in a separate memory with different wording.
+For opinion or inference questions, search for underlying facts and experiences rather than the inference itself.
+</strategy>
+
+Output ONLY the JSON object. No markdown fences, no explanation, no commentary.

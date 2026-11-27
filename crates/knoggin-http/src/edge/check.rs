@@ -147,14 +147,12 @@ pub struct Caller {
 }
 
 /// Whether a request carries a credential that this mode reads: an `Authorization` header,
-/// or in mode `oauth` a cookie (step 8). In mode `none` a cookie is ignored, so a request
-/// with only a cookie is charged to the fixed listener's bucket at step 1.
-pub(super) fn sends_credential(map: &HeaderMap, mode: AuthMode) -> bool {
+/// or in mode `oauth` the session cookie named `session_cookie` (step 8). Any other cookie,
+/// the login cookie included, is no credential, so a request with only such a cookie is
+/// charged to the fixed listener's bucket at step 1.
+pub(super) fn sends_credential(map: &HeaderMap, session_cookie: Option<&str>) -> bool {
     map.contains_key(header::AUTHORIZATION)
-        || match mode {
-            AuthMode::Oauth => map.contains_key(header::COOKIE),
-            AuthMode::None => false,
-        }
+        || session_cookie.is_some_and(|name| cookie_value(map, name).is_some_and(|v| !v.is_empty()))
 }
 
 /// What a request presented, kept so that a transfer can be checked again.
@@ -170,6 +168,8 @@ struct Presented {
     cookie: Option<Sensitive<String>>,
     /// A request that is not `GET` or `HEAD` and lacks `X-Knoggin-UI: 1`.
     bare_write: bool,
+    /// The router's client address, for the bucket per address.
+    client: Option<super::ClientAddr>,
 }
 
 /// The value of the cookie `name`, from every `Cookie` header.
@@ -187,7 +187,7 @@ impl Presented {
     fn read(arrival: Arrival, request: &Request, session_cookie: Option<&str>) -> Self {
         let map = request.headers();
         let method = request.method();
-        let mut p = Self::headers(arrival, map, session_cookie.is_some());
+        let mut p = Self::headers(arrival, map, session_cookie);
         if p.bearer.is_none()
             && !p.malformed
             && matches!(p.arrival, Arrival::Fixed { .. } | Arrival::Public)
@@ -197,18 +197,14 @@ impl Presented {
                 .filter(|v| !v.is_empty())
                 .map(Sensitive::new);
         }
+        p.client = request.extensions().get::<super::ClientAddr>().copied();
         p.bare_write = method != Method::GET
             && method != Method::HEAD
             && map.get("x-knoggin-ui").is_none_or(|v| v != "1");
         p
     }
 
-    fn headers(arrival: Arrival, map: &HeaderMap, oauth: bool) -> Self {
-        let mode = if oauth {
-            AuthMode::Oauth
-        } else {
-            AuthMode::None
-        };
+    fn headers(arrival: Arrival, map: &HeaderMap, session_cookie: Option<&str>) -> Self {
         let mut values = map.get_all(header::AUTHORIZATION).iter();
         let (bearer, malformed) = match (values.next(), values.next()) {
             (None, _) => (None, false),
@@ -229,9 +225,10 @@ impl Presented {
             arrival,
             bearer,
             malformed,
-            sent: sends_credential(map, mode),
+            sent: sends_credential(map, session_cookie),
             cookie: None,
             bare_write: false,
+            client: None,
         }
     }
 }
@@ -606,7 +603,7 @@ impl EdgeState {
     }
 
     /// The name of the session cookie, in mode `oauth`.
-    fn session_cookie(&self) -> Option<&'static str> {
+    pub(super) fn session_cookie(&self) -> Option<&'static str> {
         self.inner().oauth.as_ref().map(|o| o.cookies().session)
     }
 
@@ -652,11 +649,11 @@ impl EdgeState {
         }
     }
 
-    /// Charges a refused credential to the daemon's fixed bucket (step 1).
+    /// Charges a refused credential to the daemon's fixed bucket or the router's bucket
+    /// per address (step 1).
     fn refused(&self, p: &Presented, e: ApiError) -> ApiError {
-        if matches!(p.arrival, Arrival::Fixed { .. })
-            && p.sent
-            && let Err(limited) = self.inner().unauthenticated.take(&(), "address")
+        if p.sent
+            && let Err(limited) = self.charge_address(&p.arrival, p.client)
         {
             return limited;
         }
@@ -673,10 +670,13 @@ impl EdgeState {
         HeaderValue::from_str(&text).ok()
     }
 
-    /// Step 12, the bucket per credential.
+    /// Step 12, the bucket per credential and, on the router, the bucket per user.
     fn rate_limit(&self, caller: &Caller) -> Result<(), ApiError> {
-        match caller.credential.bucket() {
-            Some(key) => self.inner().per_credential.take(&key, "credential"),
+        if let Some(key) = caller.credential.bucket() {
+            self.inner().per_credential.take(&key, "credential")?;
+        }
+        match &self.inner().per_user {
+            Some(b) => b.take(&caller.user.value.id, "user"),
             None => Ok(()),
         }
     }
@@ -826,6 +826,15 @@ pub(crate) async fn control(
     };
     let access = access(request.method(), &route(&request));
     if access == Access::Open {
+        // Step 1 for a route that needs no credential: a credential sent to it is never
+        // checked, so on the fixed listener it is charged as a bare request is at entry.
+        // A successful sign-in gives its token back (`signin::callback`).
+        let client = request.extensions().get::<super::ClientAddr>().copied();
+        if sends_credential(request.headers(), edge.session_cookie())
+            && let Err(e) = edge.charge_address(&arrival, client)
+        {
+            return e.into_response();
+        }
         return next.run(request).await;
     }
     let p = Presented::read(arrival, &request, edge.session_cookie());
@@ -1169,28 +1178,28 @@ mod tests {
     fn authorization_forms() {
         let mut map = HeaderMap::new();
         map.insert(header::AUTHORIZATION, HeaderValue::from_static("Basic abc"));
-        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, None).malformed);
         map.insert(
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer abc"),
         );
-        let p = Presented::headers(Arrival::Public, &map, false);
+        let p = Presented::headers(Arrival::Public, &map, None);
         assert_eq!(p.bearer.unwrap().expose(), "abc");
         for scheme in ["bearer", "BEARER", "bEaReR"] {
             let value = HeaderValue::from_str(&format!("{scheme} abc")).unwrap();
             map.insert(header::AUTHORIZATION, value);
-            let p = Presented::headers(Arrival::Public, &map, false);
+            let p = Presented::headers(Arrival::Public, &map, None);
             assert_eq!(p.bearer.unwrap().expose(), "abc", "{scheme}");
         }
         map.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearer "));
-        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, None).malformed);
         map.insert(header::AUTHORIZATION, HeaderValue::from_static("Bearerabc"));
-        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, None).malformed);
         map.append(
             header::AUTHORIZATION,
             HeaderValue::from_static("Bearer def"),
         );
-        assert!(Presented::headers(Arrival::Public, &map, false).malformed);
+        assert!(Presented::headers(Arrival::Public, &map, None).malformed);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1266,7 +1275,7 @@ mod tests {
         let web = Arrival::Web {
             authority: "127.0.0.1:1".into(),
         };
-        let p = Presented::headers(web, &map, false);
+        let p = Presented::headers(web, &map, None);
         clock.advance(23 * MILLIS_PER_DAY / 24);
         assert!(edge.recheck(&p, personal).await.is_ok());
         clock.advance(2 * MILLIS_PER_DAY / 24);
@@ -1274,6 +1283,101 @@ mod tests {
             edge.recheck(&p, personal).await.is_err(),
             "24 hours after the last request the session is idle, re-checks or not"
         );
+    }
+
+    /// The re-check of an open transfer (an event stream, an export, an import) runs the
+    /// credential check again, so it fails once the API key is revoked, once its store is
+    /// deleted, and once its user is removed (rules I12 and I17).
+    #[tokio::test]
+    async fn the_transfer_recheck_fails_for_a_revoked_key_a_deleted_store_or_a_removed_user() {
+        use knoggin_crypto::KeyProvider;
+        use knoggin_state::testing::{TestClock, test_field_keys};
+        use knoggin_state::{ApiKeys, LocalFileDb, NewApiKey, StateDb, Stores, Users};
+
+        use crate::edge::{EdgeConfig, EdgeParts};
+
+        let clock = TestClock::new();
+        let db: Arc<dyn StateDb> = Arc::new(LocalFileDb::in_memory(clock.clock()));
+        let fields = Arc::new(test_field_keys());
+        let keys: Arc<dyn KeyProvider> = Arc::new(knoggin_crypto::testing::test_provider());
+        let users = Users::new(db.clone(), fields.clone());
+        let stores = Stores::new(db.clone(), fields.clone());
+        let api_keys = ApiKeys::new(db.clone(), fields.clone());
+        let user = crate::local::ensure_local_user(&users, &*keys, clock.now())
+            .await
+            .unwrap();
+        let personal = users
+            .get(user)
+            .await
+            .unwrap()
+            .unwrap()
+            .value
+            .personal_store_id;
+        let parts = EdgeParts {
+            db,
+            field_keys: fields,
+            keys,
+            clock: clock.clock(),
+            host: None,
+            local: None,
+        };
+        let config = EdgeConfig::local("http://127.0.0.1:7690".into(), "0.1.0".into());
+        let edge = EdgeState::new(config, parts).await.unwrap();
+        let new_key = || async {
+            let (secret, hash, prefix) = knoggin_crypto::token::new_api_key().unwrap();
+            let new = NewApiKey {
+                id: Uuid::now_v7(),
+                hash,
+                prefix,
+                key_expires_ms: clock.now() + 90 * MILLIS_PER_DAY,
+            };
+            let key = api_keys
+                .create(
+                    user,
+                    personal,
+                    new,
+                    Sensitive::new("k".into()),
+                    vec![Permission::Read],
+                    clock.now(),
+                )
+                .await
+                .unwrap();
+            let mut map = HeaderMap::new();
+            map.insert(
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {secret}")).unwrap(),
+            );
+            (key.id, map)
+        };
+        let fixed = Arrival::Fixed { port: 7690 };
+
+        let (id, map) = new_key().await;
+        let p = Presented::headers(fixed.clone(), &map, None);
+        assert!(edge.recheck(&p, personal).await.is_ok());
+        api_keys.revoke(personal, id, clock.now()).await.unwrap();
+        assert!(edge.recheck(&p, personal).await.is_err(), "revoked");
+
+        let (_, map) = new_key().await;
+        let p = Presented::headers(fixed.clone(), &map, None);
+        let mark = |at: Option<i64>| {
+            stores.update(user, personal, move |s: &mut StoreRecord| {
+                s.deleted_at_ms = at;
+                Ok::<_, StateError>(())
+            })
+        };
+        mark(Some(clock.now())).await.unwrap();
+        assert!(edge.recheck(&p, personal).await.is_err(), "store deleted");
+        mark(None).await.unwrap();
+        assert!(edge.recheck(&p, personal).await.is_ok(), "store back");
+        users
+            .update(user, |u: &mut User| {
+                u.deleted_at_ms = Some(clock.now());
+                u.deleted_by = Some(DeletedBy::Admin);
+                Ok::<_, StateError>(())
+            })
+            .await
+            .unwrap();
+        assert!(edge.recheck(&p, personal).await.is_err(), "user removed");
     }
 
     /// An event stream through the whole edge, with a stub in place of the store layer:

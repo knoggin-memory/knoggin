@@ -14,6 +14,7 @@ use serde::de::DeserializeOwned;
 use crate::db::{Cond, Item, StateDb, StateError, Write};
 use crate::keys::{self, ONE};
 use crate::leases::lease_deletes;
+use crate::record::Newest;
 use crate::sessions::delete_session_pairs;
 use crate::typed::{PAGE, read_all};
 use crate::users::LOCAL_IDENTITY;
@@ -44,6 +45,47 @@ struct UserMarks {
 struct StoreMarks {
     id: StoreId,
     deleted_at_ms: Option<i64>,
+}
+
+/// What thinning needs of one store that is not marked deleted. Read without the field
+/// key, from the record's unsealed fields.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ThinTarget {
+    /// The store.
+    #[serde(rename = "id")]
+    pub store: StoreId,
+    /// The newest committed snapshot the record names.
+    pub newest: Option<Newest>,
+    /// The snapshot an admin chose to restore, `<generation>-<sequence>`.
+    pub restore_from: Option<String>,
+    deleted_at_ms: Option<i64>,
+}
+
+/// Every store whose own record carries no deletion mark, for the lifecycle task's
+/// thinning step. Like [`erase`] it needs no field key.
+pub async fn thin_targets(db: &dyn StateDb) -> Result<Vec<ThinTarget>, StateError> {
+    let mut out = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let page = db.query(keys::USERS, "", PAGE, after.as_deref()).await?;
+        for dir in &page {
+            let user: UserId = dir
+                .sk
+                .parse()
+                .map(UserId::from_uuid)
+                .map_err(|_| StateError::Corrupt("a user directory item"))?;
+            for item in read_all(db, &keys::user_stores(user), "").await? {
+                let target: ThinTarget = marks(&item)?;
+                if target.deleted_at_ms.is_none() {
+                    out.push(target);
+                }
+            }
+        }
+        match page.last() {
+            Some(last) if page.len() == PAGE => after = Some(last.sk.clone()),
+            _ => return Ok(out),
+        }
+    }
 }
 
 #[derive(Deserialize)]

@@ -1,0 +1,15 @@
+{
+  "description": "Prints one fixed line when a session starts. It reads nothing, sends nothing and calls no tool.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo 'Knoggin memory is connected. Use it when earlier context matters, and ask before saving.'"
+          }
+        ]
+      }
+    ]
+  }
+}

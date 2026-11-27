@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"recall_memories","arguments":{"query":"dog name","namespace":"work","limit":10,"fullTextCount":2,"tags":["pets"],"entities":["ann"],"topics":["pets"],"emotions":["happy"],"minStrength":0.2,"depth":2,"timeRangeStart":"2023-05-01T00:00:00Z","timeRangeEnd":1700000000000,"detail":"full","recordAccess":false}}}

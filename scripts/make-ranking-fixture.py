@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Drives recalld to make tests/fixtures/ranking/fixture.json.
 
 Run through scripts/make-ranking-fixture.sh, with `python3 -I`. Standard

@@ -1273,7 +1273,9 @@ pub struct ContextResult {
 safe_debug!(ContextResult: embedding, degraded; len namespaces, memories);
 
 /// The state of the embedding model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema, ts_rs::TS)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema, ts_rs::TS,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelStatus {
     /// Loaded.
@@ -1287,7 +1289,9 @@ pub enum ModelStatus {
 }
 
 /// Why the model is unavailable.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema, ts_rs::TS)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema, ts_rs::TS,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelUnavailableReason {
     /// No download source completed.
@@ -1303,7 +1307,7 @@ pub enum ModelUnavailableReason {
 }
 
 /// The model state of the process that serves the store (schema `ModelState`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, utoipa::ToSchema, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelState {
     /// The state.
