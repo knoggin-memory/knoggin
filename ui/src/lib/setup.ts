@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The steps of "Set up an agent". The words are the prototype's; the commands for
-// each agent are its examples until integrations/connectors is written (milestone 8).
+// The steps of "Set up an agent". The words and the commands for each agent are the
+// prototype's; they are written here, not read from integrations/connectors.
 
 export const TABS = [
   { id: 'claude-code', name: 'Claude Code' },

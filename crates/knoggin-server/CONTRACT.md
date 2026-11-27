@@ -1,9 +1,8 @@
 # knoggin-server: the foundation contract
 
-For the agents that build the container and broker, the router (lease, pool, reconcile,
-rollout), and lifecycle, admin and launchers. The spec (tabs "Server", "Workspace and
-crates", "Deployment", "Security") is the authority; this file says what exists and where
-the rest goes. Deviations are in `docs/spec-deviations.md`.
+The container and broker, the router (lease, pool, reconcile, rollout), and lifecycle, admin
+and launchers. The spec (tabs "Server", "Workspace and crates", "Deployment", "Security") is
+the authority; this file says what exists and how the pieces fit. Deviations are in `docs/spec-deviations.md`.
 
 ## What exists
 
@@ -17,7 +16,7 @@ the rest goes. Deviations are in `docs/spec-deviations.md`.
 
 Outside the crate: `knoggin_http::ctx::headers::{CONTAINER_ID, INTERNAL_STATUS}` and
 `ctx::{link_protocol_ok, link_bearer, link_identity, write_link_identity, write_link_bearer}`
-(all internal header code lives in `ctx`); `knoggin_core::ops::ModelState` now deserializes.
+(all internal header code lives in `ctx`); `knoggin_core::ops::ModelState` deserializes.
 
 ## How the pieces fit
 
@@ -103,7 +102,7 @@ ServeConfig, stop) -> ServeEnd` on `container::runtime()`; `main` exits with `en
 - **The fleet tests** (`tests/fleet_*.rs`, helpers in `tests/fleet_support`) start routers with
   `run_router` on loopback and real containers through `serve_runner`.
 
-## Container and broker (built)
+## Container and broker
 
 **Run a container in process** (fleet tests' fake launcher, and `main` for `knoggin serve`):
 
@@ -151,19 +150,19 @@ serve_tls(listener, tls, router, move |peer| {
 - The broker's bodies are `broker::api` (`OpenAnswer`, `UploadLink`, `CommitRequest`, ...);
   errors are `{"error":{"code","message","reason"?}}` with `BrokerCode` (`lease_lost` = 409).
 
-## Where the rest goes
+## Router and container modules
 
-| Module | Owner | Holds |
-| --- | --- | --- |
-| `container` | container + broker | `knoggin serve` role (takes `ContainerEnv`, `BuildInfo`, `test_mode`, listen address, optional local address); the middleware; `hello`/`claim`/`park`/`status` handlers with `link::api`; `RouterBackend` (a `StoreBackend` over the broker); the park sequence |
-| `broker` | container + broker | the internal listener's routes (`open`, `snapshots`, `commit`, `parked`, the one-host blob route) with their bodies, limits and per-address counts; the blob route checks the raw path with `names::parse_snapshot_key` and rebuilds the query from the signed parameters (`MemoryStorage` uses S3's names, `x-id` included) |
-| `router` | router | `knoggin router` wiring (edge layer, forwarder, filter, internal listener, start-up order, peer checks with `Cidr`) |
-| `lease` | router | lease state machine, claim, Mark gone, wait loop |
-| `pool` | router | launching (`Launcher::launch`, `describe`, `hello`), pool size |
-| `reconcile` | router | leader lock and the 30-second loop, rollout (`BuildInfo::compare`) |
-| `testing` (fake launcher) | the first agent that needs it, once `serve` exists | a `Launcher` that runs the container role in process on `127.0.0.x` |
+| Module | Holds |
+| --- | --- |
+| `container` | `knoggin serve` role (takes `ContainerEnv`, `BuildInfo`, `test_mode`, listen address, optional local address); the middleware; `hello`/`claim`/`park`/`status` handlers with `link::api`; `RouterBackend` (a `StoreBackend` over the broker); the park sequence |
+| `broker` | the internal listener's routes (`open`, `snapshots`, `commit`, `parked`, the one-host blob route) with their bodies, limits and per-address counts; the blob route checks the raw path with `names::parse_snapshot_key` and rebuilds the query from the signed parameters (`MemoryStorage` uses S3's names, `x-id` included) |
+| `router` | `knoggin router` wiring (edge layer, forwarder, filter, internal listener, start-up order, peer checks with `Cidr`) |
+| `lease` | lease state machine, claim, Mark gone, wait loop |
+| `pool` | launching (`Launcher::launch`, `describe`, `hello`), pool size |
+| `reconcile` | leader lock and the 30-second loop, rollout (`BuildInfo::compare`) |
+| `testing` | a `Launcher` that runs the container role in process on `127.0.0.x` |
 
-## Lifecycle, admin and launchers (built)
+## Lifecycle, admin and launchers
 
 | Module | Offers |
 | --- | --- |
@@ -182,7 +181,7 @@ to thin without the field key.
 Settings for `knoggin_http::edge` (public URL, auth, per-credential limits) stay in `EdgeConfig`;
 the per-address and per-user rates are read from `RouterLimits` by `run_router` into the edge.
 
-## AWS (built)
+## AWS
 
 | Module | Offers |
 | --- | --- |

@@ -33,7 +33,7 @@ docker compose up -d
 
 ## Connect an agent
 
-- **Local:** the agent runs the command `knoggin mcp`, for example `claude mcp add knoggin -- knoggin mcp`. `knoggin init` sets this up for you.
+- **Local:** the agent runs the command `knoggin mcp`, for example `claude mcp add knoggin -- knoggin mcp`. `uvx knoggin init` sets this up for you.
 - **Server:** point the agent at `https://<your server>/mcp`. The agent signs in through your identity provider.
 - **Code:** the Python SDK (`pip install knoggin`) works against both.
 

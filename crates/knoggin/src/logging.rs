@@ -41,7 +41,7 @@ pub(crate) enum Sink {
     /// Only the log file: a detached daemon, whose standard error is that same file.
     FileOnly,
     /// Standard output: the server roles.
-    #[allow(dead_code, reason = "the server roles arrive in milestone 6")]
+    #[allow(dead_code, reason = "unused: every role logs to stderr")]
     Stdout,
 }
 

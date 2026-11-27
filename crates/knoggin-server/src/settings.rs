@@ -174,7 +174,7 @@ pub enum KeySettings {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum LauncherSettings {
-    /// AWS: `EcsLauncher` (milestone 7).
+    /// AWS: `EcsLauncher`.
     Ecs(EcsSettings),
     /// One host: `DockerLauncher`, a client of the launcher service. Sets `one_host`.
     Docker(DockerSettings),

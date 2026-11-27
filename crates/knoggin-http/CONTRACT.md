@@ -1,6 +1,6 @@
 # knoggin-http: the store layer contract
 
-For the agents that build `mcp` and `edge` (with the control routes and `local`). The spec
+For anyone working on `mcp`, `edge` (with the control routes) or `local`. The spec
 (tabs "Workspace and crates", "REST API", "Engineering rules") is the authority; this file
 says what exists and how to use it. Deviations are in `docs/spec-deviations.md`.
 
@@ -12,11 +12,11 @@ says what exists and how to use it. Deviations are in `docs/spec-deviations.md`.
 | `error` | `Code` (the 17 codes, `status()`, `as_str()`), `LockReason`, `ApiError` (constructors per code, `with_field/with_reason/with_retry_after/with_request_id`, `from_join(&JoinError)`, `from_bare_status`, `From<EngineError>`), `fill_request_id(Response, Uuid)` |
 | `trace` | `MakeRequestUuidV7` (for `SetRequestIdLayer` on `Knoggin-Request-Id`), `request_id(&Request)`, `route(&Request)`, `request_span(&Request)`, `observe` (middleware: span, one log line, `knoggin_requests_total` / `knoggin_request_seconds`) |
 | `panic` | `log_location(&PanicHookInfo)` (the hook body; `main` installs it), `location_line` |
-| `settings` | `StoreLimits` (`limits.body_bytes`, `request_timeout_ms`, `store_concurrency`), `DEFAULT_BODY_BYTES`, `IMPORT_LINE_BYTES`. Add the edge's settings here |
+| `settings` | `StoreLimits` (`limits.body_bytes`, `request_timeout_ms`, `store_concurrency`), `DEFAULT_BODY_BYTES`, `IMPORT_LINE_BYTES` |
 | `host` | `StoreHost`, `HostConfig`, `SnapshotTiming`, `StoreBackend` + `OpenedStore`, `SnapshotSource`, `SealedSnapshot`, `BackendError`, `LocalBackend`, `Embedder`, `Providers`, `EmbedWaits`, `Reply<T>`, `request_hash`, `StoreStatus`/`StoreState`, `HostReport`, `HostCounters` |
 | `store_api` | `store_layer(Arc<StoreHost>) -> Router`, `export_file_name(name, date)`; `store_api::ui` (the `/v1/ui/*` read models: `wire` holds the answer types, `shape` the shaping over `&Store`, `tests` the TypeScript export) |
 | `mcp` | `McpConfig` (`source_url`, in `HostConfig::mcp`). `/mcp` and `/mcp/plugin` are mounted by `store_layer` itself |
-| `testing` | `TestHost` (host over a `LocalBackend` in a folder you own, fake model, one user and personal store, `ctx`, `ctx_for`, `new_store`, `make_ready`), `fake_config`, `fake_model_state`. Add the test issuer here |
+| `testing` | `TestHost` (host over a `LocalBackend` in a folder you own, fake model, one user and personal store, `ctx`, `ctx_for`, `new_store`, `make_ready`), `fake_config`, `fake_model_state`; `testing::issuer` (the test issuer, below) |
 
 ## Building a host
 
@@ -101,7 +101,7 @@ go into the server instructions. Sessions of the older revisions live in the sto
 memory, bound to the store, the API key and the endpoint. `StoreHost::clients(store)` gives
 the MCP client names an open store has seen (at most 32, with when), for `/v1/ui/system`.
 
-## The web UI (milestone 4)
+## The web UI
 
 - `host::live`: each open store's `EventLog` (the last 1,000 events and a broadcast channel
   of 1,024). Host writes add their events inside the write (`Op` closures get a
@@ -138,7 +138,7 @@ the MCP client names an open store has seen (at most 32, with when), for `/v1/ui
 - Control and mode handlers read `Extension<edge::Caller>`; store routes get the
   `RequestContext`. `Credential` has `Oauth` (an access token) and `Cookie` (a browser
   session from web sign-in) beside the local ones.
-- Sign-in (milestone 5): set `EdgeConfig::auth_mode = Oauth`, `public_url`, `test_mode` and
+- Sign-in: set `EdgeConfig::auth_mode = Oauth`, `public_url`, `test_mode` and
   `oauth: Some(OauthConfig { .. })`, then call `edge.discover().await` (and again while it
   answers `DiscoveryError::Unreachable`). The daemon does this in a background task and
   serves at once; the router's other errors stop its start.

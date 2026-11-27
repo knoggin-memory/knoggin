@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- Set up an agent, for the current store. The per-agent snippets are the
-     prototype's examples until integrations/connectors exists (milestone 8);
-     the plain MCP entry and the address come from the session. -->
+     prototype's examples (lib/setup.ts); the plain MCP entry and the address
+     come from the session. -->
 <script lang="ts">
   import Screen from '$lib/components/Screen.svelte';
   import PageHeader from '$lib/components/PageHeader.svelte';

@@ -346,10 +346,7 @@ pub(crate) struct UserView {
 #[derive(Serialize, ts_rs::TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(rename = "Snapshot")]
-#[allow(
-    dead_code,
-    reason = "a server serves it from milestone 6; the UI's types need it now"
-)]
+#[allow(dead_code, reason = "only the web UI's type export uses it")]
 pub(crate) struct SnapshotView {
     /// `<generation>-<sequence>`, what `knoggin admin restore` takes.
     pub(crate) name: String,

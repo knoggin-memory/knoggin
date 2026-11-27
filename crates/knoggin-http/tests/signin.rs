@@ -3,7 +3,7 @@
 //! reach, web sign-in and cookie sessions, users and admins, a local install with
 //! sign-in on, and the browser checks, all in one process against the edge layer with the
 //! test issuer. A server is the edge in the router's role on its public listener; the
-//! router itself (milestone 6) is not in these tests.
+//! router itself (`knoggin-server`) is not in these tests.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

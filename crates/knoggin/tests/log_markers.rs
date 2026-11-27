@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The log-marker test (tab "Security", Logs; tab "Engineering rules", rule 3): marker
-//! strings in every kind of sensitive value that milestone 3 has, every route and every
+//! strings in every kind of sensitive value of a local install, every route and every
 //! tool run at log level `trace`, then all log output and the metrics page are searched,
 //! and the data folder too. The web UI's read models and its event stream are in it, and
-//! a second test covers sign-in (milestone 5).
+//! a second test covers sign-in.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -773,7 +773,7 @@ fn set_cookie(r: &support::Resp, name: &str) -> String {
         .unwrap_or_else(|| panic!("no {name} cookie in {}", r.headers))
 }
 
-/// Milestone 5: a daemon with sign-in on against the test issuer, at log level `trace`.
+/// Sign-in: a daemon with sign-in on against the test issuer, at log level `trace`.
 /// Markers sit in the sign-in subject, the email and the name; every secret of the flow
 /// (state, nonce, PKCE verifier and challenge, authorization code, the sealed login
 /// cookie, the session value, the ID and access tokens the exchange returned, minted

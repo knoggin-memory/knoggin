@@ -4,7 +4,7 @@
 //! The foundation holds the settings, the pinned internal link with its secrets and
 //! tokens, object storage, and the launcher interface. The router role (`router`, with
 //! `lease`, `pool`, `reconcile` and `rollout`) and the container role and broker are
-//! built on top of these; `CONTRACT.md` says where each goes.
+//! built on top of these; `CONTRACT.md` says how they fit.
 
 pub mod admin;
 pub mod aws;

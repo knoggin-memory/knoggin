@@ -38,7 +38,7 @@ Agents that use `knoggin mcp` start the daemon themselves when it is not running
 
 ## Connect an agent
 
-If `knoggin init` found your agent, it is already connected. Otherwise add Knoggin by hand. For Claude Code:
+If `uvx knoggin init` found your agent, it is already connected. Otherwise add Knoggin by hand. For Claude Code:
 
 ```sh
 claude mcp add --scope user knoggin -- knoggin mcp
