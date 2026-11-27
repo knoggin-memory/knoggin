@@ -5,8 +5,7 @@ router, a launcher that starts one plain container per user, Postgres, a nightly
 lifecycle task and, for trials, a SeaweedFS bucket.
 
 **Who this is for.** Trying the server, or a small group who trust each other and the
-host. On one host the router, the launcher and every user container share one kernel,
-so a container escape reaches everything. The operator can read every store.
+host.
 
 ## Needs
 

@@ -2,8 +2,6 @@
 
 The one-host stack runs the Knoggin server on a single machine with Docker Compose. It is for trying the server, and for a small group who trust each other and the host. The files are in `deploy/docker/`; its `README.md` is the short version of this guide.
 
-**Know the limit first.** On one host the router, the launcher and every user's container share one kernel. A container escape reaches everything, and whoever runs the host can read every store. For people who must not see each other's data, use [AWS](deploy-aws.md).
-
 ## What runs
 
 | Service | Job |
@@ -118,12 +116,6 @@ It writes the new key set to `secrets/master_key` and wraps every store's key ag
 
 Knoggin is licensed under the AGPL, which gives the users of a network service the right to its source. Every deployment links to it: the setting `source_url` (default `https://github.com/knoggin-memory/knoggin`) appears in the web UI, in the session route and at the end of the MCP server instructions. **If you deploy a changed version, set `source_url` to where your changed source is**, in `config.toml`.
 
-## Limits of one host
+## Next
 
-- The router, the launcher and the containers share one kernel. A container escape reaches everything.
-- The router holds the bucket key. Without a scoped key it can delete snapshots.
-- Anyone who can use the Docker socket can read each container's launch secret.
-- The database's lifecycle login can delete any record. The nightly dump is the way back.
-- One host has a fixed amount of memory. `containers.max` bounds how many users are served at once.
-
-More in [Security](security.md). Day-to-day work is in [Operations](operations.md).
+Day-to-day work is in [Operations](operations.md).

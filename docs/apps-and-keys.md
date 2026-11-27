@@ -16,8 +16,6 @@ knoggin apps delete research
 - You can have up to 1,000 apps.
 - Deleting an app stops its keys at once. The app can be brought back for `retention.soft_delete_days` (7 days by default), from the web UI; after that it is erased for good. A store brought back returns as of its last snapshot, so writes from the last seconds before the delete may be missing.
 
-On a local install, every program that runs as you can reach every store through the socket. Apps separate stores, not people.
-
 ## API keys
 
 A key looks like `knoggin_live_` followed by 43 characters. It is shown **once**, when it is made. Knoggin keeps only a hash of it and its first 8 characters, so that you can tell keys apart.

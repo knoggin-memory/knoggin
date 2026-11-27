@@ -110,7 +110,7 @@ async with mcp_server("https://memory.example.com") as server:   # reads KNOGGIN
 
 `mcp_server` returns the Agents SDK's streamable-HTTP MCP server pointed at Knoggin's `/mcp`, with approval required for every tool that writes. It needs an address: an MCP client cannot use the daemon's socket, so a local install is reached at `http://127.0.0.1:7690` with an API key.
 
-Do not send a key to that address on a machine shared with accounts you do not trust. While Knoggin is stopped, another account can take port 7690 and receive the key ([Security](security.md), limit 7). The socket has no such gap, so it is the safe default: `Client()` uses it, and an MCP client can run the stdio command `knoggin mcp`, which reaches the daemon over the socket (in the Agents SDK, `MCPServerStdio`).
+The socket is the default: `Client()` uses it, and an MCP client can run the stdio command `knoggin mcp`, which reaches the daemon over the socket (in the Agents SDK, `MCPServerStdio`).
 
 ## The `knoggin` command
 

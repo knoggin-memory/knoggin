@@ -44,7 +44,7 @@ At the provider, register a **web application** (a confidential client) for the 
 
 **Admins.** A person is an admin when their subject is in `auth.admin_subjects`, or their verified email is in `auth.admin_emails`. Prefer subjects: a subject never changes hands. The check runs on every request, so taking someone out of the config takes effect at once. Nobody becomes an admin by signing in first. An admin can list and remove users and read the server status, but cannot read anyone's memories through Knoggin.
 
-**Removing someone.** Removing a person at the provider stops new sign-ins and new tokens, but not an existing browser session or API key. Remove them in Knoggin too (the Users page). Removal is not a ban: after the undo period they could sign in again and get a new, empty account. To keep someone out, take them off the allow-list or remove them at the provider.
+**Removing someone.** Remove them at the provider and in Knoggin (the Users page). To keep someone out for good, take them off the allow-list or remove them at the provider.
 
 ## Setting up AuthKit
 
@@ -96,8 +96,6 @@ A local install can be reached from a hosted chat client, such as claude.ai or C
 4. Add the connector in the chat client with `<public_url>/mcp` ([claude.ai](../integrations/connectors/claude-ai/README.md), [ChatGPT](../integrations/connectors/chatgpt/README.md)).
 
 Everyone who signs in acts as you, the one local user, and each identity is checked against the allow-list by its own verified email on every request. An agent's token must itself carry a verified email on the list; if your provider's tokens carry none, set `auth.email_claim` if it has such a claim, and otherwise give agents API keys instead. On your own machine nothing changes: `knoggin open` and the socket work as before. Keys can still be made only there, never from the tunnel's address.
-
-Do not use tunnel mode on a machine you share with accounts you do not trust: while Knoggin is stopped, another account could take its port and receive what arrives through the tunnel. See [Security](security.md).
 
 ## See also
 
