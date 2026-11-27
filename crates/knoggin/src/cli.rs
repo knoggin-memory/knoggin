@@ -381,9 +381,13 @@ async fn dispatch(cli: Cli, env: &Env, warnings: Vec<&'static str>) -> anyhow::R
     };
     let config = ctx.config(role)?;
     let log_file = matches!(cli.command, Command::Daemon { .. }).then(|| ctx.home.log_file());
-    // A detached daemon's standard error is its log file already (`spawn_detached`).
+    // A detached daemon's standard error is its log file already (`spawn_detached`). The
+    // server roles log to standard output, where container platforms collect log lines.
     let sink = match cli.command {
         Command::Daemon { new_session: true } => Sink::FileOnly,
+        Command::Router | Command::Serve | Command::Lifecycle { .. } | Command::Launcher => {
+            Sink::Stdout
+        }
         _ => Sink::Stderr,
     };
     logging::init(&config, sink, log_file.as_deref())?;

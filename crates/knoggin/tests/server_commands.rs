@@ -341,3 +341,50 @@ fn key_generate_and_internal_cert_write_new_private_files_only() {
     let o = home.run(&["admin", "internal-cert", "--out-dir", d.to_str().unwrap()]);
     assert_ne!(o.code, 0, "existing files are never replaced");
 }
+
+#[test]
+fn a_server_role_logs_json_lines_to_standard_output() {
+    // The port a user container listens on is held, so `serve` logs that and ends at once.
+    let _held = std::net::TcpListener::bind("0.0.0.0:8443");
+    let home = Home::new()
+        .with(
+            "KNOGGIN_CONTAINER_ID",
+            "00000000-0000-4000-8000-000000000001",
+        )
+        .with("KNOGGIN_LAUNCH_SECRET", &"ab".repeat(32))
+        .with("KNOGGIN_ROUTER_URL", "https://127.0.0.1:9")
+        .with("KNOGGIN_ROUTER_CERT_SHA256", &"cd".repeat(32))
+        .with("KNOGGIN_LOG__LEVEL", "info");
+    let mut child = home
+        .cmd(&["serve"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Should the port be free after all, a stop signal ends the role instead.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while child.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    if child.try_wait().unwrap().is_none() {
+        let _ = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(child.id().to_string())
+            .status();
+    }
+    let o = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    let lines: Vec<serde_json::Value> = stdout
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap_or_else(|_| panic!("not a JSON line: {l}")))
+        .collect();
+    assert!(
+        lines
+            .iter()
+            .any(|l| l["fields"]["message"] == "the container role ended"),
+        "stdout: {stdout}\nstderr: {stderr}"
+    );
+    assert!(!stderr.contains("the container role ended"), "{stderr}");
+}
