@@ -6,7 +6,7 @@
   "bump-minor-pre-major": true,
   "draft": true,
   "force-tag-creation": true,
-  "signoff": "github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>",
+  "signoff": "knoggin-release[bot] <362108219+knoggin-release[bot]@users.noreply.github.com>",
   "packages": {
     ".": {
       "package-name": "knoggin",
