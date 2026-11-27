@@ -1420,7 +1420,6 @@ dependencies = [
  "knoggin-http",
  "knoggin-import-recalld",
  "libfuzzer-sys",
- "serde_json",
 ]
 
 [[package]]

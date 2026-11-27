@@ -29,7 +29,6 @@ knoggin-crypto = { path = "../crates/knoggin-crypto" }
 knoggin-http = { path = "../crates/knoggin-http" }
 knoggin-import-recalld = { path = "../crates/knoggin-import-recalld" }
 libfuzzer-sys = "0.4"
-serde_json = "1"
 
 [profile.release]
 debug = 1
