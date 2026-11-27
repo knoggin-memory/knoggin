@@ -59,7 +59,7 @@ Nothing has been released yet. The release workflow, `release.yml`, has never ru
 Before the first release:
 
 1. Register the PyPI project `knoggin` with a trusted publisher: this repository, workflow `release.yml`, environment `pypi`.
-2. Make the M5 switch (below), so that the first release ships the patched graph.
+2. Done on 2026-11-27: the M5 switch (below). `model-release.yml` published the release `model-embeddinggemma-2-q4-768-1d894cac0c7bb07b`, and the patched graph is pinned.
 3. Done on 2026-11-27: the App is `knoggin-release` (bot `knoggin-release[bot]`, user ID 362108219), with both secrets set and the sign-off below pointed at it. To set it up again: create the release App, which release-please uses to open its pull requests (the workflow's own token may not open them, and its pull requests would start no CI):
    1. In the organization's settings, Developer settings, GitHub Apps, create an App named for example `knoggin-release`. Turn the webhook off. Repository permissions: Contents read and write, Pull requests read and write (Metadata read comes with them). Nothing else.
    2. Install it on `knoggin-memory/knoggin` only.
@@ -88,7 +88,7 @@ The spec's build-time measurements (tab "Overview", Build-time measurements), ea
 | M2 | Time from claim to first answer on the one-host stack at 1,500, 15,000 and 75,000 memories | Build | Done 2026-11-26 at 1,500 and 15,000: median 0.67 s and 2.07 s, under the 3-second mark. 75,000 waits for the owner (below) |
 | M3 | Peak memory of a user container at the same three sizes | Build | Done 2026-11-26 at 1,500 and 15,000. The rule's changes are applied: `memory_mib` 1,536, a model reserve of 928 MiB, and an upload budget of about 171 GiB an hour (below). 75,000 waits for the owner |
 | M4 | Snapshot size and duration at the three sizes, local disk and SeaweedFS | Build | Done 2026-11-26 at 1,500 and 15,000 (below). 75,000 waits for the owner |
-| M5 | Retrieval with the faster compute path (patched graph) | Build if `locomo10.json` is usable, otherwise owner | Done 2026-11-25: 97.0% overlap, the patched graph is the one to ship; switch waits for the owner (below) |
+| M5 | Retrieval with the faster compute path (patched graph) | Build if `locomo10.json` is usable, otherwise owner | Done 2026-11-25: 97.0% overlap, the patched graph is the one to ship. Switched on 2026-11-27: the patched graph ships (below) |
 | M6 | On AWS: usable memory, containers per host, launch to ready, embedding time on a full host | Owner: AWS account | Not yet run |
 | M7 | Bucket self-test and a long upload | Build for SeaweedFS; owner for real S3 | SeaweedFS done 2026-11-26: self-test passes, a 15-second upload on a 5-second link completes, so `storage.link_ttl_seconds` stays 300. Real S3 not yet run |
 | M8 | Linux first run with and without a desktop session | Build if a Linux machine is at hand, otherwise owner | Not yet run |
@@ -192,12 +192,13 @@ About 5 KiB per memory, most of it the 768 floats of each vector (3 KiB). The lo
 
 Measured on 2026-11-25 on the build machine (Apple Silicon, macOS) with `locomo10.json` from recalld's benchmark commit: all 5,882 turns and 1,986 questions embedded with the published graph and with the patched one. Mean top-10 overlap 0.9701 (minimum 0.80); mean cosine between the two graphs' vectors 0.99987. `scripts/patch_q4_graph.py` (onnx 1.23.2) set `accuracy_level = 4` on all 146 `MatMulNBits` nodes; the patched `model_q4.onnx` has SHA-256 `1afd951bf447f631786cc1302921f94d4bc30f602ee6a61e8e517d0a3203c8a8`. Both passes ran at background priority, so the speed ratio seen (1.19 times) is not a measurement.
 
-The rule says the patched graph is the one to ship. The build keeps the published graph pinned, because only a release of the organization can host the patched file. The owner switches before the first public release (a later switch re-embeds every store):
+The rule says the patched graph is the one to ship, and it ships. Only a release of the organization can host the patched file, so the switch came in two parts, before the first public release (a later switch would re-embed every store):
 
-1. Pin the new `graph_sha256` in `knoggin-embed`'s model module and take the new identity string that follows from it.
-2. Update the identity test to the new string.
-3. Make the graph file's first download address, and with it the image's model stage, the asset `model_q4.onnx` of the project's release tagged `model-<new identity string>`, because Hugging Face keeps serving the published graph.
-4. Run `model-release.yml` with the patched graph and a notice that says it was modified, before the release that names the new identity.
+1. On 2026-11-27 the owner ran `model-release.yml` from `main` (`gh workflow run model-release.yml --ref main -f graph=patched -f identity=embeddinggemma-2-q4-768-1d894cac0c7bb07b`). It patched the graph, checked every hash and published the three files and `NOTICE-model_q4.onnx.txt` under the release `model-embeddinggemma-2-q4-768-1d894cac0c7bb07b`. The published hashes match the pins, and `knoggin model fetch` completed against the release.
+2. The pull request "feat(embed): ship the patched q4 graph (M5)" then pinned it:
+   - `knoggin-embed`'s model module pins the patched graph (494,100 bytes, `graph_sha256` `1afd951b...`), which gives the identity string `embeddinggemma-2-q4-768-1d894cac0c7bb07b`; the identity test checks it.
+   - The graph file's only download address, in the model module and in the image's model stage, is the asset `model_q4.onnx` of that release, because Hugging Face keeps serving the published graph (`docs/spec-deviations.md`). The weights and the tokenizer keep Hugging Face first and that release second.
+   - `scripts/patch_q4_graph.py` fails unless its output has the pinned hash; `model-release.yml` defaults to the patched graph and accepts only its identity string for it; `third_party/model-licence.txt` says the graph was modified.
 
 ### M7: SeaweedFS
 

@@ -99,23 +99,25 @@ RUN --mount=type=cache,id=knoggin-cargo-registry,target=/usr/local/cargo/registr
 
 # ------------------------------------------------------------------------- model
 # The three model files of tab "Embeddings", from the first source that works, checked
-# with sha256sum -c; a mismatch fails the build.
+# with sha256sum -c; a mismatch fails the build. The graph is the patched one of
+# measurement M5, which only the project's release serves.
 FROM buildpack-deps@sha256:b5d0ed7866dacf9d66c4becf6ffe684c52c39b34be9ac9a60e3efa2e081f942e AS model-0
 RUN set -eu; \
-    identity=embeddinggemma-2-q4-768-80bc2e03328dae2f; \
+    identity=embeddinggemma-2-q4-768-1d894cac0c7bb07b; \
     commit=daa72c51243991dfcaf9f9137d2c573d8f7790c0; \
+    release="https://github.com/knoggin-memory/knoggin/releases/download/model-$identity"; \
     dir="/out/$identity"; \
     mkdir -p "$dir"; \
     cd "$dir"; \
-    for path in onnx/model_q4.onnx onnx/model_q4.onnx_data tokenizer.json; do \
+    curl -fsSL --retry 3 -o model_q4.onnx "$release/model_q4.onnx"; \
+    for path in onnx/model_q4.onnx_data tokenizer.json; do \
         name="${path##*/}"; \
         curl -fsSL --retry 3 -o "$name" \
             "https://huggingface.co/onnx-community/embeddinggemma-2-ONNX/resolve/$commit/$path" \
-        || curl -fsSL --retry 3 -o "$name" \
-            "https://github.com/knoggin-memory/knoggin/releases/download/model-$identity/$name"; \
+        || curl -fsSL --retry 3 -o "$name" "$release/$name"; \
     done; \
     printf '%s\n' \
-        "f9eeba97acddf139b8ee2ddf04bc30dceafa88de93fadf74d7644e0d61a477a9  model_q4.onnx" \
+        "1afd951bf447f631786cc1302921f94d4bc30f602ee6a61e8e517d0a3203c8a8  model_q4.onnx" \
         "c3975f2d1ab7a1878ae31a7d7a9b7804a827aff3800b60dfceafce21cac3df49  model_q4.onnx_data" \
         "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4  tokenizer.json" \
         | sha256sum -c -; \

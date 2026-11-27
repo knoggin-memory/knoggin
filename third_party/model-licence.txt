@@ -2,6 +2,8 @@ EmbeddingGemma 2 (google/embeddinggemma-2), ONNX export onnx-community/embedding
 at commit daa72c51243991dfcaf9f9137d2c573d8f7790c0. Files: onnx/model_q4.onnx, onnx/model_q4.onnx_data,
 tokenizer.json. Copyright Google DeepMind. The model page at the pinned commit states the
 licence Apache 2.0 (metadata "license: apache-2.0"; link https://ai.google.dev/gemma/docs/gemma_4_license).
+The Knoggin project modified model_q4.onnx: the attribute accuracy_level is set to 4 on every
+MatMulNBits node (scripts/patch_q4_graph.py). The weights and the tokenizer are unchanged.
 
                                  Apache License
                            Version 2.0, January 2004

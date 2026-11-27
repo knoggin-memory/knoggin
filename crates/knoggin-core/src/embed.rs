@@ -20,7 +20,7 @@ pub trait EmbeddingProvider: Send + Sync {
 /// Names everything that can change a vector. A store has exactly one.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ModelIdentity {
-    /// The identity string, for example `embeddinggemma-2-q4-768-80bc2e03328dae2f`.
+    /// The identity string, for example `embeddinggemma-2-q4-768-1d894cac0c7bb07b`.
     pub id: String,
     /// Values per vector.
     pub dimensions: u32,
