@@ -58,7 +58,10 @@ jobs:
             exit 0
           fi
           echo "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
-          grype "registry:ghcr.io/knoggin-memory/knoggin:${tag#v}" --only-fixed --fail-on critical
+          for platform in linux/amd64 linux/arm64; do
+            echo "== $platform"
+            grype "registry:ghcr.io/knoggin-memory/knoggin:${tag#v}" --platform "$platform" --only-fixed --fail-on critical
+          done
 
   real-model:
     if: github.event.schedule == '47 5 * * 1' || github.event_name == 'workflow_dispatch'
