@@ -141,6 +141,17 @@ def test_versions_follow_the_release_version() -> None:
     assert versions == dict.fromkeys(versions, version)
 
 
+def test_release_please_bumps_those_versions() -> None:
+    config = json.loads((ROOT / "release-please-config.json").read_text(encoding="utf-8"))
+    bumped = {(f["path"], f["jsonpath"]) for f in config["packages"]["."]["extra-files"]}
+    assert {
+        ("integrations/plugin/.claude-plugin/plugin.json", "$.version"),
+        ("integrations/plugin/.codex-plugin/plugin.json", "$.version"),
+        ("integrations/registry/server.json", "$.version"),
+        ("integrations/registry/server.json", "$.packages[0].version"),
+    } <= bumped
+
+
 def test_plugin_entries_use_the_plugin_tool_set() -> None:
     plugin = INTEGRATIONS / "plugin"
     claude = json.loads((plugin / ".mcp.json").read_text())["knoggin"]

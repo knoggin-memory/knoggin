@@ -14,7 +14,11 @@
       "extra-files": [
         { "type": "toml", "path": "Cargo.toml", "jsonpath": "$.workspace.package.version" },
         { "type": "toml", "path": "sdk/python/pyproject.toml", "jsonpath": "$.project.version" },
-        { "type": "json", "path": "ui/package.json", "jsonpath": "$.version" }
+        { "type": "json", "path": "ui/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "integrations/plugin/.claude-plugin/plugin.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "integrations/plugin/.codex-plugin/plugin.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "integrations/registry/server.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "integrations/registry/server.json", "jsonpath": "$.packages[0].version" }
       ]
     }
   }
