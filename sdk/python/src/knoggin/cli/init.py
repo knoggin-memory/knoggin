@@ -16,11 +16,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from .._config import check_url
 from ..errors import ConfigurationError
@@ -29,6 +30,7 @@ from . import binary, install_binary, install_dir
 NAME = "knoggin"
 ADD = f"add the {NAME} MCP server with the agent's own command"
 REMOVE = f"remove the {NAME} MCP server with the agent's own command"
+REPLACE = f"replace the {NAME} MCP server with the agent's own command"
 
 
 @dataclass
@@ -80,6 +82,20 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None  # pyright: ignore[reportUnknownVariableType]
 
 
+def _current(data: dict[str, Any] | None, key: str) -> Any:
+    """The `<key>.knoggin` entry of a config file's data, or None."""
+    servers = data.get(key) if data else None
+    return servers.get(NAME) if isinstance(servers, dict) else None  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+
+
+def _matches(current: Any, wanted: dict[str, Any]) -> bool:
+    """Whether an agent's entry already holds every wanted value (agents add fields of their own, such as `env`)."""
+    if not isinstance(current, dict):
+        return False
+    entry = cast(dict[str, Any], current)
+    return all(entry.get(k) == v for k, v in wanted.items())
+
+
 def write_file(path: Path, text: str, backups: list[Path]) -> None:
     """Backs up the file, then writes a temporary file with the original's mode and renames it over the original.
 
@@ -117,8 +133,7 @@ def _json_change(agent: str, path: Path, key: str, entry: dict[str, Any] | None)
         return Change(
             agent, f"{path} is not plain JSON, so it is left alone", f"Change it by hand: {snippet}", lambda: "skipped"
         )
-    servers = data.get(key)
-    current = servers.get(NAME) if isinstance(servers, dict) else None  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    current = _current(data, key)
     if current == entry:
         return None
     if entry is None:
@@ -146,14 +161,40 @@ def _json_change(agent: str, path: Path, key: str, entry: dict[str, Any] | None)
     return change
 
 
-def _command_change(agent: str, what: str, argv: list[str]) -> Change:
+def _command_change(agent: str, what: str, *argvs: list[str]) -> Change:
+    """Runs the commands in order and stops at the first that fails."""
+
     def apply() -> str:
-        done = subprocess.run(argv, capture_output=True, text=True, check=False)
-        if done.returncode != 0:
-            return f"failed ({done.returncode}): {(done.stderr or done.stdout).strip()}"
+        for argv in argvs:
+            done = subprocess.run(argv, capture_output=True, text=True, check=False)
+            if done.returncode != 0:
+                return f"failed ({done.returncode}): {(done.stderr or done.stdout).strip()}"
         return "done"
 
-    return Change(agent, what, "runs: " + " ".join(argv), apply)
+    return Change(agent, what, "runs: " + "; ".join(" ".join(a) for a in argvs), apply)
+
+
+def _cli_change(
+    agent: str,
+    command: str,
+    target: Target | None,
+    current: Any,
+    wanted: dict[str, Any] | None,
+    add: list[str],
+    remove: list[str],
+) -> Change | None:
+    """The change for an agent changed only through its own command: none, add, replace (remove, then add) or remove."""
+    if wanted is None and current is None:
+        return None
+    if wanted is not None and _matches(current, wanted):
+        return None
+    if not shutil.which(command):
+        return _manual(agent, command, target) if target else None
+    if wanted is None:
+        return _command_change(agent, REMOVE, remove)
+    if current is None:
+        return _command_change(agent, ADD, add)
+    return _command_change(agent, REPLACE, remove, add)
 
 
 # --- agents -----------------------------------------------------------------------------------
@@ -172,29 +213,41 @@ class Agent:
 
 
 def _claude(target: Target | None) -> Change | None:
-    if not shutil.which("claude"):
-        return _manual("Claude Code", "claude", target) if target else None
+    # `claude mcp add` refuses a name that exists, and `claude mcp get` starts the server to check it,
+    # so the user-scope entry is read from the file Claude Code keeps it in.
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or _home()) / ".claude.json"
+    current = _current(_read_json(config), "mcpServers")
+    add = ["claude", "mcp", "add", "--scope", "user"]
     if target is None:
-        return _command_change("Claude Code", REMOVE, ["claude", "mcp", "remove", "--scope", "user", NAME])
-    if target.url:
-        return _command_change(
-            "Claude Code", ADD, ["claude", "mcp", "add", "--scope", "user", "--transport", "http", NAME, target.url]
-        )
-    s = target.stdio()
-    return _command_change(
-        "Claude Code", ADD, ["claude", "mcp", "add", "--scope", "user", NAME, "--", s["command"], *s["args"]]
-    )
+        wanted = None
+    elif target.url:
+        wanted = {"type": "http", "url": target.url}
+        add += ["--transport", "http", NAME, target.url]
+    else:
+        s = target.stdio()
+        wanted = {"type": "stdio", **s}
+        add += [NAME, "--", s["command"], *s["args"]]
+    remove = ["claude", "mcp", "remove", "--scope", "user", NAME]
+    return _cli_change("Claude Code", "claude", target, current, wanted, add, remove)
 
 
 def _codex(target: Target | None) -> Change | None:
-    if not shutil.which("codex"):
-        return _manual("Codex", "codex", target) if target else None
+    config = Path(os.environ.get("CODEX_HOME") or _home() / ".codex") / "config.toml"
+    try:
+        current = _current(tomllib.loads(config.read_text(encoding="utf-8")), "mcp_servers")
+    except (OSError, ValueError):
+        current = None
+    add = ["codex", "mcp", "add", NAME]
     if target is None:
-        return _command_change("Codex", REMOVE, ["codex", "mcp", "remove", NAME])
-    if target.url:
-        return _command_change("Codex", ADD, ["codex", "mcp", "add", NAME, "--url", target.url])
-    s = target.stdio()
-    return _command_change("Codex", ADD, ["codex", "mcp", "add", NAME, "--", s["command"], *s["args"]])
+        wanted = None
+    elif target.url:
+        wanted = {"url": target.url}
+        add += ["--url", target.url]
+    else:
+        s = target.stdio()
+        wanted = dict(s)
+        add += ["--", s["command"], *s["args"]]
+    return _cli_change("Codex", "codex", target, current, wanted, add, ["codex", "mcp", "remove", NAME])
 
 
 def _manual(agent: str, command: str, target: Target) -> Change:
@@ -209,9 +262,16 @@ def _vscode(target: Target | None) -> Change | None:
         if target is None
         else ({"type": "http", "url": target.url} if target.url else {"type": "stdio", **target.stdio()})
     )
+    path = _vscode_dir() / "mcp.json"
     if entry and shutil.which("code"):
-        return _command_change("VS Code", ADD, ["code", "--add-mcp", json.dumps({"name": NAME, **entry})])
-    return _json_change("VS Code", _vscode_dir() / "mcp.json", "servers", entry)
+        current = _current(_read_json(path), "servers")
+        if _matches(current, entry):
+            return None
+        # `code --add-mcp` replaces an entry of the same name.
+        return _command_change(
+            "VS Code", REPLACE if current else ADD, ["code", "--add-mcp", json.dumps({"name": NAME, **entry})]
+        )
+    return _json_change("VS Code", path, "servers", entry)
 
 
 def _cursor(target: Target | None) -> Change | None:

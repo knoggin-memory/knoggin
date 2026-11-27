@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -140,6 +141,45 @@ def test_a_file_with_comments_is_left_alone(home: Path, capsys: pytest.CaptureFi
     assert "is not plain JSON" in capsys.readouterr().out
 
 
+def entries_as_the_agents_keep_them(home: Path) -> None:
+    """What `claude mcp add`, `codex mcp add` and `code --add-mcp` leave behind for the local entry (the fakes only log)."""
+    exe = str(home / ".knoggin" / "bin" / "knoggin")
+    claude: dict[str, Any] = {"type": "stdio", "command": exe, "args": ["mcp"], "env": {}}
+    (home / ".claude.json").write_text(json.dumps({"numStartups": 3, "mcpServers": {"knoggin": claude}}))
+    (home / ".codex").mkdir(exist_ok=True)
+    (home / ".codex" / "config.toml").write_text(
+        f'model = "x"\n\n[mcp_servers.knoggin]\ncommand = "{exe}"\nargs = ["mcp"]\n'
+    )
+    code = {"type": "stdio", "command": exe, "args": ["mcp"]}
+    vscode = home / "Library" / "Application Support" / "Code" / "User"
+    if sys.platform != "darwin":
+        vscode = home / ".config" / "Code" / "User"
+    vscode.mkdir(parents=True, exist_ok=True)
+    (vscode / "mcp.json").write_text(json.dumps({"servers": {"knoggin": code}, "inputs": []}))
+
+
+def test_a_second_run_changes_nothing_and_a_new_target_replaces_the_entries(
+    home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert init.run(["--yes"]) == 0
+    entries_as_the_agents_keep_them(home)
+    capsys.readouterr()
+    assert init.run(["--yes"]) == 0
+    assert capsys.readouterr().out == "Nothing to do: no agent found that needs a change.\n"
+    first = len(calls(home))
+    assert init.run(["--yes", "--server", "https://memory.example.com"]) == 0
+    url = "https://memory.example.com/mcp"
+    got = calls(home)[first:]
+    assert got[:4] == [
+        "claude mcp remove --scope user knoggin",
+        f"claude mcp add --scope user --transport http knoggin {url}",
+        "codex mcp remove knoggin",
+        f"codex mcp add knoggin --url {url}",
+    ]
+    assert json.loads(got[4].removeprefix("code --add-mcp ")) == {"name": "knoggin", "type": "http", "url": url}
+    assert "VS Code: replace the knoggin MCP server" in capsys.readouterr().out
+
+
 def test_a_linked_config_file_is_written_through(home: Path) -> None:
     settings = home / ".config" / "zed" / "settings.json"
     dotfiles = home / "dotfiles"
@@ -156,6 +196,7 @@ def test_a_linked_config_file_is_written_through(home: Path) -> None:
 
 def test_uninstall_removes_the_entries_and_the_program_but_not_the_data(home: Path) -> None:
     assert init.run(["--yes"]) == 0
+    entries_as_the_agents_keep_them(home)
     data = home / ".knoggin" / "data"
     data.mkdir()
     (data / "store").write_text("memories")
