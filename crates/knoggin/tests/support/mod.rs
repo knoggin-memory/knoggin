@@ -324,8 +324,14 @@ fn request(
         head.push_str(&format!("Content-Length: {}\r\n", body.len()));
     }
     head.push_str("\r\n");
-    s.write_all(head.as_bytes()).unwrap();
-    s.write_all(&body).unwrap();
+    // One write: a daemon may answer from the head alone (a locked one does) and close
+    // before a separate body write, which then fails with a broken pipe. If it closed
+    // anyway, its answer is already in the socket, so read it.
+    let mut request = head.into_bytes();
+    request.extend_from_slice(&body);
+    if let Err(e) = s.write_all(&request) {
+        assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+    }
     let mut raw = Vec::new();
     s.read_to_end(&mut raw).unwrap();
     let split = raw
