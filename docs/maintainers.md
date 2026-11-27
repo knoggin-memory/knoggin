@@ -21,7 +21,7 @@ The build makes each of these as the spec says. Each is the spec's own choice, n
 
 ## Repository settings
 
-These are GitHub settings, not files, so the build cannot apply them.
+These are GitHub settings, not files. All of them were set on 2026-11-27, after the repository went public. Check them again if the repository moves.
 
 - Require two-factor sign-in for the organization.
 - Turn on immutable releases, private vulnerability reporting and Dependabot alerts.
@@ -29,10 +29,10 @@ These are GitHub settings, not files, so the build cannot apply them.
 - Require actions to be pinned to a full commit SHA.
 - Require approval for workflows from outside contributors.
 - Protect `main`: pull requests only, the one required check `ci-ok`, linear history, squash merges, no force pushes.
-- Protect tags `v*`.
+- Protect tags `v*`: the ruleset `protect-release-tags` blocks moving and deleting them (creating stays allowed, so release-please can tag).
 - Create the environments `release` and `pypi`, with the owner as required reviewer on `pypi`.
 
-The CI job `deps` (dependency review) runs only while the repository is public: on a private repository GitHub requires Advanced Security for it. It is skipped, not failed, until then.
+The CI job `deps` (dependency review) runs only on a public repository: on a private one GitHub requires Advanced Security for it, and the job is skipped.
 
 ## The repository name
 
@@ -58,17 +58,16 @@ Nothing has been released yet. The release workflow, `release.yml`, has never ru
 
 Before the first release:
 
-1. Set up the repository settings above, including the environments `release` and `pypi`.
-2. Register the PyPI project `knoggin` with a trusted publisher: this repository, workflow `release.yml`, environment `pypi`.
-3. Make the M5 switch (below), so that the first release ships the patched graph.
-4. Decide how release pull requests get their `ci-ok` check. release-please opens them with the workflow's own token, and GitHub starts no workflow for a pull request made with that token. So `ci-ok` never reports and protection blocks the merge. Either give release-please a GitHub App token (then its pull requests run CI like any other), or close and reopen each release pull request by hand to start CI.
+1. Register the PyPI project `knoggin` with a trusted publisher: this repository, workflow `release.yml`, environment `pypi`.
+2. Make the M5 switch (below), so that the first release ships the patched graph.
+3. Decide how release pull requests get their `ci-ok` check. release-please opens them with the workflow's own token, and GitHub starts no workflow for a pull request made with that token. So `ci-ok` never reports and protection blocks the merge. Either give release-please a GitHub App token (then its pull requests run CI like any other), or close and reopen each release pull request by hand to start CI.
 
 Each release:
 
 1. Merge changes to `main` with Conventional Commit titles. release-please keeps one release pull request open that bumps every version file and writes the changelog. The same run refreshes `Cargo.lock` and `sdk/python/uv.lock` on that branch.
 2. Merge the release pull request once `ci-ok` passes. release-please then makes the tag and a draft release.
 3. The workflow builds the archives, runs the real-model tests, builds the image for both platforms, pushes it by digest, scans it with Grype, attests and signs it, and only then tags `X.Y.Z`.
-4. Approve the `release` environment. `publish` writes the SBOMs, the stamped `install.sh` and `SHA256SUMS`, attests every file, uploads them with the archives, adds the image digest to the notes and publishes the draft. `image-tags` then moves `X.Y` and `latest`, only forward and never for a pre-release.
+4. `publish` (environment `release`, no approval) writes the SBOMs, the stamped `install.sh` and `SHA256SUMS`, attests every file, uploads them with the archives, adds the image digest to the notes and publishes the draft. `image-tags` then moves `X.Y` and `latest`, only forward and never for a pre-release.
 5. Approve the `pypi` environment. The SDK goes to PyPI by trusted publishing.
 
 To try the release on this machine without publishing anything, run `scripts/release-dry-run.sh` (it needs Node 26 with pnpm, cargo-auditable, cargo-about and syft). It builds the archive, serves it on a loopback port and installs it into a temporary home.
