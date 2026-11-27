@@ -1285,6 +1285,101 @@ mod tests {
         );
     }
 
+    /// The re-check of an open transfer (an event stream, an export, an import) runs the
+    /// credential check again, so it fails once the API key is revoked, once its store is
+    /// deleted, and once its user is removed (rules I12 and I17).
+    #[tokio::test]
+    async fn the_transfer_recheck_fails_for_a_revoked_key_a_deleted_store_or_a_removed_user() {
+        use knoggin_crypto::KeyProvider;
+        use knoggin_state::testing::{TestClock, test_field_keys};
+        use knoggin_state::{ApiKeys, LocalFileDb, NewApiKey, StateDb, Stores, Users};
+
+        use crate::edge::{EdgeConfig, EdgeParts};
+
+        let clock = TestClock::new();
+        let db: Arc<dyn StateDb> = Arc::new(LocalFileDb::in_memory(clock.clock()));
+        let fields = Arc::new(test_field_keys());
+        let keys: Arc<dyn KeyProvider> = Arc::new(knoggin_crypto::testing::test_provider());
+        let users = Users::new(db.clone(), fields.clone());
+        let stores = Stores::new(db.clone(), fields.clone());
+        let api_keys = ApiKeys::new(db.clone(), fields.clone());
+        let user = crate::local::ensure_local_user(&users, &*keys, clock.now())
+            .await
+            .unwrap();
+        let personal = users
+            .get(user)
+            .await
+            .unwrap()
+            .unwrap()
+            .value
+            .personal_store_id;
+        let parts = EdgeParts {
+            db,
+            field_keys: fields,
+            keys,
+            clock: clock.clock(),
+            host: None,
+            local: None,
+        };
+        let config = EdgeConfig::local("http://127.0.0.1:7690".into(), "0.1.0".into());
+        let edge = EdgeState::new(config, parts).await.unwrap();
+        let new_key = || async {
+            let (secret, hash, prefix) = knoggin_crypto::token::new_api_key().unwrap();
+            let new = NewApiKey {
+                id: Uuid::now_v7(),
+                hash,
+                prefix,
+                key_expires_ms: clock.now() + 90 * MILLIS_PER_DAY,
+            };
+            let key = api_keys
+                .create(
+                    user,
+                    personal,
+                    new,
+                    Sensitive::new("k".into()),
+                    vec![Permission::Read],
+                    clock.now(),
+                )
+                .await
+                .unwrap();
+            let mut map = HeaderMap::new();
+            map.insert(
+                header::AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {secret}")).unwrap(),
+            );
+            (key.id, map)
+        };
+        let fixed = Arrival::Fixed { port: 7690 };
+
+        let (id, map) = new_key().await;
+        let p = Presented::headers(fixed.clone(), &map, None);
+        assert!(edge.recheck(&p, personal).await.is_ok());
+        api_keys.revoke(personal, id, clock.now()).await.unwrap();
+        assert!(edge.recheck(&p, personal).await.is_err(), "revoked");
+
+        let (_, map) = new_key().await;
+        let p = Presented::headers(fixed.clone(), &map, None);
+        let mark = |at: Option<i64>| {
+            stores.update(user, personal, move |s: &mut StoreRecord| {
+                s.deleted_at_ms = at;
+                Ok::<_, StateError>(())
+            })
+        };
+        mark(Some(clock.now())).await.unwrap();
+        assert!(edge.recheck(&p, personal).await.is_err(), "store deleted");
+        mark(None).await.unwrap();
+        assert!(edge.recheck(&p, personal).await.is_ok(), "store back");
+        users
+            .update(user, |u: &mut User| {
+                u.deleted_at_ms = Some(clock.now());
+                u.deleted_by = Some(DeletedBy::Admin);
+                Ok::<_, StateError>(())
+            })
+            .await
+            .unwrap();
+        assert!(edge.recheck(&p, personal).await.is_err(), "user removed");
+    }
+
     /// An event stream through the whole edge, with a stub in place of the store layer:
     /// it ends within a minute of the session ending (a logout).
     #[tokio::test(start_paused = true)]
