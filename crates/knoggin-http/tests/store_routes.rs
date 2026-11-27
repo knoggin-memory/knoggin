@@ -1307,6 +1307,166 @@ async fn export_and_import_round_trip() {
     );
 }
 
+/// A file of `tests/fixtures/export/`.
+fn export_fixture(name: &str) -> Vec<u8> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/export");
+    std::fs::read(dir.join(name)).unwrap()
+}
+
+/// Imports `body` into `store` and exports the store again, as parsed lines.
+async fn import_then_export(
+    env: &Env,
+    store: knoggin_core::StoreId,
+    query: &str,
+    body: Vec<u8>,
+) -> (Value, Vec<Value>) {
+    let ctx = env.t.ctx_for(store, RW);
+    let r = env
+        .send(
+            Request::post(format!("/v1/import{query}"))
+                .header("content-type", "application/x-ndjson")
+                .extension(ctx.clone())
+                .body(Body::from(body))
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    let e = env
+        .call(Some(&ctx), Method::GET, "/v1/export", None, &[])
+        .await;
+    let lines = e
+        .bytes
+        .split(|b| *b == b'\n')
+        .filter(|l| !l.is_empty())
+        .map(|l| serde_json::from_slice(l).unwrap())
+        .collect();
+    (r.json, lines)
+}
+
+/// What an import keeps of an export line: no header, no automatic semantic link, the
+/// saver replaced by `import`, and the `default` namespace's own creation time.
+fn as_imported(lines: Vec<Value>) -> Vec<Value> {
+    lines
+        .into_iter()
+        .filter_map(|mut v| match v["type"].as_str() {
+            Some("header") => None,
+            Some("edge") if v["autoCreated"] == true && v["edgeType"] == "associative" => None,
+            Some("memory") => {
+                v["savedBy"] = json!("import");
+                v["client"] = Value::Null;
+                Some(v)
+            }
+            Some("namespace") if v["name"] == "default" => {
+                v["createdAt"] = Value::Null;
+                Some(v)
+            }
+            _ => Some(v),
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_good_export_fixture_imports_and_exports_back() {
+    // No model: no vector lands, so no automatic link appears after the import.
+    let env = Env::new(false).await;
+    let good = export_fixture("good.jsonl");
+    let file: Vec<Value> = good
+        .split(|b| *b == b'\n')
+        .filter(|l| !l.is_empty())
+        .map(|l| serde_json::from_slice(l).unwrap())
+        .collect();
+    let store = env.t.new_store("Good").await;
+    let (r, exported) = import_then_export(&env, store, "", good.clone()).await;
+    // 3 namespaces, 7 memories and 6 edges; the automatic semantic link is skipped.
+    assert_eq!(r, json!({ "imported": 16, "skipped": 1, "errors": [] }));
+    assert_eq!(as_imported(exported.clone()), as_imported(file));
+    // A second time changes nothing.
+    let (r, again) = import_then_export(&env, store, "", good).await;
+    assert_eq!(r, json!({ "imported": 0, "skipped": 17, "errors": [] }));
+    assert_eq!(as_imported(again), as_imported(exported));
+}
+
+#[tokio::test]
+async fn the_bad_export_fixture_reports_each_bad_line_and_applies_the_rest() {
+    let env = Env::new(false).await;
+    let bad = export_fixture("bad.jsonl");
+    let expected: Value = serde_json::from_slice(&export_fixture("bad-expected.json")).unwrap();
+    // Too big to commit: one line over 4 MiB, after the file's last line.
+    let mut body = bad.clone();
+    body.extend_from_slice(&vec![b' '; 4 * 1024 * 1024 + 1]);
+    body.push(b'\n');
+    let last = bad.iter().filter(|b| **b == b'\n').count() as u64 + 1;
+    let store = env.t.new_store("Bad").await;
+    let (r, exported) = import_then_export(&env, store, "?onConflict=error", body).await;
+    let mut want: Vec<(u64, String, String)> = expected["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            let s = |k: &str| e[k].as_str().unwrap().to_owned();
+            (e["line"].as_u64().unwrap(), s("code"), s("says"))
+        })
+        .collect();
+    want.push((last, "invalid_argument".into(), "longer than 4 MiB".into()));
+    let got = r["errors"].as_array().unwrap();
+    assert_eq!(got.len(), want.len(), "{r:#}");
+    for (g, (line, code, says)) in got.iter().zip(&want) {
+        assert_eq!(
+            (g["line"].as_u64(), g["code"].as_str()),
+            (Some(*line), Some(code.as_str())),
+            "{g}"
+        );
+        assert!(
+            g["message"].as_str().unwrap().contains(says.as_str()),
+            "{g} lacks {says:?}"
+        );
+    }
+    assert_eq!(
+        (&r["imported"], &r["skipped"]),
+        (&expected["imported"], &expected["skipped"])
+    );
+    // The good lines are in: three namespaces, four memories and one edge.
+    let names = |kind: &str, key: &str| -> Vec<String> {
+        exported
+            .iter()
+            .filter(|v| v["type"] == kind)
+            .map(|v| v[key].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(names("namespace", "name"), ["default", "later", "scratch"]);
+    let id = |n: u32| format!("01a20000-0000-7000-8000-0000000b{n:04x}");
+    assert_eq!(names("memory", "id"), [id(1), id(2), id(3), id(4)]);
+    assert_eq!(names("edge", "target"), [id(4)]);
+    assert_eq!(exported.last().unwrap()["weight"], 0.5, "the first of two");
+    // A bad first line refuses the whole file.
+    let rest = &bad[bad.iter().position(|b| *b == b'\n').unwrap()..];
+    for (i, header) in [
+        r#"{"type":"header","format":"knoggin-export","version":2}"#,
+        r#"{"type":"header","format":"recalld-export","version":1}"#,
+        r#"{"type":"header","format":"knoggin-export","version":1,"extra":1}"#,
+        r#"{"type":"header","format":"knoggin-export"}"#,
+        r#"{"type":"namespace","name":"first"}"#,
+        "not json",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let other = env.t.new_store(&format!("Refused {i}")).await;
+        let mut body = header.as_bytes().to_vec();
+        body.extend_from_slice(rest);
+        let r = env
+            .send(
+                Request::post("/v1/import")
+                    .header("content-type", "application/x-ndjson")
+                    .extension(env.t.ctx_for(other, RW))
+                    .body(Body::from(body))
+                    .unwrap(),
+            )
+            .await;
+        assert_eq!(r.error(), Code::InvalidArgument, "{header}");
+    }
+}
+
 #[tokio::test]
 async fn a_route_without_a_context_is_internal() {
     let env = Env::new(true).await;

@@ -201,6 +201,46 @@ fn import_recalld_prints_the_expected_counts() {
 }
 
 #[test]
+fn import_reads_the_export_fixtures() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/export");
+    let home = Home::new();
+    let mut d = home.daemon();
+    let good = dir.join("good.jsonl");
+    let r = home.json(&["import", good.to_str().unwrap()]);
+    assert_eq!(r, json!({ "imported": 16, "skipped": 1, "errors": [] }));
+    // The bad file in a store of its own: exit code 1 and the listed error lines.
+    home.json(&["apps", "create", "Bad"]);
+    let bad = dir.join("bad.jsonl");
+    let o = home.run(&[
+        "import",
+        bad.to_str().unwrap(),
+        "--app",
+        "bad",
+        "--on-conflict",
+        "error",
+        "--json",
+    ]);
+    assert_eq!(o.code, 1, "{}{}", o.stdout, o.stderr);
+    let r = o.json();
+    let expected: Value =
+        serde_json::from_slice(&std::fs::read(dir.join("bad-expected.json")).unwrap()).unwrap();
+    let lines = |v: &Value| -> Vec<(Value, Value)> {
+        v["errors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| (e["line"].clone(), e["code"].clone()))
+            .collect()
+    };
+    assert_eq!(lines(&r), lines(&expected), "{r}");
+    assert_eq!(
+        (&r["imported"], &r["skipped"]),
+        (&expected["imported"], &expected["skipped"])
+    );
+    d.stop();
+}
+
+#[test]
 fn config_check_model_verify_and_test_mode() {
     let home = Home::new().with("KNOGGIN_AUTH__WEB_CLIENT_SECRET", "secret-marker-123");
     let o = home.run(&["config", "check"]);
