@@ -153,6 +153,8 @@ class Attempt:
     max_retries: int
     number: int = 0
     last: KnogginError | None = None
+    unanswered: bool = False
+    """Whether an attempt got no answer, or only a retryable error, so a write may have been applied."""
 
     def request_headers(self) -> dict[str, str]:
         h: dict[str, str] = {}
@@ -168,6 +170,7 @@ class Attempt:
         assert error is not None
         self.last = error
         retryable = isinstance(error, KnogginConnectionError | KnogginTimeoutError) or error.code in RETRIED_CODES
+        self.unanswered |= retryable
         if not retryable or self.number >= self.max_retries:
             return False, 0.0
         self.number += 1
@@ -177,11 +180,14 @@ class Attempt:
         return True, wait
 
     def failure(self) -> KnogginError:
-        """The error to raise once no attempt is left."""
+        """The error to raise once no attempt is left.
+
+        A write is unknown when any attempt went unanswered, even if a later one was refused for good: the
+        earlier one may have been applied. The last error stays the cause.
+        """
         last = self.last
         assert last is not None
-        retryable = isinstance(last, KnogginConnectionError | KnogginTimeoutError) or last.code in RETRIED_CODES
-        if self.op.write and retryable:
+        if self.op.write and self.unanswered:
             e = WriteOutcomeUnknown(
                 f"The write may or may not have been applied: {last.message}",
                 code=last.code,

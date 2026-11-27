@@ -165,6 +165,34 @@ def test_a_write_without_an_outcome(api: respx.MockRouter, answers: list[Any]) -
     assert isinstance(caught.value.__cause__, KnogginError)
 
 
+@pytest.mark.parametrize("kind", ["sync", "async"])
+@pytest.mark.parametrize(
+    "answers",
+    [
+        [httpx.ReadTimeout("lost"), httpx.Response(423, json=error("store_locked"))],
+        [httpx.Response(503, json=error("unavailable")), httpx.Response(400, json=error("invalid_argument"))],
+    ],
+)
+def test_a_write_refused_after_an_unanswered_attempt_is_unknown(
+    api: respx.MockRouter, answers: list[Any], kind: str
+) -> None:
+    api.post("/v1/memories").side_effect = answers
+    with pytest.raises(WriteOutcomeUnknown) as caught:
+        if kind == "sync":
+            Client(base_url=BASE).memories.store("x")
+        else:
+            asyncio.run(AsyncClient(base_url=BASE).memories.store("x"))
+    assert isinstance(caught.value.__cause__, StoreUnavailableError | InvalidRequestError)
+
+
+def test_a_write_whose_retry_finds_no_daemon_is_unknown() -> None:
+    attempt = _transport.Attempt(_transport.Op("POST", "/v1/memories", lambda d: None, write=True), max_retries=3)
+    assert attempt.outcome(None, KnogginTimeoutError("lost"))[0]
+    assert not attempt.outcome(None, ConfigurationError("not running"))[0]
+    failure = attempt.failure()
+    assert isinstance(failure, WriteOutcomeUnknown) and isinstance(failure.__cause__, ConfigurationError)
+
+
 def test_a_write_refused_for_good_is_not_unknown(api: respx.MockRouter) -> None:
     api.post("/v1/memories").respond(400, json=error("invalid_argument", field="summary"))
     with pytest.raises(InvalidRequestError):
