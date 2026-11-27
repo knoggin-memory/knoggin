@@ -71,8 +71,6 @@ The file has mode 0600. Anyone with this file and your data folder can read your
 
   Put the same line in a file under `/etc/sysctl.d/` so that it survives a reboot. This turns off core dumps for every program on the machine.
 
-A data folder that is replaced by an older copy is accepted as it is: API keys revoked since that copy work again.
-
 ## Export and import
 
 An export file holds a whole store in plain JSON Lines: text, labels, decay state, namespaces and links. It is **not encrypted**, so treat it like the memories themselves.

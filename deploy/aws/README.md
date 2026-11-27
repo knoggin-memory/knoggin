@@ -7,9 +7,7 @@ key and an S3 bucket for encrypted snapshots. `docs/deploy-aws.md` is the guide:
 copies the release image into your ECR repository, fills the four Secrets Manager
 entries and applies `examples/complete`.
 
-**Who this is for.** A server for people who should not see each other's memories. The
-operator can read every store. A container escape reaches the other containers on the
-same host, never the router or the database.
+**Who this is for.** A server for people who should not see each other's memories.
 
 ## What it makes
 
