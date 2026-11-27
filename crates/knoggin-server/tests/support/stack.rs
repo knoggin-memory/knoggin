@@ -10,6 +10,10 @@
 //! volumes, and the user containers and per-user networks that the launcher made.
 //!
 //! Included by the `stack_*.rs` tests with `#[path = "support/stack.rs"] mod stack;`.
+//!
+//! The measurements (`tests/measure.rs`) use [`Stack::create_in`] instead: another image,
+//! and a folder that outlives the stack and holds the secrets and a Compose override of
+//! their own, in place of `compose.test.yaml` and the profile `test`.
 
 use std::collections::BTreeSet;
 use std::net::TcpListener;
@@ -87,23 +91,25 @@ pub fn build_image() {
             );
             return;
         }
-        let mut build = Command::new("docker");
-        build
-            .args([
-                "build",
-                "-f",
-                "deploy/Dockerfile",
-                "--build-arg",
-                "SKIP_MODEL=1",
-            ])
-            .args(["-t", IMAGE, "."])
-            .current_dir(ROOT)
-            .stdin(Stdio::null());
-        if let Ok(jobs) = std::env::var("CARGO_BUILD_JOBS") {
-            build.args(["--build-arg", &format!("CARGO_BUILD_JOBS={jobs}")]);
-        }
-        assert!(build.status().unwrap().success(), "the image build failed");
+        build(IMAGE, true);
     });
+}
+
+/// Builds `image` from the working tree, with `SKIP_MODEL=1` when `skip_model`.
+pub fn build(image: &str, skip_model: bool) {
+    let mut build = Command::new("docker");
+    build.args(["build", "-f", "deploy/Dockerfile"]);
+    if skip_model {
+        build.args(["--build-arg", "SKIP_MODEL=1"]);
+    }
+    build
+        .args(["-t", image, "."])
+        .current_dir(ROOT)
+        .stdin(Stdio::null());
+    if let Ok(jobs) = std::env::var("CARGO_BUILD_JOBS") {
+        build.args(["--build-arg", &format!("CARGO_BUILD_JOBS={jobs}")]);
+    }
+    assert!(build.status().unwrap().success(), "the image build failed");
 }
 
 fn random_hex(bytes: usize) -> String {
@@ -112,7 +118,7 @@ fn random_hex(bytes: usize) -> String {
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-fn free_port() -> u16 {
+pub fn free_port() -> u16 {
     TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -307,7 +313,12 @@ pub struct Stack {
     pub base: String,
     /// Every secret value the stack was configured with.
     pub secrets: Vec<String>,
+    /// The image the services and the user containers run.
+    pub image: String,
     dir: tempfile::TempDir,
+    /// With [`Stack::create_in`]: the folder that holds the secrets and
+    /// `compose.override.yaml`, which takes the place of `compose.test.yaml`.
+    own: Option<PathBuf>,
     http: reqwest::Client,
     /// A deployed stack that this test did not start and must not tear down.
     remote: bool,
@@ -331,8 +342,26 @@ impl Stack {
     /// Writes the secrets and picks the names, ports and prefix; starts nothing.
     pub fn create(avoid: &[&str]) -> Self {
         build_image();
+        Self::create_with(avoid, IMAGE, None)
+    }
+
+    /// The same for `image`, which must exist, with the secrets kept in `own/secrets`
+    /// (written on the first call, reused afterwards) and the Compose override
+    /// `own/compose.override.yaml`, which the caller writes before starting the stack.
+    /// The project is named `project`. Teardown leaves `own` in place.
+    pub fn create_in(avoid: &[&str], image: &str, own: &Path, project: &str) -> Self {
+        let mut stack = Self::create_with(avoid, image, Some(own.to_owned()));
+        stack.project = project.to_owned();
+        stack
+    }
+
+    fn create_with(avoid: &[&str], image: &str, own: Option<PathBuf>) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let secrets = write_secrets(&dir.path().join("secrets"));
+        let secrets = match &own {
+            None => write_secrets(&dir.path().join("secrets")),
+            Some(own) if own.join("secrets").exists() => Vec::new(),
+            Some(own) => write_secrets(&own.join("secrets")),
+        };
         std::fs::write(dir.path().join("empty.env"), "").unwrap();
         let port = free_port();
         let mut issuer_port = free_port();
@@ -346,7 +375,9 @@ impl Stack {
             issuer_port,
             base: format!("http://127.0.0.1:{port}"),
             secrets,
+            image: image.to_owned(),
             dir,
+            own,
             http: client(),
             remote: false,
         }
@@ -362,14 +393,19 @@ impl Stack {
             issuer_port: 0,
             base: base.to_owned(),
             secrets: Vec::new(),
+            image: String::new(),
             dir: tempfile::tempdir().unwrap(),
+            own: None,
             http: client(),
             remote: true,
         }
     }
 
     pub fn secrets_dir(&self) -> PathBuf {
-        self.dir.path().join("secrets")
+        self.own
+            .as_deref()
+            .unwrap_or(self.dir.path())
+            .join("secrets")
     }
 
     /// `docker compose` for this stack, with its environment.
@@ -380,15 +416,22 @@ impl Stack {
             .args(["--project-name", &self.project])
             .arg("--env-file")
             .arg(self.dir.path().join("empty.env"))
-            .args(["-f", &format!("{files}/compose.yaml")])
-            .args(["-f", &format!("{files}/compose.test.yaml")])
-            .args(["--profile", "local-s3", "--profile", "test"])
-            .args(args)
+            .args(["-f", &format!("{files}/compose.yaml")]);
+        match &self.own {
+            None => cmd
+                .args(["-f", &format!("{files}/compose.test.yaml")])
+                .args(["--profile", "local-s3", "--profile", "test"]),
+            Some(own) => cmd
+                .arg("-f")
+                .arg(own.join("compose.override.yaml"))
+                .args(["--profile", "local-s3"]),
+        };
+        cmd.args(args)
             .env("KNOGGIN_TEST_PORT", self.port.to_string())
             .env("KNOGGIN_TEST_ISSUER_PORT", self.issuer_port.to_string())
             .env("KNOGGIN_NET_PREFIX", &self.prefix)
             .env("KNOGGIN_SECRETS_DIR", self.secrets_dir())
-            .env("KNOGGIN_IMAGE", IMAGE)
+            .env("KNOGGIN_IMAGE", &self.image)
             .env_remove("COMPOSE_PROFILES")
             .env_remove("COMPOSE_FILE")
             .env_remove("COMPOSE_PROJECT_NAME")
