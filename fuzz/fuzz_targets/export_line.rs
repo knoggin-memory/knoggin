@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The export line parser: each line of the input parsed as `POST /v1/import` does and
 //! applied to one store. The store must hold its invariants afterwards and survive a
-//! snapshot round trip. Seed: tests/fixtures/recalld-data/expected-export.jsonl.
+//! snapshot round trip. Seeds: tests/fixtures/recalld-data/expected-export.jsonl and
+//! tests/fixtures/export/*.jsonl.
 #![no_main]
 
 use knoggin_core::embed::ModelIdentity;

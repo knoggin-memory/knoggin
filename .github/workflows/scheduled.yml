@@ -135,7 +135,7 @@ jobs:
           if [ -d "seeds/$TARGET" ]; then cp "seeds/$TARGET"/* "corpus/$TARGET/"; fi
           case "$TARGET" in
             snapshot_container) cp ../tests/fixtures/snapshots/v1/*.kgs "corpus/$TARGET/" ;;
-            export_line) cp ../tests/fixtures/recalld-data/expected-export.jsonl "corpus/$TARGET/" ;;
+            export_line) cp ../tests/fixtures/recalld-data/expected-export.jsonl ../tests/fixtures/export/*.jsonl "corpus/$TARGET/" ;;
           esac
       # cargo fuzz has no --locked; fetching with it first fails on a stale Cargo.lock,
       # and the build after it then uses the lock file as it is.
