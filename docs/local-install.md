@@ -63,6 +63,13 @@ The file has mode 0600. Anyone with this file and your data folder can read your
 - **Key in the keychain:** a stolen disk, a copied backup, a synced folder.
 - **Key in a key file on the same disk:** a copied or synced data folder, but not a stolen disk. That holds only while the key file is outside what you copy or sync. With `KNOGGIN_HOME` set, the default key file is inside that home, so sync only the `data` folder, or set `local.master_key_file` to a path outside the synced folder.
 - **Neither** protects against software that runs as you: it can read the keychain while it is unlocked, or the key file. Use full-disk encryption as well.
+- **Core dumps on Linux.** Knoggin turns off its own core dumps, but a Linux system that pipes core dumps to a program, as systemd-coredump does, can still keep a memory image of a crash, readable by root. To stop that, set the core pattern so that no core dump lands on disk:
+
+  ```sh
+  sudo sysctl -w kernel.core_pattern='|/bin/false'
+  ```
+
+  Put the same line in a file under `/etc/sysctl.d/` so that it survives a reboot. This turns off core dumps for every program on the machine.
 
 A data folder that is replaced by an older copy is accepted as it is: API keys revoked since that copy work again.
 
