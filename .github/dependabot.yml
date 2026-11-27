@@ -9,6 +9,10 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # redb stays on 2.x: the recalld importer reads recalld's redb 2 files.
+    ignore:
+      - dependency-name: redb
+        update-types: ["version-update:semver-major"]
     groups:
       cargo:
         patterns: ["*"]
@@ -19,6 +23,10 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # redb stays on 2.x: the recalld importer reads recalld's redb 2 files.
+    ignore:
+      - dependency-name: redb
+        update-types: ["version-update:semver-major"]
     groups:
       cargo-fuzz:
         patterns: ["*"]
@@ -29,6 +37,10 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # TypeScript stays on 6.x until svelte-check and typescript-eslint accept 7.
+    ignore:
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
     groups:
       npm:
         patterns: ["*"]

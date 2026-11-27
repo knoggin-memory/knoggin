@@ -3,7 +3,9 @@
 #
 # Checks that every commit in <base>..<head> carries a Signed-off-by line
 # that matches its author exactly (Developer Certificate of Origin).
-# Merge commits are skipped: main takes squash merges only.
+# Merge commits are skipped: main takes squash merges only. So are commits by
+# Dependabot, which cannot sign off: a bot certifies nothing, and the person who
+# merges its pull request is the one who takes the change.
 #
 # Usage: scripts/check-dco.sh <base> [<head>]   (head defaults to HEAD)
 set -eu
@@ -19,6 +21,9 @@ failed=0
 for commit in $(git rev-list --no-merges "$range"); do
     checked=$((checked + 1))
     author=$(git log -1 --format='%an <%ae>' "$commit")
+    if [ "$author" = "dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>" ]; then
+        continue
+    fi
     if git log -1 --format='%(trailers:key=Signed-off-by,valueonly,unfold)' "$commit" | grep -qxF -- "$author"; then
         continue
     fi
