@@ -97,7 +97,7 @@ def test_yes_installs_and_connects_every_agent(home: Path, capsys: pytest.Captur
     assert json.loads(backup.read_text()) == {"theme": "One Dark", "context_servers": {"other": {"command": "x"}}}
     assert [p.name for p in zed.iterdir() if p.name.startswith(".settings")] == []  # no temporary file left
     out = capsys.readouterr().out
-    assert f"backup: {backup}" in out and "knoggin init --uninstall" in out
+    assert f"backup: {backup}" in out and "run `uvx knoggin init --uninstall`" in out
     # Nothing secret is written anywhere.
     assert "knoggin_live_" not in json.dumps(files(home))
     # A second run finds nothing left to change in the files.

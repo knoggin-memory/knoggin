@@ -104,7 +104,7 @@ knoggin import store.jsonl                       # into a fresh install, or --ap
 
 ## Uninstall
 
-`knoggin init --uninstall` removes the agent entries it added and offers to remove the program. It never removes your data. To remove the data too, stop the daemon and delete `~/.knoggin/data`; to remove the key, delete the keychain item named `knoggin` or the key file.
+`uvx knoggin init --uninstall` removes the agent entries it added and offers to remove the program. It never removes your data. To remove the data too, stop the daemon and delete `~/.knoggin/data`; to remove the key, delete the keychain item named `knoggin` or the key file.
 
 ## See also
 

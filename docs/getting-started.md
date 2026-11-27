@@ -12,7 +12,7 @@ With Python's `uv`:
 uvx knoggin init
 ```
 
-This installs the `knoggin` program and connects the agents it finds: Claude Code, Codex, Cursor, VS Code, Zed and opencode. It shows every change first and asks before it makes it. Add `--dry-run` to only see the plan, or `--yes` to accept every change. `knoggin init --uninstall` takes the changes back; it never removes memories.
+This installs the `knoggin` program and connects the agents it finds: Claude Code, Codex, Cursor, VS Code, Zed and opencode. It shows every change first and asks before it makes it. Add `--dry-run` to only see the plan, or `--yes` to accept every change. `uvx knoggin init --uninstall` takes the changes back; it never removes memories.
 
 Without Python, use the installer from the latest release:
 

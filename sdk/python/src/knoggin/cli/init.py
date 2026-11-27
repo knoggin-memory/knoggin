@@ -193,7 +193,7 @@ def _codex(target: Target | None) -> Change | None:
 
 def _manual(agent: str, command: str, target: Target) -> Change:
     entry = target.url or " ".join([target.stdio()["command"], *target.stdio()["args"]])
-    detail = f"Install the `{command}` command and run `knoggin init` again, or add the MCP server {entry} by hand."
+    detail = f"Install the `{command}` command and run `uvx knoggin init` again, or add the MCP server {entry} by hand."
     return Change(agent, f"the `{command}` command is not on PATH, so nothing is changed", detail, lambda: "skipped")
 
 
@@ -335,6 +335,6 @@ def run(argv: list[str]) -> int:
         for b in c.backups:
             print(f"       backup: {b}")
     if target is not None:
-        print("\nTo undo, run `knoggin init --uninstall`, or put back the backups above.")
+        print("\nTo undo, run `uvx knoggin init --uninstall`, or put back the backups above.")
     failed = any(o.startswith("failed") for _, o in results)
     return 1 if failed else 0
