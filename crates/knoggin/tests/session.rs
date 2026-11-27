@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Milestone 3's acceptance check (tab "Overview", Build order) as one scripted session in a
-//! temporary home, in test mode.
+//! The local install's acceptance check (tab "Overview", Build order) as one scripted
+//! session in a temporary home, in test mode.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -25,7 +25,7 @@ fn summaries(list: &serde_json::Value) -> Vec<String> {
 }
 
 #[test]
-fn the_milestone_3_session() {
+fn the_local_session() {
     let home = Home::new();
 
     // Start the daemon.
