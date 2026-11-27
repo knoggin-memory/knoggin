@@ -102,7 +102,7 @@ jobs:
           ORT_DYLIB_PATH: ${{ github.workspace }}/target/onnxruntime/x86_64-unknown-linux-gnu/libonnxruntime.so
 
   # Each target five minutes on the nightly that fuzz/rust-toolchain.toml pins. The
-  # committed fixtures seed the corpora; a crash is kept as an artifact and becomes a
+  # committed fixtures and fuzz/seeds/ seed the corpora; a crash is kept as an artifact and becomes a
   # regression test in the crate that owns the code.
   fuzz:
     if: github.event.schedule == '47 5 * * 1' || github.event_name == 'workflow_dispatch'
@@ -132,6 +132,7 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           mkdir -p "corpus/$TARGET"
+          if [ -d "seeds/$TARGET" ]; then cp "seeds/$TARGET"/* "corpus/$TARGET/"; fi
           case "$TARGET" in
             snapshot_container) cp ../tests/fixtures/snapshots/v1/*.kgs "corpus/$TARGET/" ;;
             export_line) cp ../tests/fixtures/recalld-data/expected-export.jsonl "corpus/$TARGET/" ;;

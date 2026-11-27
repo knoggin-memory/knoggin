@@ -4,6 +4,11 @@
 #   cargo fuzz run <target> -- -max_total_time=300
 #
 # A crash found here becomes a regression test in the crate that owns the code.
+#
+# seeds/<target>/ holds committed seed inputs, which the scheduled job copies into the
+# corpus. mcp_request's are request bodies written by hand after the MCP tests;
+# recalld_record's are the records and edges of tests/fixtures/recalld-data, written by
+# the ignored test `write_fuzz_seeds` in knoggin-import-recalld.
 
 [package]
 name = "knoggin-fuzz"

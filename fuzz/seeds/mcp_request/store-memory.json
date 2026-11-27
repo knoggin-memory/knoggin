@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"store_memory","arguments":{"summary":"Ann adopted a dog named Rex","fullText":"In May 2023.","namespace":"work","tags":["pets"],"entities":["Ann","Rex"],"topics":["pets"],"emotions":["happy"],"parentId":"018bcfe5-6800-7000-9000-000000000001","checkDuplicates":true,"idempotencyKey":"k-1"}}}

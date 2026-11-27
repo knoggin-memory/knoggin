@@ -1256,4 +1256,35 @@ mod tests {
             "the record's ID differs from its key"
         );
     }
+
+    /// The explicit step that writes the seed corpus of the fuzz target `recalld_record`
+    /// from the recalld data fixture: each value of its `memories` table, and each edge
+    /// as its 33-byte key followed by its value, as the target splits them.
+    #[test]
+    #[ignore = "writes fuzz/seeds/recalld_record"]
+    fn write_fuzz_seeds() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let out = root.join("fuzz/seeds/recalld_record");
+        // redb may write to a database it opens; the fixture is read from copies.
+        let tmp = tempfile::tempdir().unwrap();
+        for db in ["meta.db", "edges.db"] {
+            std::fs::copy(
+                root.join("tests/fixtures/recalld-data").join(db),
+                tmp.path().join(db),
+            )
+            .unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&out);
+        std::fs::create_dir_all(&out).unwrap();
+        for (key, value) in read_meta(&tmp.path().join("meta.db")).unwrap().memories {
+            std::fs::write(out.join(format!("memory-{}", hex(&key))), value).unwrap();
+        }
+        for (key, value) in read_edges(&tmp.path().join("edges.db")).unwrap() {
+            std::fs::write(
+                out.join(format!("edge-{}", hex(&key))),
+                [key, value].concat(),
+            )
+            .unwrap();
+        }
+    }
 }
