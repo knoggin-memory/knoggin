@@ -45,6 +45,17 @@ pub enum TransferRecord {
     Edge(EdgeRecord),
 }
 
+impl TransferRecord {
+    /// Parses one line of an export file, which must be a JSON object: serde alone would
+    /// also take an array whose first item names the type.
+    pub fn from_line(line: &[u8]) -> Result<Self, serde_json::Error> {
+        if line.trim_ascii_start().first() != Some(&b'{') {
+            return Err(serde::de::Error::custom("a line must be a JSON object"));
+        }
+        serde_json::from_slice(line)
+    }
+}
+
 /// The first line of an export file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -811,6 +822,13 @@ mod tests {
         }
         assert_eq!(fresh.changes().content, content);
         assert_matches_rebuild(&mut fresh);
+    }
+
+    #[test]
+    fn a_line_must_be_an_object() {
+        assert!(TransferRecord::from_line(br#" {"type":"namespace","name":"x"}"#).is_ok());
+        let err = TransferRecord::from_line(br#"["namespace","x"]"#).unwrap_err();
+        assert!(err.to_string().contains("JSON object"), "{err}");
     }
 
     fn import(s: &mut Store, v: serde_json::Value) -> Result<ImportOutcome, EngineError> {

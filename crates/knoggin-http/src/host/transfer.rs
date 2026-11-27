@@ -350,7 +350,7 @@ async fn parse(batch: Vec<(u64, Option<Bytes>)>) -> Result<Vec<Parsed>, ApiError
             .into_iter()
             .map(|(number, text)| match text {
                 None => Parsed::Error(number, format!("line {number} is longer than 4 MiB")),
-                Some(text) => match serde_json::from_slice::<TransferRecord>(&text) {
+                Some(text) => match TransferRecord::from_line(&text) {
                     Ok(record) => Parsed::Record(number, record),
                     Err(e) => Parsed::Error(number, format!("line {number}: {e}")),
                 },

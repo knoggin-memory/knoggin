@@ -18,7 +18,7 @@ fuzz_target!(|data: &[u8]| {
     };
     let mut store = Store::create(StoreId::from_bytes([1; 16]), model, now);
     for line in data.split(|b| *b == b'\n') {
-        match serde_json::from_slice::<TransferRecord>(line) {
+        match TransferRecord::from_line(line) {
             Ok(TransferRecord::Header(h)) => {
                 let _ = h.check();
             }
