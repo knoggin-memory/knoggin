@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<!-- One <aside> in both states: closing it is a drawer, not a swap (handoff,
-     "Sidebar motion"). Labels and icons dissolve into each other in place. -->
+<!-- One <aside> in both states: closing it is a drawer, not a swap.
+     Labels and icons dissolve into each other in place. -->
 <script lang="ts">
   import { page } from '$app/state';
   import { goto } from '$app/navigation';

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Sign-in on, against the test issuer (tab "Web UI", Tests): a daemon in mode oauth, in test
+// Sign-in on, against the test issuer: a daemon in mode oauth, in test
 // mode, whose server.public_url is its own fixed listener's loopback address. Sign in, see
 // the profile, sign out, return_to, and each callback error. This file runs its own daemon
 // and issuer; the issuer approves at once and signs in `login_hint`, else alice.

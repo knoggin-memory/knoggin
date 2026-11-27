@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<!-- The Memory map canvas (DESIGN §6): sigma on WebGL2 for nodes and edges,
+<!-- The Memory map canvas: sigma on WebGL2 for nodes and edges,
      d3-force in a worker, rings and collision-free labels on a 2D overlay
      redrawn only when sigma renders. Nothing animates while idle. -->
 <script lang="ts">

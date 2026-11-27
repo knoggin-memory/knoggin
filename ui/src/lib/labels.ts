@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Collision-free map labels (DESIGN §6): place greedily in priority order,
+// Collision-free map labels: place greedily in priority order,
 // trying below, right, left, above and two diagonals; skip any spot that
 // overlaps a placed label (with a margin) or leaves the viewport; prefer
 // the spot covering the fewest nodes; drop the label if nothing fits.

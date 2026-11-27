@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<!-- Forgetting curve for one memory (DESIGN §5 "Decay curve"), from now to
+<!-- Forgetting curve for one memory, from now to
      +1 yr with recalld's FSRS formula. `previousStability` draws the curve
      before the most recent reinforce, dashed. -->
 <script lang="ts">

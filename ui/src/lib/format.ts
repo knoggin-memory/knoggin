@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Words and numbers as DESIGN §9 spells them. The API sends RFC 3339 times; they
+// How the UI spells words and numbers. The API sends RFC 3339 times; they
 // are shown in the browser's own time zone.
 const MIN = 60_000;
 const HOUR = 60 * MIN;

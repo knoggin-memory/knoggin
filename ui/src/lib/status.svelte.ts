@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The waiting and failure states (tab "Web UI", "Waiting and failure states").
+// The waiting and failure states.
 // They come from the store status route, which may be polled because it is a
 // control route, and from the error codes of the UI's other requests. Store
 // routes are never polled on a timer.
@@ -27,7 +27,7 @@ export const WHOLE_SCREEN = new Set(['locked', 'updating', 'waking']);
 const MAX_UNAVAILABLE = 5;
 const MINUTE = 60_000;
 
-/** The first state that applies, in the spec's order. Exported for its unit test. */
+/** The first state that applies, in priority order. Exported for its unit test. */
 export function pick(s: {
   notRunning: boolean;
   remote: boolean;

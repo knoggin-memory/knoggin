@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Turns one activity event into light (DESIGN §7). Pure, so its timing rules
+// Turns one activity event into light. Pure, so its timing rules
 // are unit-tested: pulses fire in PQSA order, ≈350 ms per hop scaled by edge
 // length, brightness follows the spread amount and fades with each hop.
 import type { UiEvent } from '$lib/live.svelte';

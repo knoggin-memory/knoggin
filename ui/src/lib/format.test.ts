@@ -6,7 +6,7 @@ import { isPaletteShortcut } from './palette.svelte';
 const NOW = Date.UTC(2026, 10, 19, 12);
 const MIN = 60_000;
 
-describe('words (DESIGN §9)', () => {
+describe('words', () => {
   it('relative times', () => {
     expect(ago(NOW - 10_000, NOW)).toBe('just now');
     expect(ago(NOW - 14 * MIN, NOW)).toBe('14m ago');

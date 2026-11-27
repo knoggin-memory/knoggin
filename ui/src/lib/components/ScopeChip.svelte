@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<!-- First chip of every toolbar: the global namespace scope (DESIGN §2, §5). -->
+<!-- First chip of every toolbar: the global namespace scope. -->
 <script lang="ts">
   import { DropdownMenu } from 'bits-ui';
   import Icon from './Icon.svelte';

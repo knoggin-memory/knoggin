@@ -22,7 +22,7 @@
   import { DAY_MS } from '$lib/fsrs';
   import { storeKey } from '$lib/queries';
 
-  // ── URL state (DESIGN §8: sort and filter state lives in the URL) ───────
+  // ── URL state (sort and filter state lives in the URL) ───────
   const SORTS: { key: SortKey; label: string; desc: boolean }[] = [
     { key: 'lastAccess', label: 'Last access', desc: true },
     { key: 'strength', label: 'Strength', desc: false },

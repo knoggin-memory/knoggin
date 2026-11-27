@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { defineConfig, devices } from '@playwright/test';
 
-// The end-to-end tier (tab "Testing, CI, releases"): a daemon built from the
+// The end-to-end tier: a daemon built from the
 // same commit, given by path in KNOGGIN_BIN, started in test mode in a
 // temporary home. The harness builds nothing; the daemon serves the built UI.
 export default defineConfig({

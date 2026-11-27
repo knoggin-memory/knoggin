@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// Every stored string is shown as text, never as HTML (tab "Security").
+// Every stored string is shown as text, never as HTML.
 import { expect, test } from '@playwright/test';
 import { noScriptRan, open } from './support/ui';
 import { MARKUP } from './support/seed';
@@ -55,7 +55,7 @@ test('markup in the answers of Users and Server status is shown as text', async 
   await expect(page.getByRole('combobox', { name: 'Store of this user' })).toContainText(`Bot ${evil}`);
   await expect(page.getByText('No snapshots yet.')).toBeVisible();
 
-  // The last agent: neither Users nor Server status draws one (the prototype's columns have none), so the
+  // The last agent: neither Users nor Server status draws one (neither has such a column), so the
   // store's lastWriteClient is checked where it is drawn, the Last write tile of App overview.
   await page.route(/\/v1\/stores$/, (r) => r.fulfill({ json: { items: [store] } }));
   await page.route(`**/v1/stores/${store.id}/keys`, (r) => r.fulfill({ json: { items: [] } }));

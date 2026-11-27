@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The global namespace scope (DESIGN §2): one setting, shown in the sidebar
+// The global namespace scope: one setting, shown in the sidebar
 // and the first chip of every toolbar. Kept in the browser. Starts on all
 // namespaces, which is what the /v1/ui/* routes read when no namespace is sent.
 const KEY = 'knoggin.scope';

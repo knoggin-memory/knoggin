@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The fixed sentences of the tab "Web UI", word for word.
+// The UI's fixed sentences.
 
 const GUIDE = 'See the recovery guide.';
 

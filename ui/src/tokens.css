@@ -190,7 +190,7 @@
  * How it turns on: set data-theme="dark" on <html>. A few lines in app.html
  * should set it before first paint from the saved choice (System, Light, Dark),
  * using prefers-color-scheme when the choice is System. The .theme-dark class
- * is the same block for the prototype, which cannot reach <html>.
+ * applies the same block to an element that cannot reach <html>.
  *
  * Contrast is measured on the dark surface unless another ground is named, and
  * was also checked on bg, canvas, accent-soft and notice.

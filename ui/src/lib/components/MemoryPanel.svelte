@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<!-- Detail for the selected memory (DESIGN §2, §8): a side panel on the map,
+<!-- Detail for the selected memory: a side panel on the map,
      an expanded row in Explore (`layout="inline"`, which shows more: full
      text, every label, links and a longer activity list). Reads are
      read-only; Reinforce and Forget are the only writes, Forget confirms.
-     The same routes wherever it appears (tab "Web UI", the memory panel). -->
+     The same routes wherever it appears. -->
 <script lang="ts">
   import { createQuery, useQueryClient } from '@tanstack/svelte-query';
   import { DropdownMenu } from 'bits-ui';
