@@ -60,7 +60,13 @@ Before the first release:
 
 1. Register the PyPI project `knoggin` with a trusted publisher: this repository, workflow `release.yml`, environment `pypi`.
 2. Make the M5 switch (below), so that the first release ships the patched graph.
-3. Decide how release pull requests get their `ci-ok` check. release-please opens them with the workflow's own token, and GitHub starts no workflow for a pull request made with that token. So `ci-ok` never reports and protection blocks the merge. Either give release-please a GitHub App token (then its pull requests run CI like any other), or close and reopen each release pull request by hand to start CI.
+3. Create the release App, which release-please uses to open its pull requests (the workflow's own token may not open them, and its pull requests would start no CI):
+   1. In the organization's settings, Developer settings, GitHub Apps, create an App named for example `knoggin-release`. Turn the webhook off. Repository permissions: Contents read and write, Pull requests read and write (Metadata read comes with them). Nothing else.
+   2. Install it on `knoggin-memory/knoggin` only.
+   3. Generate a private key, and copy the App's Client ID.
+   4. Add two repository secrets: `RELEASE_APP_CLIENT_ID` (the Client ID) and `RELEASE_APP_PRIVATE_KEY` (the whole `.pem` file).
+   5. Point release-please's sign-off at the App's bot account, because the `dco` check wants each commit signed off by its author, and the App authors release-please's commits. With the App named `knoggin-release`, `gh api 'users/knoggin-release%5Bbot%5D' --jq .id` gives the bot's ID; set `signoff` in `release-please-config.json` to `knoggin-release[bot] <ID+knoggin-release[bot]@users.noreply.github.com>` and merge that change.
+   6. Re-run the latest Release workflow on `main`. release-please then opens the release pull request, and CI runs on it like on any other.
 
 Each release:
 

@@ -27,26 +27,44 @@ jobs:
     concurrency:
       group: release-please
       cancel-in-progress: false
+    # Everything that writes uses the App token; the workflow token only reads.
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     outputs:
       created: ${{ steps.release.outputs.release_created }}
       tag: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
     steps:
+      # A token of the project's GitHub App, not the workflow's own: the workflow token
+      # may not open pull requests here, and a pull request it opened or a branch it
+      # pushed would start no CI, so the release pull request would never get `ci-ok`.
+      - id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
       - id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
+          token: ${{ steps.app.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+      # The release pull request's branch, read in a step so that no expression parses
+      # an empty output when there is no pull request.
+      - id: pr
+        if: steps.release.outputs.pr
+        env:
+          PR: ${{ steps.release.outputs.pr }}
+        run: echo "branch=$(jq -r .headBranchName <<<"$PR")" >> "$GITHUB_OUTPUT"
       # release-please bumps workspace.package.version and sdk/python/pyproject.toml;
       # Cargo.lock and sdk/python/uv.lock follow here, on the release pull request's
       # branch, because CI's `--locked` checks fail on a lock file that names the old one.
       - if: steps.release.outputs.pr
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
+          ref: ${{ steps.pr.outputs.branch }}
           persist-credentials: false
       - if: steps.release.outputs.pr
         name: Install uv
@@ -60,8 +78,8 @@ jobs:
       - if: steps.release.outputs.pr
         name: The lock files follow the new version
         env:
-          BRANCH: ${{ fromJSON(steps.release.outputs.pr).headBranchName }}
-          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+          GH_TOKEN: ${{ steps.app.outputs.token }}
         run: |
           rustup toolchain install
           cargo update --workspace
