@@ -1,6 +1,6 @@
 # Tab "Testing, CI, releases": weekly, a 7-day cooldown, one group per ecosystem.
-# The uv directory arrives with milestone 8; until then Dependabot reports that
-# entry as having no manifest. The docker entry reads deploy/Dockerfile.
+# fuzz/ is a Cargo workspace of its own, with its own Cargo.lock, so it has its own
+# cargo entry. The docker entry reads deploy/Dockerfile.
 version: 2
 updates:
   - package-ecosystem: cargo
@@ -11,6 +11,16 @@ updates:
       default-days: 7
     groups:
       cargo:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /fuzz
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      cargo-fuzz:
         patterns: ["*"]
 
   - package-ecosystem: npm

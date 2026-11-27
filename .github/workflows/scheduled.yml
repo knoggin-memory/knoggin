@@ -136,6 +136,9 @@ jobs:
             snapshot_container) cp ../tests/fixtures/snapshots/v1/*.kgs "corpus/$TARGET/" ;;
             export_line) cp ../tests/fixtures/recalld-data/expected-export.jsonl "corpus/$TARGET/" ;;
           esac
+      # cargo fuzz has no --locked; fetching with it first fails on a stale Cargo.lock,
+      # and the build after it then uses the lock file as it is.
+      - run: cargo fetch --locked
       - name: Fuzz for five minutes
         env:
           TARGET: ${{ matrix.target }}
