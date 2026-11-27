@@ -58,7 +58,7 @@ The spec's build-time measurements (tab "Overview", Build-time measurements), ea
 
 | ID | Measure | Who | Status |
 | --- | --- | --- | --- |
-| M1 | Full LoCoMo benchmark run with the shipped model and default recall | Owner: model API key and budget | Not yet run |
+| M1 | Full LoCoMo benchmark run with the shipped model and default recall | Owner: model API key and budget | Not yet run; how to run it is below |
 | M2 | Time from claim to first answer on the one-host stack at 1,500, 15,000 and 75,000 memories | Build | Not yet run |
 | M3 | Peak memory of a user container at the same three sizes | Build | Not yet run |
 | M4 | Snapshot size and duration at the three sizes, local disk and SeaweedFS | Build | Not yet run |
@@ -74,6 +74,27 @@ The spec's build-time measurements (tab "Overview", Build-time measurements), ea
 | M14 | Submit the plugin to the Claude and OpenAI directories | Owner | Not yet run |
 | M15 | Whether claude.ai and Claude Desktop show MCP server instructions | Owner | Not yet run |
 | M16 | Embedding time on an x86_64 Linux CI runner | Build, once the organization exists (P3) | Not yet run |
+
+### M1: how to run the benchmark
+
+Run M5's switch first, so that M1 measures the model that ships. Then:
+
+1. Get `locomo10.json` (recalld keeps a copy at `src/bench/data/locomo10.json`).
+2. Build the harness: `cargo build --release -p knoggin-bench --locked`.
+3. Fill the model folder with `knoggin model fetch`, or pass `--model-dir`. Point `ORT_DYLIB_PATH` (or `--ort-lib`) at the ONNX Runtime library.
+4. Have an OpenAI-compatible server that serves Qwen3 235B and DeepSeek V3.2 from Amazon Bedrock. Put its bearer token in `BENCH_LLM_API_KEY`.
+5. Run:
+
+```sh
+BENCH_JUDGE_STYLE=mem0 BENCH_LLM_API_KEY=... target/release/knoggin-bench locomo \
+  --data locomo10.json --llm-url https://your-server \
+  --model <qwen id> --ingest-model <qwen id> --judge-model <deepseek id> \
+  --out-dir m1-run
+```
+
+The defaults match the spec: 25 memories per recall, full text for 5, all five question categories. The report gives accuracy, its 95% interval and mean tokens per recall; `bench_results.json` and `bench_debug.log` land in `--out-dir`.
+
+If accuracy is below 82.3%, run once more with `--full-text-count 10` and publish both runs with their settings. The default stays 5. Open an issue in recalld that describes any gap.
 
 ### M5: the faster compute path
 
