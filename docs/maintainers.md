@@ -181,7 +181,7 @@ Size is the newest snapshot object or file; duration is the mean over the snapsh
 | 15,000 | Local disk | 74.3 MiB | 147 ms | 0.9 ms, 47 ms |
 | 75,000 | both | not run | | |
 
-About 5 KiB per memory, most of it the 768 floats of each vector (3 KiB). The longest save waited 47 ms at 15,000, while `encode` held the read lock. Local disk is the daemon in a container with one CPU, its home bind-mounted from the Mac's disk. The router's counters `knoggin_container_snapshot_*_total` (and the other `knoggin_container_*_total`) are set with `Counter::absolute`, which keeps the highest value seen: when a new container's totals are below an earlier one's, they stay hidden until they pass it. The harness restarts the router before it reads them; the metric itself is worth a fix.
+About 5 KiB per memory, most of it the 768 floats of each vector (3 KiB). The longest save waited 47 ms at 15,000, while `encode` held the read lock. Local disk is the daemon in a container with one CPU, its home bind-mounted from the Mac's disk. The router's counters `knoggin_container_snapshot_*_total` (and the other `knoggin_container_*_total`) were set with `Counter::absolute`, which keeps the highest value seen: when a new container's totals were below an earlier one's, they stayed hidden until they passed it. The harness restarted the router before it read them. That is fixed: the router now adds each container's growth since its last report, so the counters keep rising when a container ends.
 
 ### M5: the faster compute path
 

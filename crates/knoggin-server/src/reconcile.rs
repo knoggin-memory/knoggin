@@ -629,40 +629,70 @@ impl Fleet {
         Ok(())
     }
 
-    /// Step 12: the sums of the claimed containers' counters, 16 at a time.
+    /// Step 12: the claimed containers' counters, 16 at a time.
     async fn counters(self: Arc<Self>, claimed: Vec<Container>) {
+        let ids: HashSet<Uuid> = claimed.iter().map(|c| c.id).collect();
         let answers: Vec<_> = stream::iter(claimed)
             .map(|c| {
                 let fleet = self.clone();
                 async move {
                     let peer = peer_of(c.address.as_deref(), c.cert_sha256.as_deref())?;
-                    fleet.status(c.id, peer, None, STATUS_LIMIT).await
+                    let a = fleet.status(c.id, peer, None, STATUS_LIMIT).await?;
+                    Some((c.id, a))
                 }
             })
             .buffer_unordered(16)
             .collect()
             .await;
-        let mut sum = Counters::default();
-        let (mut open, mut queue, mut failures) = (0u64, 0u64, 0u64);
-        for a in answers.into_iter().flatten() {
-            sum = sum.saturating_add(a.counters);
+        let (mut open, mut queue) = (0u64, 0u64);
+        let mut totals = Vec::new();
+        for (id, a) in answers.into_iter().flatten() {
             open = open.saturating_add(a.stores.len() as u64);
             queue = a
                 .stores
                 .iter()
                 .fold(queue, |q, s| q.saturating_add(s.pending_embeddings));
-            failures = failures.saturating_add(a.snapshot_failures);
+            totals.push((id, a.counters, a.snapshot_failures));
         }
-        metrics::counter!("knoggin_container_requests_total").absolute(sum.requests);
-        metrics::counter!("knoggin_container_embed_count_total").absolute(sum.embed_count);
-        metrics::counter!("knoggin_container_embed_millis_total").absolute(sum.embed_millis);
-        metrics::counter!("knoggin_container_snapshot_count_total").absolute(sum.snapshot_count);
-        metrics::counter!("knoggin_container_snapshot_millis_total").absolute(sum.snapshot_millis);
-        metrics::counter!("knoggin_container_snapshot_bytes_total").absolute(sum.snapshot_bytes);
-        metrics::counter!("knoggin_container_snapshot_failures_total").absolute(failures);
+        let mut reported = crate::lock(&self.reported);
+        publish_totals(&mut reported, &ids, totals);
         metrics::gauge!("knoggin_container_open_stores").set(open as f64);
         metrics::gauge!("knoggin_container_embed_queue_depth").set(queue as f64);
     }
+}
+
+/// Per container, the counters and snapshot failures it last reported.
+pub(crate) type Reported = HashMap<Uuid, (Counters, u64)>;
+
+/// Adds to the router's counters what each container did since its last report, so they
+/// only go up and keep the work of containers that have ended. A container's first
+/// report, or one in which a total went down, counts from zero. Containers no longer
+/// claimed are forgotten.
+fn publish_totals(
+    reported: &mut Reported,
+    claimed: &HashSet<Uuid>,
+    totals: Vec<(Uuid, Counters, u64)>,
+) {
+    let (mut grew, mut failed) = (Counters::default(), 0u64);
+    for (id, now, failures) in totals {
+        let (before, failures_before) = reported.insert(id, (now, failures)).unwrap_or_default();
+        let (more, more_failed) =
+            if before.saturating_sub(now) == Counters::default() && failures >= failures_before {
+                (now.saturating_sub(before), failures - failures_before)
+            } else {
+                (now, failures)
+            };
+        grew = grew.saturating_add(more);
+        failed = failed.saturating_add(more_failed);
+    }
+    reported.retain(|id, _| claimed.contains(id));
+    metrics::counter!("knoggin_container_requests_total").increment(grew.requests);
+    metrics::counter!("knoggin_container_embed_count_total").increment(grew.embed_count);
+    metrics::counter!("knoggin_container_embed_millis_total").increment(grew.embed_millis);
+    metrics::counter!("knoggin_container_snapshot_count_total").increment(grew.snapshot_count);
+    metrics::counter!("knoggin_container_snapshot_millis_total").increment(grew.snapshot_millis);
+    metrics::counter!("knoggin_container_snapshot_bytes_total").increment(grew.snapshot_bytes);
+    metrics::counter!("knoggin_container_snapshot_failures_total").increment(failed);
 }
 
 /// A step, or one item of it, that the state database failed: logged and counted
@@ -678,5 +708,48 @@ fn state_label(s: ContainerState) -> &'static str {
         ContainerState::Ready => "ready",
         ContainerState::Claimed => "claimed",
         ContainerState::Gone => "gone",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn requests(n: u64) -> Counters {
+        Counters {
+            requests: n,
+            ..Counters::default()
+        }
+    }
+
+    #[test]
+    fn container_counters_keep_growing_when_a_container_ends() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let handle = recorder.handle();
+        let read = |name: &str| -> u64 {
+            let text = handle.render();
+            let line = text.lines().find(|l| l.starts_with(&format!("{name} ")));
+            line.map_or(0, |l| l.rsplit(' ').next().unwrap().parse().unwrap())
+        };
+        let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+        let mut reported = Reported::new();
+        let mut pass = |claimed: &[Uuid], totals: Vec<(Uuid, Counters, u64)>| {
+            let claimed = claimed.iter().copied().collect();
+            metrics::with_local_recorder(&recorder, || {
+                publish_totals(&mut reported, &claimed, totals);
+            });
+        };
+        pass(&[a], vec![(a, requests(100), 2)]);
+        pass(&[a], vec![(a, requests(150), 2)]);
+        assert_eq!(read("knoggin_container_requests_total"), 150);
+        // A ends; B starts with lower totals, and B's status fails once.
+        pass(&[b], vec![]);
+        pass(&[b], vec![(b, requests(10), 1)]);
+        assert_eq!(read("knoggin_container_requests_total"), 160);
+        assert_eq!(read("knoggin_container_snapshot_failures_total"), 3);
+        // A total that goes down counts from zero.
+        pass(&[b], vec![(b, requests(5), 0)]);
+        assert_eq!(read("knoggin_container_requests_total"), 165);
+        assert_eq!(reported.keys().collect::<Vec<_>>(), [&b]);
     }
 }

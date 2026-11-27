@@ -106,6 +106,8 @@ pub struct Fleet {
     pub(crate) buffered: Mutex<(u64, HashMap<UserId, u64>)>,
     /// The last read of the container records for claims, and when it was made.
     claim_records: Mutex<Option<(Instant, Records)>>,
+    /// The totals each claimed container last reported (reconcile step 12).
+    pub(crate) reported: Mutex<crate::reconcile::Reported>,
 }
 
 impl std::fmt::Debug for Fleet {
@@ -276,6 +278,7 @@ impl Fleet {
             limits,
             buffered: Mutex::new((0, HashMap::new())),
             claim_records: Mutex::new(None),
+            reported: Mutex::default(),
             config,
         }))
     }

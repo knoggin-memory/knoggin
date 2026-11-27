@@ -928,10 +928,6 @@ async fn server() {
     // M4 on SeaweedFS: the router sums the claimed containers' counters every 30 s, so
     // first claim and let one pass include the container; then saves for 45 s (a snapshot
     // at least every 30 s), then quiet until the next pass.
-    // Its counters only rise (`absolute` keeps the highest value seen), so a container
-    // with lower totals than an earlier one would not show: restart the router first.
-    s.compose_ok(&["restart", "router"]);
-    s.wait_ready(Duration::from_secs(300)).await;
     for _ in 0..4 {
         let _ = get(&s, "/v1/tags").await;
         tokio::time::sleep(Duration::from_secs(10)).await;

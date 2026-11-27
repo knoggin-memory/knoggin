@@ -209,6 +209,18 @@ impl Counters {
             snapshot_bytes: self.snapshot_bytes.saturating_add(other.snapshot_bytes),
         }
     }
+
+    /// `self - other`, each field saturating at 0.
+    pub fn saturating_sub(self, other: Self) -> Self {
+        Self {
+            requests: self.requests.saturating_sub(other.requests),
+            embed_count: self.embed_count.saturating_sub(other.embed_count),
+            embed_millis: self.embed_millis.saturating_sub(other.embed_millis),
+            snapshot_count: self.snapshot_count.saturating_sub(other.snapshot_count),
+            snapshot_millis: self.snapshot_millis.saturating_sub(other.snapshot_millis),
+            snapshot_bytes: self.snapshot_bytes.saturating_sub(other.snapshot_bytes),
+        }
+    }
 }
 
 #[cfg(test)]
