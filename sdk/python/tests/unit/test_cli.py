@@ -140,6 +140,20 @@ def test_a_file_with_comments_is_left_alone(home: Path, capsys: pytest.CaptureFi
     assert "is not plain JSON" in capsys.readouterr().out
 
 
+def test_a_linked_config_file_is_written_through(home: Path) -> None:
+    settings = home / ".config" / "zed" / "settings.json"
+    dotfiles = home / "dotfiles"
+    dotfiles.mkdir()
+    real = dotfiles / "zed-settings.json"
+    settings.rename(real)
+    settings.symlink_to(real)
+    assert init.run(["--yes"]) == 0
+    assert settings.is_symlink() and settings.resolve() == real.resolve()
+    assert "knoggin" in json.loads(real.read_text())["context_servers"]
+    (backup,) = dotfiles.glob("zed-settings.json.knoggin-backup-*")
+    assert stat.S_IMODE(real.stat().st_mode) == stat.S_IMODE(backup.stat().st_mode) == 0o640
+
+
 def test_uninstall_removes_the_entries_and_the_program_but_not_the_data(home: Path) -> None:
     assert init.run(["--yes"]) == 0
     data = home / ".knoggin" / "data"

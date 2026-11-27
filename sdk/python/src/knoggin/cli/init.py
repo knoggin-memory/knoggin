@@ -81,7 +81,13 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def write_file(path: Path, text: str, backups: list[Path]) -> None:
-    """Backs up the file, then writes a temporary file with the original's mode and renames it over the original."""
+    """Backs up the file, then writes a temporary file with the original's mode and renames it over the original.
+
+    A symbolic link (for example into a dotfiles repository) is written through: the file it points to is
+    backed up and replaced, and the link stays.
+    """
+    if path.is_symlink():
+        path = path.resolve()
     mode = 0o600
     if path.exists():
         mode = path.stat().st_mode & 0o777
