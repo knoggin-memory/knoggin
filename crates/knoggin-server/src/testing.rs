@@ -65,12 +65,18 @@ struct Fake {
     stop: Option<oneshot::Sender<()>>,
     /// Ends the container's own runtime at once, with every task it runs.
     kill: Option<oneshot::Sender<()>>,
+    /// The container's thread, which ends once its runtime has stopped.
+    thread: Option<std::thread::JoinHandle<()>>,
     forgotten: bool,
     draining: bool,
     started: Timestamp,
     /// Set when `stop` or `kill` decided the reason before the role returned.
     reason: Option<EndReason>,
 }
+
+/// How long a container's runtime may take to stop once its role has ended or been
+/// killed (its blocking tasks run to their end).
+const KILL_WAIT: Duration = Duration::from_secs(5);
 
 /// A launcher that runs each container's role as a task of the test process.
 pub struct FakeLauncher {
@@ -187,16 +193,25 @@ impl FakeLauncher {
         self.end_now(handle, ended);
     }
 
-    /// Ends a container's runtime at once and records `ended`.
+    /// Ends a container's runtime and records `ended`. Like a killed process, the
+    /// container answers nothing once this returns: a request sent after it finds the
+    /// listener closed, never a task still running in the runtime as it stops.
     fn end_now(&self, handle: &LaunchHandle, ended: Ended) {
-        let mut map = self.containers.lock().unwrap();
-        if let Some(c) = map.get_mut(&handle.0) {
+        let thread = {
+            let mut map = self.containers.lock().unwrap();
+            let Some(c) = map.get_mut(&handle.0) else {
+                return;
+            };
             if c.ended.is_none() {
                 c.ended = Some(ended);
             }
             if let Some(k) = c.kill.take() {
                 let _ = k.send(());
             }
+            c.thread.take()
+        };
+        if let Some(t) = thread {
+            let _ = t.join();
         }
     }
 
@@ -255,7 +270,7 @@ impl Launcher for FakeLauncher {
         let mut map = self.containers.lock().unwrap();
         // Each container runs on a runtime of its own, like a process: a kill shuts it
         // down with every task it spawned, its listener included.
-        std::thread::spawn(move || {
+        let thread = std::thread::spawn(move || {
             let Ok(rt) = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(2)
                 .enable_all()
@@ -273,7 +288,9 @@ impl Launcher for FakeLauncher {
                     _ = kill_rx => None,
                 }
             });
-            rt.shutdown_background();
+            // Waits until no worker polls a task any more, so that a request reaching the
+            // container as it stops gets no answer (`end_now` relies on it).
+            rt.shutdown_timeout(KILL_WAIT);
             if let Some(code) = code
                 && let Some(c) = containers.lock().unwrap().get_mut(&key)
                 && c.ended.is_none()
@@ -292,6 +309,7 @@ impl Launcher for FakeLauncher {
                 ended: None,
                 stop: Some(stop_tx),
                 kill: Some(kill_tx),
+                thread: Some(thread),
                 forgotten: false,
                 draining: false,
                 started: Timestamp::from_millis((self.clock)()),
