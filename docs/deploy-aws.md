@@ -92,6 +92,8 @@ Optional, with defaults: `instance_type` (`m8g.xlarge`), `min_hosts` (1), `max_h
 
 When it is done, point your host name at the output `load_balancer_dns_name`, open `https://<your name>` and sign in. Agents connect to `https://<your name>/mcp` ([Connecting agents](connect-agents.md)).
 
+**Nothing in front of Knoggin may log request addresses.** A request line can carry a search text, a tag or a one-time code. The module leaves the load balancer's access logs off. A proxy, CDN or tunnel of your own in front of it must not log them either.
+
 **Check the module without an account:** `tofu fmt -check -recursive`, then `tofu init -backend=false -lockfile=readonly && tofu validate && tofu test` in `deploy/aws`. The tests use a mock provider and send nothing to AWS.
 
 ## Sizing
