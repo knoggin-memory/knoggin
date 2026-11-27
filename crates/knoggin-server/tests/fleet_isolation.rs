@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The fleet's isolation tests (tab "Security", rows I1, I4 to I7, and the internal
+//! The fleet's isolation tests (tab "Security", rows I1, I3 to I7, and the internal
 //! link's checks of tab "Server"), in one process: two users behind one router, each with
 //! a container that runs the real container role. The test holds the internal secret, so
 //! it can call the broker with a container's own token, which the real stack does not
@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
-use fleet_support::{Deployment, RouterHandle, eventually, peer, save, summaries};
+use fleet_support::{Deployment, RouterHandle, eventually, json, peer, save, summaries};
 use http::{Method, StatusCode};
 use http_body_util::BodyExt;
 use knoggin_core::{StoreId, UserId};
@@ -421,5 +421,263 @@ async fn a_container_launched_at_an_ended_containers_address_is_served_at_once()
     assert_eq!(
         summaries(&t.r, Some(&erin)).await.1,
         vec!["erin-note".to_owned()]
+    );
+}
+
+/// A request through the router with an API key of an app, or none (the personal store
+/// of the one user of a deployment with sign-in off).
+fn as_store(
+    r: &RouterHandle,
+    key: Option<&str>,
+    method: reqwest::Method,
+    path: &str,
+) -> reqwest::RequestBuilder {
+    let b = r.req(method, path);
+    match key {
+        Some(k) => b.bearer_auth(k),
+        None => b,
+    }
+}
+
+/// One MCP tool call of the current revision as client `client`; returns the tool's JSON.
+async fn mcp(
+    r: &RouterHandle,
+    key: Option<&str>,
+    client: &str,
+    tool: &str,
+    args: serde_json::Value,
+) -> serde_json::Value {
+    let body = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+        "name": tool, "arguments": args, "_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientInfo": { "name": client, "version": "1" },
+            "io.modelcontextprotocol/clientCapabilities": {} } } });
+    let (status, v) = json(
+        as_store(r, key, reqwest::Method::POST, "/mcp")
+            .header("mcp-method", "tools/call")
+            .header("mcp-protocol-version", "2026-07-28")
+            .header("mcp-name", tool)
+            .json(&body)
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, 200, "{v}");
+    assert!(v["result"]["isError"].is_null(), "{tool}: {v}");
+    serde_json::from_str(v["result"]["content"][0]["text"].as_str().unwrap()).unwrap()
+}
+
+/// Rule I3 through one container, which holds every store of its user: an
+/// `Idempotency-Key` is kept per store, app X's read models show nothing of the personal
+/// store or of app Y, and X's event stream carries none of their events.
+#[tokio::test]
+async fn i3_one_container_keeps_a_users_stores_apart() {
+    let d = Deployment::new(false).await;
+    let r = d.router("0.1.0").await;
+    let mut keys = Vec::new();
+    for name in ["X", "Y"] {
+        let (status, app) = json(
+            r.req(reqwest::Method::POST, "/v1/stores")
+                .json(&json!({ "name": name }))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, 201, "{app}");
+        let (status, key) = json(
+            r.req(
+                reqwest::Method::POST,
+                &format!("/v1/stores/{}/keys", app["id"].as_str().unwrap()),
+            )
+            .json(&json!({ "name": name, "permissions": ["memory:read", "memory:write"] }))
+            .send()
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(status, 201, "{key}");
+        keys.push(key["secret"].as_str().unwrap().to_owned());
+    }
+    let (x, y) = (keys[0].as_str(), keys[1].as_str());
+
+    // The same key and body to X twice (a replay), then to Y (a run of its own).
+    let keyed = |key: &str| {
+        as_store(&r, Some(key), reqwest::Method::POST, "/v1/memories")
+            .header("idempotency-key", "k-shared")
+            .json(&json!({ "summary": "same body" }))
+            .send()
+    };
+    let first = keyed(x).await.unwrap();
+    assert_eq!(first.status(), 201);
+    assert!(first.headers().get("idempotent-replayed").is_none());
+    let first = json(first).await.1;
+    let again = keyed(x).await.unwrap();
+    assert_eq!(again.headers()["idempotent-replayed"], "true");
+    assert_eq!(json(again).await.1["id"], first["id"]);
+    let other = keyed(y).await.unwrap();
+    assert_eq!(other.status(), 201);
+    assert!(
+        other.headers().get("idempotent-replayed").is_none(),
+        "Y answered from X's record"
+    );
+    assert_ne!(json(other).await.1["id"], first["id"]);
+
+    // Distinct data and client names in each store, all in the one container.
+    for (key, mark) in [(Some(x), "mkrx"), (None, "mkrpersonal"), (Some(y), "mkry")] {
+        let client = format!("{mark}agent");
+        mcp(
+            &r,
+            key,
+            &client,
+            "store_memory",
+            json!({ "summary": format!("{mark}note"), "tags": [format!("{mark}tag")] }),
+        )
+        .await;
+        mcp(
+            &r,
+            key,
+            &client,
+            "recall_memories",
+            json!({ "query": format!("{mark}note") }),
+        )
+        .await;
+    }
+    let launched: Vec<_> = d
+        .records()
+        .await
+        .into_iter()
+        .filter(|c| c.user_id.is_some())
+        .collect();
+    assert_eq!(launched.len(), 1, "one container holds the three stores");
+    for path in [
+        "/v1/ui/system",
+        "/v1/ui/activity",
+        "/v1/ui/facets",
+        "/v1/ui/health",
+    ] {
+        let answer = as_store(&r, Some(x), reqwest::Method::GET, path)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(answer.status(), 200, "{path}");
+        let text = answer.text().await.unwrap();
+        assert!(
+            text.contains("mkrxnote") || text.contains("mkrxagent") || path == "/v1/ui/system",
+            "{path}: {text}"
+        );
+        for other in ["mkrpersonal", "mkry"] {
+            assert!(
+                !text.contains(other),
+                "{path} with X's key shows {other}: {text}"
+            );
+        }
+    }
+    let (_, s) = json(
+        as_store(&r, Some(x), reqwest::Method::GET, "/v1/ui/system")
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    let clients: Vec<&str> = s["clients"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(clients, ["mkrxagent"], "{s}");
+    let (_, h) = json(
+        as_store(&r, Some(x), reqwest::Method::GET, "/v1/ui/health")
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        h["overview"]["totalMemories"], 2,
+        "the replayed save and the MCP one: {h}"
+    );
+
+    // X's event stream: a save, a recall and a forget in the personal store and in Y put
+    // nothing on it; X's own next save comes first.
+    let mut stream = as_store(&r, Some(x), reqwest::Method::GET, "/v1/ui/events")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stream.status(), 200);
+    let mut foreign = Vec::new();
+    for key in [None, Some(y)] {
+        let (status, saved) = json(
+            as_store(&r, key, reqwest::Method::POST, "/v1/memories")
+                .json(&json!({ "summary": "mkrforeign" }))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, 201, "{saved}");
+        let id = saved["id"].as_str().unwrap().to_owned();
+        let (status, _) = json(
+            as_store(&r, key, reqwest::Method::POST, "/v1/recall")
+                .json(&json!({ "query": "mkrforeign" }))
+                .send()
+                .await
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(status, 200);
+        let (status, _) = json(
+            as_store(
+                &r,
+                key,
+                reqwest::Method::DELETE,
+                &format!("/v1/memories/{id}"),
+            )
+            .send()
+            .await
+            .unwrap(),
+        )
+        .await;
+        assert_eq!(status, 200);
+        foreign.push(id);
+    }
+    let (status, mine) = json(
+        as_store(&r, Some(x), reqwest::Method::POST, "/v1/memories")
+            .json(&json!({ "summary": "mine" }))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, 201);
+    let mut seen = String::new();
+    let mine = format!("\"id\":\"{}\"", mine["id"].as_str().unwrap());
+    // Everything up to X's own event, then whatever follows within half a second.
+    while !seen.contains(&mine) {
+        let chunk = tokio::time::timeout(LIMIT, stream.chunk())
+            .await
+            .unwrap()
+            .unwrap()
+            .expect("the stream ended");
+        seen.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    while let Ok(Ok(Some(chunk))) =
+        tokio::time::timeout(Duration::from_millis(500), stream.chunk()).await
+    {
+        seen.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    let first_event = seen.split("\n\n").find(|b| b.contains("event: ")).unwrap();
+    assert!(
+        first_event.contains("event: store") && first_event.contains(&mine),
+        "{seen}"
+    );
+    for id in &foreign {
+        assert!(!seen.contains(id.as_str()), "{seen}");
+    }
+    assert!(
+        !seen.contains("event: recall") && !seen.contains("event: forget"),
+        "{seen}"
     );
 }
