@@ -29,8 +29,11 @@ These are GitHub settings, not files. All of them were set on 2026-11-27, after 
 - Require actions to be pinned to a full commit SHA.
 - Require approval for workflows from outside contributors.
 - Protect `main`: pull requests only, the one required check `ci-ok`, linear history, squash merges, no force pushes.
-- Protect tags `v*`: the ruleset `protect-release-tags` blocks moving and deleting them (creating stays allowed, so release-please can tag).
-- Create the environments `release` and `pypi`, with the owner as required reviewer on `pypi`.
+- Protect tags `v*`: the ruleset `protect-release-tags` blocks moving and deleting them, with no bypass; the ruleset `release-tags-created-by-the-release-app` lets only the release App and the organization's admins create them.
+- Environments `release`, `release-please` and `pypi`, each deploying from `main` only, with the owner as required reviewer on `pypi`. The release App's two secrets, `RELEASE_APP_CLIENT_ID` and `RELEASE_APP_PRIVATE_KEY`, live in `release-please`, not in the repository's secrets.
+- Secret scanning, push protection and validity checks on.
+- Actions limited to GitHub's own actions plus `googleapis/release-please-action` and `Swatinem/rust-cache`. A new third-party action must be added to that list (Settings, Actions, General) before a workflow can use it.
+- CodeQL default setup on.
 
 The CI job `deps` (dependency review) runs only on a public repository: on a private one GitHub requires Advanced Security for it, and the job is skipped.
 
@@ -64,7 +67,7 @@ Before the first release:
    1. In the organization's settings, Developer settings, GitHub Apps, create an App named for example `knoggin-release`. Turn the webhook off. Repository permissions: Contents read and write, Pull requests read and write (Metadata read comes with them). Nothing else.
    2. Install it on `knoggin-memory/knoggin` only.
    3. Generate a private key, and copy the App's Client ID.
-   4. Add two repository secrets: `RELEASE_APP_CLIENT_ID` (the Client ID) and `RELEASE_APP_PRIVATE_KEY` (the whole `.pem` file).
+   4. Add two secrets to the environment `release-please` (deploying from `main` only), not to the repository: `RELEASE_APP_CLIENT_ID` (the Client ID) and `RELEASE_APP_PRIVATE_KEY` (the whole `.pem` file).
    5. Point release-please's sign-off at the App's bot account, because the `dco` check wants each commit signed off by its author, and the App authors release-please's commits. With the App named `knoggin-release`, `gh api 'users/knoggin-release%5Bbot%5D' --jq .id` gives the bot's ID; set `signoff` in `release-please-config.json` to `knoggin-release[bot] <ID+knoggin-release[bot]@users.noreply.github.com>` and merge that change.
    6. Re-run the latest Release workflow on `main`. release-please then opens the release pull request, and CI runs on it like on any other.
 
@@ -72,8 +75,8 @@ Each release:
 
 1. Merge changes to `main` with Conventional Commit titles. release-please keeps one release pull request open that bumps every version file and writes the changelog. The same run refreshes `Cargo.lock` and `sdk/python/uv.lock` on that branch.
 2. Merge the release pull request once `ci-ok` passes. release-please then makes the tag and a draft release.
-3. The workflow builds the archives, runs the real-model tests, builds the image for both platforms, pushes it by digest, scans it with Grype, attests and signs it, and only then tags `X.Y.Z`.
-4. `publish` (environment `release`, no approval) writes the SBOMs, the stamped `install.sh` and `SHA256SUMS`, attests every file, uploads them with the archives, adds the image digest to the notes and publishes the draft. `image-tags` then moves `X.Y` and `latest`, only forward and never for a pre-release.
+3. The workflow builds the archives, runs the real-model tests, builds the image for both platforms, pushes it by digest, scans it with Grype in a job that cannot sign, attests and signs it, and only then tags `X.Y.Z`.
+4. `assets` writes the SBOMs, the stamped `install.sh` and `SHA256SUMS` in a job that cannot sign or write. `publish` (environment `release`, no approval) checks each file against the hashes the build jobs handed over, attests every file, uploads them with the archives, adds the image digest to the notes and publishes the draft. `image-tags` then moves `X.Y` and `latest`, only forward and never for a pre-release.
 5. Approve the `pypi` environment. The SDK goes to PyPI by trusted publishing.
 
 To try the release on this machine without publishing anything, run `scripts/release-dry-run.sh` (it needs Node 26 with pnpm, cargo-auditable, cargo-about and syft). It builds the archive, serves it on a loopback port and installs it into a temporary home.
