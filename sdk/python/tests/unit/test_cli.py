@@ -88,7 +88,7 @@ def test_yes_installs_and_connects_every_agent(home: Path, capsys: pytest.Captur
     assert f[".cursor"] == {"mcpServers": {"knoggin": {"command": exe, "args": ["mcp"]}}}
     assert f["zed"]["theme"] == "One Dark"
     assert f["zed"]["context_servers"] == {"other": {"command": "x"}, "knoggin": {"command": exe, "args": ["mcp"]}}
-    assert f["opencode"] == {"mcp": {"knoggin": {"type": "local", "command": [exe, "mcp"], "enabled": True}}}
+    assert f["opencode"] == {"mcp": {"servers": {"knoggin": {"type": "local", "command": [exe, "mcp"]}}}}
     # A new file is 0600; a changed file keeps its mode, and so does its backup.
     assert stat.S_IMODE((home / ".cursor" / "mcp.json").stat().st_mode) == 0o600
     zed = home / ".config" / "zed"
@@ -113,10 +113,9 @@ def test_server_target_uses_the_mcp_address(home: Path) -> None:
     assert got[0] == "claude mcp add --scope user --transport http knoggin https://memory.example.com/mcp"
     assert got[1] == "codex mcp add knoggin --url https://memory.example.com/mcp"
     assert files(home)[".cursor"] == {"mcpServers": {"knoggin": {"url": "https://memory.example.com/mcp"}}}
-    assert files(home)["opencode"]["mcp"]["knoggin"] == {
+    assert files(home)["opencode"]["mcp"]["servers"]["knoggin"] == {
         "type": "remote",
         "url": "https://memory.example.com/mcp",
-        "enabled": True,
     }
 
 
@@ -180,6 +179,24 @@ def test_a_second_run_changes_nothing_and_a_new_target_replaces_the_entries(
     assert "VS Code: replace the knoggin MCP server" in capsys.readouterr().out
 
 
+def test_an_opencode_entry_in_the_older_layout_is_replaced(home: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    exe = str(home / ".knoggin" / "bin" / "knoggin")
+    config = home / ".config" / "opencode" / "opencode.json"
+    older = {"type": "local", "command": [exe, "mcp"], "enabled": True}
+    config.write_text(json.dumps({"theme": "x", "mcp": {"knoggin": older, "other": {"type": "local"}}}))
+    assert init.run(["--dry-run"]) == 0
+    assert f"opencode: replace the knoggin entry in {config}" in capsys.readouterr().out
+    assert init.run(["--yes"]) == 0
+    assert json.loads(config.read_text()) == {
+        "theme": "x",
+        "mcp": {"other": {"type": "local"}, "servers": {"knoggin": {"type": "local", "command": [exe, "mcp"]}}},
+    }
+    # The older entry alone is removed on uninstall too.
+    config.write_text(json.dumps({"mcp": {"knoggin": older}}))
+    assert init.run(["--uninstall", "--yes"]) == 0
+    assert json.loads(config.read_text()) == {"mcp": {}}
+
+
 def test_a_linked_config_file_is_written_through(home: Path) -> None:
     settings = home / ".config" / "zed" / "settings.json"
     dotfiles = home / "dotfiles"
@@ -207,7 +224,7 @@ def test_uninstall_removes_the_entries_and_the_program_but_not_the_data(home: Pa
     f = files(home)
     assert f[".cursor"] == {"mcpServers": {}}
     assert f["zed"]["context_servers"] == {"other": {"command": "x"}}
-    assert f["opencode"] == {"mcp": {}}
+    assert f["opencode"] == {"mcp": {"servers": {}}}
     assert not (home / ".knoggin" / "bin").exists() and not (home / ".knoggin" / "lib").exists()
     assert (data / "store").read_text() == "memories"
 
