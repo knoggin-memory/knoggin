@@ -392,7 +392,7 @@ jobs:
           cp "$BUNDLE" "dist/knoggin-$VERSION.sigstore.json"
           gh release upload "$TAG" dist/*
           gh release view "$TAG" --json body --jq .body > "$RUNNER_TEMP/notes.md"
-          printf '\n## Container image\n\n`%s@%s`\n' "$IMAGE" "$DIGEST" >> "$RUNNER_TEMP/notes.md"
+          printf "\n## Container image\n\n\`%s@%s\`\n" "$IMAGE" "$DIGEST" >> "$RUNNER_TEMP/notes.md"
           # A pre-release, or a release older than one already out, is not "Latest".
           kind="--latest=false"
           case "$VERSION" in
