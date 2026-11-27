@@ -13,7 +13,7 @@ ARG SKIP_MODEL=0
 
 # busybox:1.37.0 (the same pin as tests/images.toml). Its static binary gives the
 # download stages `unzip` and `xz`, which buildpack-deps:trixie-curl lacks.
-FROM busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec AS busybox
+FROM busybox@sha256:a46257e06c82ad85242d0d38077d0a52d9896389ca60a1a59d3463db586e5fa4 AS busybox
 
 # ---------------------------------------------------------------------------- ui
 # node:26
@@ -130,7 +130,7 @@ FROM model-${SKIP_MODEL} AS model
 
 # ------------------------------------------------------------------------- final
 # gcr.io/distroless/cc-debian13:nonroot
-FROM gcr.io/distroless/cc-debian13@sha256:29ee70762214fe8190cea04ef1c0a84a8365879e047ce8f911ae5a5ab2355fa2
+FROM gcr.io/distroless/cc-debian13@sha256:e8343d4a7da8bb210df0c3ea29de38bbadbba6c773bed0cd8bde506fca3a5c44
 # The model first, as its own layer, so that it stays byte-identical across releases.
 COPY --from=model /out/ /opt/knoggin/models/
 COPY --from=onnxruntime /ort/libonnxruntime.so /opt/knoggin/lib/libonnxruntime.so
