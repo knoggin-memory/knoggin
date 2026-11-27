@@ -7,7 +7,8 @@
 # install.sh and SHA256SUMS, serves them on a loopback port, and runs install.sh against
 # that into a temporary home. Then `knoggin --version` runs from the installed copy.
 # It also proves that the installer refuses a wrong hash and, under
-# KNOGGIN_REQUIRE_SIGNATURE=1, a file it cannot check the attestation of.
+# KNOGGIN_REQUIRE_SIGNATURE=1, a file it cannot check the attestation of, and that
+# scripts/newest-release.sh lets X.Y and latest move only forward.
 #
 # Needs pnpm, cargo-auditable, cargo-about, syft and python3. Nothing is signed, uploaded
 # or installed outside the temporary home; the archive stays in dist/.
@@ -36,6 +37,23 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
+
+echo "== X.Y and latest only move forward"
+releases='v0.2.0
+v0.10.1
+v1.0.0-rc.1
+model-embeddinggemma-2-q4-768-0
+v1.1.0'
+for case in "0.10.2 0.10 0.10.2" "0.10.0 0.10 0.10.1" "0.2.1 0.2 0.2.1" "1.0.0 - 1.1.0" "1.2.0 - 1.2.0"; do
+    set -- $case
+    line=$2
+    [ "$line" = - ] && line=
+    got=$(KNOGGIN_RELEASES=$releases scripts/newest-release.sh "$1" ${line:+"$line"})
+    [ "$got" = "$3" ] || {
+        echo "newest-release.sh $1 $line gave $got, not $3" >&2
+        exit 1
+    }
+done
 
 echo "== web UI"
 pnpm -C ui install --frozen-lockfile
