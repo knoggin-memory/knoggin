@@ -1,6 +1,6 @@
 name: Release
 
-# Tab "Testing, CI, releases", Releases. release-please keeps a release pull request
+# release-please keeps a release pull request
 # open; merging it makes a draft release and the tag vX.Y.Z, and the jobs below build,
 # sign, attest and publish that release. scripts/release-dry-run.sh runs the same
 # build-archive.sh and release-assets.sh on one machine, without publishing anything.
@@ -239,7 +239,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The real-model tier (tab "Testing, CI, releases") runs before a release as well as
+  # The real-model tier runs before a release as well as
   # weekly; nothing is tagged or published unless it passes. The model is downloaded,
   # not restored from a cache, like everything else a release builds from.
   real-model:

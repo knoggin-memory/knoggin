@@ -2,8 +2,7 @@
 """Drives recalld to make the data directory of tests/fixtures/recalld-data/.
 
 Run through scripts/make-recalld-data-fixture.sh, with `python3 -I`. Standard
-library only. Follows spec tab "Config, CLI, local install", "Import from
-recalld", "Test fixture".
+library only.
 
 Every recalld process runs from --work with HOME, data dir, socket and logs
 inside it, a minimal environment and an explicit --config, so nothing reaches

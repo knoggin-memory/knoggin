@@ -1,5 +1,5 @@
-# The fuzz targets of tab "Security", Fuzzing: a workspace of its own, built with the
-# nightly that rust-toolchain.toml pins. Run inside fuzz/:
+# The fuzz targets: a workspace of its own, built with the nightly that
+# rust-toolchain.toml pins. Run inside fuzz/:
 #
 #   cargo fuzz run <target> -- -max_total_time=300
 #

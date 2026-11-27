@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Writes a copy of model_q4.onnx with accuracy_level = 4 on every MatMulNBits
-node (8-bit kernels; measurement M5) and prints its SHA-256. The weights file
+node (8-bit kernels, the faster compute path) and prints its SHA-256. The weights file
 model_q4.onnx_data is not read or changed: the copy refers to it by name, so
 put the copy beside it. Fails unless the copy has the SHA-256 that
 knoggin-embed pins for the graph.

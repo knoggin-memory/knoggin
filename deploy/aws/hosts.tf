@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Tab "Deployment", AWS: the user hosts. Routers never run here.
+# AWS: the user hosts. Routers never run here.
 
 locals {
   # ECS_TASK_PIDS_LIMIT caps every user task at 256 processes and threads. The core

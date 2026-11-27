@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# The stack tests' override (tab "Deployment", Checking the Compose stack), used with
+# The stack tests' override, used with
 # compose.yaml and the profiles local-s3 and test. It is the only file that turns test
 # mode on. The harness (crates/knoggin-server/tests/support/stack.rs) sets
 # KNOGGIN_TEST_PORT, KNOGGIN_TEST_ISSUER_PORT, KNOGGIN_NET_PREFIX and KNOGGIN_SECRETS_DIR;

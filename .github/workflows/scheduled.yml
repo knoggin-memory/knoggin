@@ -1,6 +1,6 @@
 name: Scheduled
 
-# Tab "Testing, CI, releases": daily the advisory check and a Grype scan of the latest
+# Daily the advisory check and a Grype scan of the latest
 # released image; weekly the real-model tier and the fuzz tier. A failure opens an issue.
 
 on:

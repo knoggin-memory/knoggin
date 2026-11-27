@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Knoggin on one host (tab "Deployment", One host). Read README.md first.
+# Knoggin on one host. Read README.md first.
 #
 # .env keys: KNOGGIN_IMAGE (the released image, by digest), KNOGGIN_DOMAIN (the public
 # host name), KNOGGIN_NET_PREFIX (default 10.200), KNOGGIN_SECRETS_DIR (default

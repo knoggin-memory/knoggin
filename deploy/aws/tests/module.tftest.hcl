@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Tab "Deployment", "Checking the module without an account". Every run applies the module
+# Checks the module without an account. Every run applies the module
 # against a mock provider: nothing is sent to AWS and no credential is needed.
 
 mock_provider "aws" {
@@ -194,7 +194,7 @@ run "user_task_definition" {
     ] == [[0, 0]]
     error_message = "The core limit must be 0."
   }
-  # Measurement M11: drop this assertion with the line, if ECS cannot start the task.
+  # Unconfirmed on ECS: drop this assertion with the line if ECS cannot start the task.
   assert {
     condition     = jsondecode(aws_ecs_task_definition.user.container_definitions)[0].dockerSecurityOptions == ["no-new-privileges"]
     error_message = "The container must carry no-new-privileges."

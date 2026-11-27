@@ -1,9 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# A release on this machine, with nothing published (tab "Testing, CI, releases",
-# "Without the GitHub organization"): builds the web UI and the archive for this
-# machine's platform with the release's own scripts, writes the SBOM, the stamped
+# A release on this machine, with nothing published: builds the web UI and the archive
+# for this machine's platform with the release's own scripts, writes the SBOM, the stamped
 # install.sh and SHA256SUMS, serves them on a loopback port, and runs install.sh against
 # that into a temporary home. Then `knoggin --version` runs from the installed copy.
 # It also proves that the installer refuses a wrong hash and, under

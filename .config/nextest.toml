@@ -2,7 +2,7 @@
 
 [test-groups]
 # The stack tests share Docker: two harnesses must never pick a port or a
-# network prefix at the same moment (tab "Testing, CI, releases").
+# network prefix at the same moment.
 stack = { max-threads = 1 }
 
 # Overrides in the default profile apply to every profile.

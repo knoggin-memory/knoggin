@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Tab "Deployment", AWS: the bucket, the state database and the master key.
+# AWS: the bucket, the state database and the master key.
 
 # Snapshots. Versioning stays off: a kept old version would keep an erased store readable.
 resource "aws_s3_bucket" "snapshots" {
@@ -32,7 +32,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "snapshots" {
   }
 }
 
-# The state database (tab "State database", DynamoDB). Restoring it from a backup brings
+# The state database on DynamoDB. Restoring it from a backup brings
 # back revoked keys, ended sessions and removed users; docs/operations.md says what to do.
 resource "aws_dynamodb_table" "state" {
   name         = "${var.name}-state"

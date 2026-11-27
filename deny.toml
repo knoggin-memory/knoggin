@@ -1,4 +1,4 @@
-# cargo-deny configuration. Tab "Testing, CI, releases", deny.toml.
+# cargo-deny configuration.
 
 [advisories]
 # Vulnerabilities are errors: that is the tool's default and has no key.

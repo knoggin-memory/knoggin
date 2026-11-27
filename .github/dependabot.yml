@@ -1,4 +1,4 @@
-# Tab "Testing, CI, releases": weekly, a 7-day cooldown, one group per ecosystem.
+# Weekly, a 7-day cooldown, one group per ecosystem.
 # fuzz/ is a Cargo workspace of its own, with its own Cargo.lock, so it has its own
 # cargo entry. The docker entry reads deploy/Dockerfile.
 version: 2

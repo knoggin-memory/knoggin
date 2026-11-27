@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""Checks on the files in integrations/ (tab "SDK and integrations").
+"""Checks on the files in integrations/.
 
 Run from the repository root:
     uv run --with pytest --with pyyaml python -m pytest integrations/tests -q

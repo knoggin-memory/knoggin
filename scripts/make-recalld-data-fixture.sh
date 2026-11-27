@@ -3,8 +3,7 @@
 # Makes tests/fixtures/recalld-data/: a recalld data directory made by recalld
 # at the reference commit through its own REST API, and beside its files the
 # lines the importer yields from it (expected-export.jsonl) and the counts that
-# `knoggin import recalld --json` prints (expected-counts.json). Spec tab
-# "Config, CLI, local install", "Import from recalld", "Test fixture".
+# `knoggin import recalld --json` prints (expected-counts.json).
 #
 # Usage: scripts/make-recalld-data-fixture.sh <recalld checkout> [work dir]
 #
