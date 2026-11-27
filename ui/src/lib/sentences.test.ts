@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { lockSentence, modelCause, signInError } from './sentences';
-import { setupSteps } from './setup';
+import { setupSteps, type Tab } from './setup';
 import { dayLabel, safeReturnTo, who } from './session.svelte';
 import { resolveTheme } from './prefs.svelte';
 
@@ -60,6 +62,15 @@ describe('set-up steps', () => {
     expect(server.map((s) => s.code)).toContain('https://m.example/mcp/plugin');
     expect(server.map((s) => s.code)).toContain('uvx knoggin@0.1.0 init --server https://m.example');
     expect(setupSteps({ ...base, tab: 'plugin' }).map((s) => s.code)).toContain('uvx knoggin@0.1.0 init');
+  });
+  it('gives the commands and config of integrations/connectors, with this address', () => {
+    const connector = (f: string) => readFileSync(join(import.meta.dirname, '../../../integrations/connectors', f), 'utf8').replaceAll('https://memory.example.com/mcp', 'https://m.example/mcp');
+    const codes = (tab: Tab, sv: boolean) => setupSteps({ ...base, tab, addressForm: sv, signInOn: true }).flatMap((s) => (s.code ? [s.code] : []));
+    for (const tab of ['claude-code', 'codex'] as const)
+      for (const sv of [false, true]) for (const code of codes(tab, sv)) expect(connector(`${tab}/README.md`)).toContain(code);
+    expect(codes('claude-code', false)).toEqual(['claude mcp add --scope user knoggin -- knoggin mcp']);
+    expect(codes('cursor', false)).toEqual([connector('cursor/local.json').trimEnd()]);
+    expect(codes('cursor', true)).toEqual([connector('cursor/server.json').trimEnd()]);
   });
   it('an app never shows a key, and says where keys are made at a public address', () => {
     const steps = setupSteps({ ...base, tab: 'claude-code', app: 'Support bot', addressForm: true, keysElsewhere: true });

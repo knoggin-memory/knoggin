@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The steps of "Set up an agent". The words and the commands for each agent are the
-// prototype's; they are written here, not read from integrations/connectors.
+// The steps of "Set up an agent". The commands and config for each agent are the ones in
+// integrations/connectors, with this deployment's address.
 
 export const TABS = [
   { id: 'claude-code', name: 'Claude Code' },
@@ -38,7 +38,10 @@ export interface SetupInput {
   keysElsewhere: boolean;
 }
 
-const localEntry = '{\n  "mcpServers": {\n    "knoggin": { "command": "knoggin", "args": ["mcp"] }\n  }\n}';
+// integrations/connectors/cursor/local.json (the same entry as claude-code/local.json).
+const localEntry = '{\n  "mcpServers": {\n    "knoggin": {\n      "command": "knoggin",\n      "args": ["mcp"]\n    }\n  }\n}';
+// integrations/connectors/cursor/server.json, with the address filled in.
+const cursorServer = (url: string) => `{\n  "mcpServers": {\n    "knoggin": {\n      "url": "${url}"\n    }\n  }\n}`;
 
 export function setupSteps(i: SetupInput): Step[] {
   const sv = i.addressForm, on = i.signInOn, M = i.mcpUrl, B = i.publicUrl;
@@ -67,17 +70,17 @@ export function setupSteps(i: SetupInput): Step[] {
 
   switch (i.tab) {
     case 'claude-code':
-      if (!sv) s('Add Knoggin to Claude Code.', 'claude mcp add knoggin -- knoggin mcp', 'Claude Code starts Knoggin on this machine when it needs it.');
+      if (!sv) s('Add Knoggin to Claude Code.', 'claude mcp add --scope user knoggin -- knoggin mcp', 'Claude Code starts Knoggin on this machine when it needs it.');
       else {
-        s('Add the server to Claude Code.', `claude mcp add --transport http knoggin ${M}`);
+        s('Add the server to Claude Code.', `claude mcp add --scope user --transport http knoggin ${M}`);
         if (on) s('In Claude Code, run /mcp, choose knoggin and sign in.', undefined, 'Your browser opens to sign in.');
       }
       break;
     case 'claude-ai':
       hosted('claude.ai', () => {
-        s('In Claude, open Customize, then Connectors, and choose Add custom connector.');
-        s('Paste the server address and choose Connect.', M);
-        s('Sign in when the browser asks.');
+        s('In Claude, open Customize, then Connectors, choose + Add and add a custom connector.');
+        s('Name it Knoggin, paste the server address and choose Continue twice.', M);
+        s('Choose Sign in now, then Add, and sign in when the browser asks.');
         // The user's own instruction to their assistant; Knoggin itself sends no such instruction.
         s('Optional. Add this line to your personal preferences in claude.ai:', 'At the start of each conversation, use Knoggin to load relevant context.');
       });
@@ -90,14 +93,14 @@ export function setupSteps(i: SetupInput): Step[] {
       }
       break;
     case 'cursor':
-      s('Add this to .cursor/mcp.json in a project, or to the global file.', sv ? `{\n  "mcpServers": {\n    "knoggin": { "url": "${M}" }\n  }\n}` : localEntry);
+      s('Add this to .cursor/mcp.json in a project, or to the global file.', sv ? cursorServer(M) : localEntry);
       if (sv && on) s('Open Cursor settings, then MCP, and sign in to knoggin.');
       break;
     case 'chatgpt':
       hosted('ChatGPT', () => {
-        s('Turn on developer mode under Settings, then Connectors.', undefined, 'Reported to need a Business, Enterprise or Edu plan.');
-        s('Add a connector with the server address.', M);
-        s('Sign in when asked.');
+        s('In ChatGPT on the web, open Plugins, choose the plus button, then Add custom MCP server.', undefined, 'Business and Enterprise/Edu plans. On Pro, a custom server may only read.');
+        s('Give the server address, choose OAuth, and create it as a plugin.', M);
+        s('Sign in when asked, then install the plugin.');
       });
       break;
     case 'plugin':
