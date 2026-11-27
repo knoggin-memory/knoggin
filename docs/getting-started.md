@@ -22,6 +22,8 @@ curl -fsSL https://github.com/knoggin-memory/knoggin/releases/latest/download/in
 
 Both put the program in `~/.knoggin/` and link `~/.local/bin/knoggin`. Both check the SHA-256 of the download, and check its build attestation when `gh` or `cosign` is installed. Knoggin runs on Linux (x86_64 and arm64) and on Macs with Apple silicon.
 
+We recommend running the installer as `curl … | KNOGGIN_REQUIRE_SIGNATURE=1 sh`, which needs `gh` or `cosign`: without it the installer only checks hashes that come from the same release, so a release tampered with as a whole would still pass.
+
 ## First run
 
 ```sh

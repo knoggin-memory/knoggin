@@ -20,6 +20,8 @@ knoggin start
 knoggin open
 ```
 
+We recommend running the installer as `curl … | KNOGGIN_REQUIRE_SIGNATURE=1 sh`, which needs `gh` or `cosign`: without it the installer only checks hashes that come from the same release, so a release tampered with as a whole would still pass.
+
 Everything stays on your machine, encrypted at rest under `~/.knoggin/`. The embedding model is downloaded once on first run.
 
 **As a server for several people.** On one host with Docker and an S3-compatible bucket, from `deploy/docker/`:
@@ -44,7 +46,8 @@ docker compose up -d
 Every archive carries a build attestation, and every image is signed:
 
 ```sh
-gh attestation verify knoggin-<version>-<target>.tar.gz --repo knoggin-memory/knoggin
+gh attestation verify knoggin-<version>-<target>.tar.gz --repo knoggin-memory/knoggin \
+  --cert-identity https://github.com/knoggin-memory/knoggin/.github/workflows/release.yml@refs/heads/main
 
 cosign verify ghcr.io/knoggin-memory/knoggin@sha256:<digest> \
   --certificate-identity https://github.com/knoggin-memory/knoggin/.github/workflows/release.yml@refs/heads/main \
