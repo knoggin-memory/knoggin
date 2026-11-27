@@ -1,6 +1,6 @@
 # knoggin-core: the foundation contract
 
-What exists, and where the next pieces go. The spec (tabs "Engine" and "Workspace and
+What each module holds, and the rules the store code keeps. The spec (tabs "Engine" and "Workspace and
 crates") is the authority; this file says how the code meets it.
 
 ## Modules
@@ -66,11 +66,11 @@ includes the entity postings and the vector table's ID-to-slot map), calls
 Not done by the helpers: change counters, `last_write_at`/`last_write_client`, and the
 automatic links. The operations set those.
 
-## Where the next pieces go
+## Adding to the store
 
-Add files with their own `impl Store` blocks and one `mod` line in the parent:
-
-- `snapshot/` is done; its round-trip property test is `tests/snapshot_round_trip.rs`, sharing the generator in `tests/support/`
+Add files with their own `impl Store` blocks and one `mod` line in the parent. The snapshot
+round-trip property test is `tests/snapshot_round_trip.rs`, sharing the generator in
+`tests/support/`.
 
 Reads record nothing. `recall` returns `hits` (kind per hit) for `record_access`; for
 `get_memory` the host passes the memory as `direct`, for `find_similar` the items as
