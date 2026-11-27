@@ -146,13 +146,59 @@ Knoggin is licensed under the AGPL, which gives the users of a network service t
 
 ## Checking isolation on a live stack
 
-The isolation tests (`crates/knoggin-server/tests/stack_isolation.rs`) can run against a deployed stack when `KNOGGIN_STACK_URL` and test credentials are set. On AWS their network probe is a one-off task of the pinned `busybox` image, which the hosts can pull only from the deployment's own ECR repository. Copy it there by the digest in `tests/images.toml`:
+The isolation tests (`crates/knoggin-server/tests/stack_isolation.rs`) run against a deployed stack when `KNOGGIN_STACK_URL` and `KNOGGIN_STACK_CREDENTIALS` are set. Run them once before you announce a deployment. Without the two variables, the same test starts the one-host stack on Docker instead.
 
-```sh
-crane copy busybox@sha256:<digest from tests/images.toml> <account>.dkr.ecr.<region>.amazonaws.com/knoggin:probe-busybox-1.37.0
+**What the run needs:**
+
+- Two test identities, A and B, that your provider lets in, and one admin identity. The run removes B at the end. It leaves A two apps and their keys, named `appx…`, `appy…`, `keyx…` and `keyy…`.
+- For A and B: the value of the `__Host-session` cookie of a browser signed in as that person, and an OAuth access token that your provider issued for this server, for instance to an MCP client that signed in as that person. For the admin: the cookie only. Get the tokens just before the run: they expire.
+- A bucket in another AWS account, in the deployment's region, and keys of that account that may upload to it. The run leaves one small object `knoggin-probe/<id>-outside` there.
+- Keys of the deployment's account that may describe task definitions, list and describe tasks, register and deregister a task definition, and run a task.
+- The pinned `busybox` image in the deployment's ECR repository. The hosts can pull from nowhere else. Copy it by the digest in `tests/images.toml`:
+
+  ```sh
+  crane copy busybox@sha256:<digest from tests/images.toml> <account>.dkr.ecr.<region>.amazonaws.com/knoggin:probe-busybox-1.37.0
+  ```
+
+**Write the credentials file** with mode 0600; the test refuses a file that others can read:
+
+```json
+{
+  "name": "knoggin",
+  "a": { "session": "<A's cookie value>", "token": "<A's access token>" },
+  "b": { "session": "<B's cookie value>", "token": "<B's access token>" },
+  "admin": { "session": "<the admin's cookie value>" },
+  "outside": {
+    "bucket": "<bucket in another account>",
+    "access_key_id": "<key ID of that account>",
+    "secret_access_key": "<its secret>",
+    "session_token": "<its session token, if the keys are temporary>"
+  }
+}
 ```
 
-Run it once before you announce a deployment.
+`name` is the module's `name` variable. It names the cluster and the task definitions.
+
+**Run it** from a checkout, with `cargo-nextest`:
+
+```sh
+export KNOGGIN_STACK_URL=https://<your name>
+export KNOGGIN_STACK_CREDENTIALS=$PWD/stack-test.json
+export AWS_REGION=<region>
+export AWS_ACCESS_KEY_ID=<key ID> AWS_SECRET_ACCESS_KEY=<secret> AWS_SESSION_TOKEN=<session token>
+cargo nextest run -p knoggin-server --run-ignored only -E 'binary(stack_isolation)'
+```
+
+Set all three key variables. The repository's `.cargo/config.toml` turns off the shared AWS config and credentials files and the instance metadata for every test, and fills a key variable that is not set with a dummy value.
+
+**What it checks.** Every isolation check that goes through the public address runs as on one host: rules I1 to I3, I12, I13, I16 and I17. Rule I9 runs as a one-off probe task, because ECS cannot join a task's network namespace. The test registers a task definition `<name>-isolation-probe` for the `busybox` copy, runs it once on the user hosts with the EC2 launch type, the user subnets, the user security group and no role, and deregisters it. From there, another user container, the router's public and metrics ports, the metadata address, an outside address, a lookup of an outside name, and an upload to the outside bucket must all fail; only the router's internal port answers. The probe reports through its exit code, so it needs no log group. The test first makes the same upload from your machine, which must work, so that the refusal inside means something.
+
+**What it skips, and why.** These steps need the Docker daemon of the one-host stack:
+
+- the checks of the Compose file and the Caddyfile: they check files of the repository, not a stack (the module has `tofu test` for its own);
+- the probes from inside a container's network namespace and from the other services, the description of a user container, and the second stack beside the first: the probe task above takes their place;
+- the park of rule I10: it is seen in Docker's list of containers, and on AWS a container parks only after 10 idle minutes;
+- the at-rest and log checks of rule I14: they read the database dump, the stand-in bucket's files and the Compose logs. On AWS the data is in DynamoDB, S3 and CloudWatch, which the test does not read.
 
 ## See also
 

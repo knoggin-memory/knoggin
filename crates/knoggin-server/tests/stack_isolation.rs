@@ -3,6 +3,23 @@
 //! I1 to I3, I8 to I10, I12 to I14, I16 and I17), the Compose file checks and the
 //! Caddyfile log test (tab "Deployment", Checking the Compose stack). Two users, A and B,
 //! each with a personal store and apps, behind the router of one stack.
+//!
+//! With `KNOGGIN_STACK_URL` and `KNOGGIN_STACK_CREDENTIALS` set, the same test runs
+//! against a deployed AWS stack instead (`support/deployed.rs`, and `docs/deploy-aws.md`
+//! for how to run it). Every check made through the router's public address runs there
+//! too. These need the Docker daemon that runs the local stack, and are skipped:
+//!
+//! - the Compose file checks and the Caddyfile test: they check files of this
+//!   repository, not a stack (the AWS module has `tofu test` for its own);
+//! - the probes from inside a container's network namespace, the description of a user
+//!   container, the probes from the services and the second stack: ECS cannot join a
+//!   task's namespace, so on AWS a one-off probe task in the user network replaces them,
+//!   and adds an upload to a bucket in another account;
+//! - the park of rule I10, which is seen in Docker's container list (on AWS a container
+//!   parks only after 10 idle minutes);
+//! - the at-rest and log checks of rule I14, which read the database dump, the bucket
+//!   stand-in's files and the Compose logs (on AWS those are DynamoDB, S3 and CloudWatch,
+//!   which this test does not read).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -12,12 +29,15 @@
     unreachable_pub
 )]
 
+#[path = "support/deployed.rs"]
+mod deployed;
 #[path = "support/stack.rs"]
 mod stack;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
+use deployed::{Credentials, Target};
 use knoggin_server::router::forward::STORE_ROUTES;
 use reqwest::Method;
 use serde_json::{Value, json};
@@ -54,13 +74,30 @@ fn not_success(a: &Answer, what: &str) {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs docker"]
 async fn isolation_on_the_one_host_stack() {
-    let s = Stack::up().await;
+    // `None` on the local stack; the test credentials on a deployed one.
+    let (s, deployed) = match deployed::target_from_env() {
+        Target::Local => (Stack::up().await, None),
+        Target::Deployed { url, credentials } => {
+            println!("running against the deployed stack at {url}");
+            (Stack::remote(&url), Some(Credentials::read(&credentials)))
+        }
+    };
     let sfx = suffix();
-    compose_file_checks(&s);
-
-    let a = s.sign_in(&format!("alice{sfx}")).await;
-    let b = s.sign_in(&format!("bob{sfx}")).await;
-    let admin = s.sign_in("admin").await;
+    let (a, b, admin) = match &deployed {
+        None => {
+            compose_file_checks(&s);
+            (
+                s.sign_in(&format!("alice{sfx}")).await,
+                s.sign_in(&format!("bob{sfx}")).await,
+                s.sign_in("admin").await,
+            )
+        }
+        Some(c) => (
+            s.signed_in("A", &c.a.session, Some(&c.a.token)).await,
+            s.signed_in("B", &c.b.session, Some(&c.b.token)).await,
+            s.signed_in("the admin", &c.admin.session, None).await,
+        ),
+    };
     let (ax_name, ay_name, bx_name) = (
         format!("appx{sfx}"),
         format!("appy{sfx}"),
@@ -298,31 +335,16 @@ async fn isolation_on_the_one_host_stack() {
         .await;
     assert_eq!(r.status, 200, "{}", r.body);
     assert!(r.json()["result"]["isError"].is_null(), "{}", r.body);
-    // I9: from inside A's container, only the router's internal port answers.
-    let ca = s.container_of(&a).expect("A's container");
-    let cb = s.container_of(&b).expect("B's container");
-    assert_ne!(ca.docker_id, cb.docker_id, "one container per user");
-    network_probes(&s, &ca, &cb);
-    container_description(&s, &ca);
-    service_probes(&s);
-    second_stack_leaves_this_one_alone(&s, &[&ca, &cb]).await;
-    let mut user_logs = String::new();
-    for c in s.user_containers() {
-        user_logs.push_str(&text(&docker(&["logs", &c.docker_id])));
-    }
-    drop(alive);
-
-    // I10: once idle, A's container parks; it no longer runs and its network is gone.
-    assert!(
-        eventually(Duration::from_secs(90), || async {
-            !s.user_containers()
-                .iter()
-                .any(|c| c.docker_id == ca.docker_id)
-                && !s.user_networks().contains(&ca.network)
-        })
-        .await,
-        "A's container or network is still there after the park"
-    );
+    // I9 and I10. The user containers' logs are read now, before they park.
+    let user_logs = if let Some(c) = &deployed {
+        // On AWS: from a probe task in the user network, only the router's internal
+        // port answers, and an upload to another account's bucket is refused.
+        deployed::network_probe(c).await;
+        drop(alive);
+        String::new()
+    } else {
+        local_containers(&s, &a, &b, alive).await
+    };
 
     // I12: a revoked key is refused on its next request.
     let r = s
@@ -341,7 +363,8 @@ async fn isolation_on_the_one_host_stack() {
         "revoked key",
     );
 
-    // I14: nothing at rest is plaintext, and no log holds a marker or a secret.
+    // I14 on the local stack: nothing at rest is plaintext, and no log holds a marker or
+    // a secret.
     let mut markers: Vec<String> = texts.to_vec();
     markers.extend([
         a.sub.clone(),
@@ -358,18 +381,20 @@ async fn isolation_on_the_one_host_stack() {
         Cred::Bearer(t) => t.clone(),
         _ => unreachable!(),
     }));
-    at_rest_checks(&s, &markers, &secrets);
-    let mut logs = user_logs;
-    for service in ["router", "launcher", "lifecycle"] {
-        logs.push_str(&s.logs(service));
+    if deployed.is_none() {
+        at_rest_checks(&s, &markers, &secrets);
+        let mut logs = user_logs;
+        for service in ["router", "launcher", "lifecycle"] {
+            logs.push_str(&s.logs(service));
+        }
+        for m in markers.iter().chain(&secrets) {
+            assert!(!logs.contains(m.as_str()), "a log holds `{m}`");
+        }
+        assert!(
+            !logs.contains("X-Amz-Signature"),
+            "a log holds a signed link"
+        );
     }
-    for m in markers.iter().chain(&secrets) {
-        assert!(!logs.contains(m.as_str()), "a log holds `{m}`");
-    }
-    assert!(
-        !logs.contains("X-Amz-Signature"),
-        "a log holds a signed link"
-    );
 
     // I17: once an admin removes B, B's key, session and token are refused at once.
     let r = s
@@ -392,6 +417,44 @@ async fn isolation_on_the_one_host_stack() {
             what,
         );
     }
+}
+
+/// Rules I9 and I10 on the local stack, through Docker: the probes from inside A's
+/// container and from the services, the container's description, a second stack beside
+/// this one, and A's park once `alive` stops. Returns the user containers' logs, read
+/// before they park.
+async fn local_containers(
+    s: &Stack,
+    a: &stack::User,
+    b: &stack::User,
+    alive: stack::KeepAlive,
+) -> String {
+    // I9: from inside A's container, only the router's internal port answers.
+    let ca = s.container_of(a).expect("A's container");
+    let cb = s.container_of(b).expect("B's container");
+    assert_ne!(ca.docker_id, cb.docker_id, "one container per user");
+    network_probes(s, &ca, &cb);
+    container_description(s, &ca);
+    service_probes(s);
+    second_stack_leaves_this_one_alone(s, &[&ca, &cb]).await;
+    let mut user_logs = String::new();
+    for c in s.user_containers() {
+        user_logs.push_str(&text(&docker(&["logs", &c.docker_id])));
+    }
+    drop(alive);
+
+    // I10: once idle, A's container parks; it no longer runs and its network is gone.
+    assert!(
+        eventually(Duration::from_secs(90), || async {
+            !s.user_containers()
+                .iter()
+                .any(|c| c.docker_id == ca.docker_id)
+                && !s.user_networks().contains(&ca.network)
+        })
+        .await,
+        "A's container or network is still there after the park"
+    );
+    user_logs
 }
 
 /// Reads the merged Compose file and checks what tab "Deployment" fixes: capabilities,
@@ -792,6 +855,10 @@ fn at_rest_checks(s: &Stack, markers: &[String], secrets: &[String]) {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "needs docker"]
 async fn the_caddyfile_logs_no_request_address() {
+    if deployed::target_from_env() != Target::Local {
+        println!("skipped: the Caddyfile test checks a file of this repository through Docker");
+        return;
+    }
     struct Gone(String);
     impl Drop for Gone {
         fn drop(&mut self) {
@@ -835,4 +902,70 @@ async fn the_caddyfile_logs_no_request_address() {
         !logs.contains(&marker),
         "Caddy logged the request address:\n{logs}"
     );
+}
+
+/// Which stack the run targets, from the two variables (no Docker, no network).
+#[test]
+fn the_target_follows_the_two_variables() {
+    assert_eq!(deployed::target(None, None), Ok(Target::Local));
+    assert_eq!(deployed::target(Some(""), Some(" ")), Ok(Target::Local));
+    assert_eq!(
+        deployed::target(Some("https://memory.example.com/"), Some("/tmp/c.json")),
+        Ok(Target::Deployed {
+            url: "https://memory.example.com".into(),
+            credentials: "/tmp/c.json".into(),
+        })
+    );
+    for half in [
+        deployed::target(Some("https://memory.example.com"), None),
+        deployed::target(Some("https://memory.example.com"), Some("")),
+        deployed::target(None, Some("/tmp/c.json")),
+        deployed::target(Some("http://127.0.0.1:8080"), Some("/tmp/c.json")),
+    ] {
+        assert!(half.is_err(), "{half:?}");
+    }
+}
+
+/// The probe's upload is signed as AWS documents: the signing key of the Signature
+/// Version 4 example (AWS General Reference, "Examples of how to derive a signing key").
+#[test]
+fn the_probe_signs_its_upload_as_aws_does() {
+    let key = deployed::signing_key(
+        "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY",
+        "20120215",
+        "us-east-1",
+        "iam",
+    );
+    assert_eq!(
+        deployed::hex(&key),
+        "f4780e2d9f65fa895f9c67b32ce1baf0b0d8a43505a000a1a9e090d414db404d"
+    );
+}
+
+/// The probe's script exits with the number of the first check that does not hold.
+#[test]
+fn the_probe_script_reports_the_first_failed_check() {
+    let outside = deployed::Outside {
+        bucket: "elsewhere".into(),
+        access_key_id: "AKIDEXAMPLE".into(),
+        secret_access_key: "secret".into(),
+        session_token: None,
+    };
+    let now = time::OffsetDateTime::from_unix_timestamp(1_795_000_000).unwrap();
+    let upload = deployed::Upload::new(&outside, "eu-west-1", "k", now);
+    let checks = [
+        ("one".to_owned(), "true".to_owned()),
+        ("two".to_owned(), "false".to_owned()),
+        ("three".to_owned(), "false".to_owned()),
+    ];
+    let script = deployed::script(&checks, &upload).replace("/tmp/form", "/dev/null");
+    let out = std::process::Command::new("sh")
+        .args(["-c", &script])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out));
+    let body = String::from_utf8(upload.body).unwrap();
+    assert!(body.contains("name=\"x-amz-credential\"\r\n\r\nAKIDEXAMPLE/"));
+    assert!(body.contains("/eu-west-1/s3/aws4_request"));
+    assert_eq!(upload.url, "https://elsewhere.s3.eu-west-1.amazonaws.com/");
 }

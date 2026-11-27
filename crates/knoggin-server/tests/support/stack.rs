@@ -235,6 +235,14 @@ fn write_secrets(dir: &Path) -> Vec<String> {
     values
 }
 
+fn client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(90))
+        .build()
+        .unwrap()
+}
+
 /// A credential for a request.
 #[derive(Debug, Clone)]
 pub enum Cred {
@@ -301,6 +309,8 @@ pub struct Stack {
     pub secrets: Vec<String>,
     dir: tempfile::TempDir,
     http: reqwest::Client,
+    /// A deployed stack that this test did not start and must not tear down.
+    remote: bool,
 }
 
 impl Stack {
@@ -337,11 +347,24 @@ impl Stack {
             base: format!("http://127.0.0.1:{port}"),
             secrets,
             dir,
-            http: reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .timeout(Duration::from_secs(90))
-                .build()
-                .unwrap(),
+            http: client(),
+            remote: false,
+        }
+    }
+
+    /// A deployed stack at `base`, reached over the network only: nothing to build,
+    /// start or tear down, and no secrets of its own.
+    pub fn remote(base: &str) -> Self {
+        Self {
+            project: String::new(),
+            prefix: String::new(),
+            port: 0,
+            issuer_port: 0,
+            base: base.to_owned(),
+            secrets: Vec::new(),
+            dir: tempfile::tempdir().unwrap(),
+            http: client(),
+            remote: true,
         }
     }
 
@@ -520,9 +543,18 @@ impl Stack {
         match cred {
             Cred::None => b,
             Cred::Session(cookie) => b
-                .header("cookie", format!("knoggin_session={cookie}"))
+                .header("cookie", format!("{}={cookie}", self.session_cookie()))
                 .header("x-knoggin-ui", "1"),
             Cred::Bearer(token) => b.bearer_auth(token),
+        }
+    }
+
+    /// The session cookie's name: `__Host-` over `https`, as the router names it.
+    fn session_cookie(&self) -> &'static str {
+        if self.base.starts_with("https://") {
+            "__Host-session"
+        } else {
+            "knoggin_session"
         }
     }
 
@@ -608,13 +640,32 @@ impl Stack {
 
     /// Signs `sub` in with a browser session and an access token.
     pub async fn sign_in(&self, sub: &str) -> User {
-        let session = Cred::Session(self.session(sub).await);
-        let token = Cred::Bearer(self.token(sub).await);
+        let session = self.session(sub).await;
+        let token = self.token(sub).await;
+        self.signed_in(sub, &session, Some(&token)).await
+    }
+
+    /// The user of a session cookie's value and, if given, an access token of the same
+    /// person, signed in elsewhere. `sub` is only a label.
+    pub async fn signed_in(&self, sub: &str, session: &str, token: Option<&str>) -> User {
+        let session = Cred::Session(session.to_owned());
+        let token = token.map_or(Cred::None, |t| Cred::Bearer(t.to_owned()));
         let me = self
             .call(Method::GET, "/v1/session", &session, &[], None)
             .await
             .json();
-        assert_eq!(me["signedIn"], true, "{me}");
+        assert_eq!(me["signedIn"], true, "{sub}'s session: {me}");
+        // Credentials pasted into a file can be mixed up; the test issuer's cannot.
+        if self.remote && matches!(token, Cred::Bearer(_)) {
+            let by_token = self
+                .call(Method::GET, "/v1/session", &token, &[], None)
+                .await
+                .json();
+            assert_eq!(
+                by_token["user"]["id"], me["user"]["id"],
+                "{sub}'s token and session belong to one person"
+            );
+        }
         User {
             sub: sub.to_owned(),
             id: me["user"]["id"].as_str().unwrap().to_owned(),
@@ -711,6 +762,9 @@ impl Stack {
 
     /// Removes everything this stack made. Safe to call twice.
     pub fn teardown(&self) {
+        if self.remote {
+            return;
+        }
         let label = format!("label=knoggin.deployment={}", self.project);
         // The router first, without its park (a stop would wait for every container).
         let _ = self.compose(&["kill", "router", "launcher"]);
@@ -728,6 +782,9 @@ impl Stack {
 
 impl Drop for Stack {
     fn drop(&mut self) {
+        if self.remote {
+            return;
+        }
         if std::thread::panicking() {
             for service in ["router", "launcher", "lifecycle", "s3-init"] {
                 eprintln!(
