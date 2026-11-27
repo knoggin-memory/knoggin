@@ -1,7 +1,6 @@
 # knoggin-core: the foundation contract
 
-What each module holds, and the rules the store code keeps. The spec (tabs "Engine" and "Workspace and
-crates") is the authority; this file says how the code meets it.
+What each module holds, and the rules the store code keeps.
 
 ## Modules
 

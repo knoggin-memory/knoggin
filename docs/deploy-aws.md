@@ -191,14 +191,14 @@ cargo nextest run -p knoggin-server --run-ignored only -E 'binary(stack_isolatio
 
 Set all three key variables. The repository's `.cargo/config.toml` turns off the shared AWS config and credentials files and the instance metadata for every test, and fills a key variable that is not set with a dummy value.
 
-**What it checks.** Every isolation check that goes through the public address runs as on one host: rules I1 to I3, I12, I13, I16 and I17. Rule I9 runs as a one-off probe task, because ECS cannot join a task's network namespace. The test registers a task definition `<name>-isolation-probe` for the `busybox` copy, runs it once on the user hosts with the EC2 launch type, the user subnets, the user security group and no role, and deregisters it. From there, another user container, the router's public and metrics ports, the metadata address, an outside address, a lookup of an outside name, and an upload to the outside bucket must all fail; only the router's internal port answers. The probe reports through its exit code, so it needs no log group. The test first makes the same upload from your machine, which must work, so that the refusal inside means something.
+**What it checks.** Every isolation check that goes through the public address runs as on one host: each user and app reaches only its own stores, a revoked key is refused at once, an access token reaches only memories and the session route, and a removed user's credentials stop working. The network check (a user container reaches only the router's internal port) runs as a one-off probe task, because ECS cannot join a task's network namespace. The test registers a task definition `<name>-isolation-probe` for the `busybox` copy, runs it once on the user hosts with the EC2 launch type, the user subnets, the user security group and no role, and deregisters it. From there, another user container, the router's public and metrics ports, the metadata address, an outside address, a lookup of an outside name, and an upload to the outside bucket must all fail; only the router's internal port answers. The probe reports through its exit code, so it needs no log group. The test first makes the same upload from your machine, which must work, so that the refusal inside means something.
 
 **What it skips, and why.** These steps need the Docker daemon of the one-host stack:
 
 - the checks of the Compose file and the Caddyfile: they check files of the repository, not a stack (the module has `tofu test` for its own);
 - the probes from inside a container's network namespace and from the other services, the description of a user container, and the second stack beside the first: the probe task above takes their place;
-- the park of rule I10: it is seen in Docker's list of containers, and on AWS a container parks only after 10 idle minutes;
-- the at-rest and log checks of rule I14: they read the database dump, the stand-in bucket's files and the Compose logs. On AWS the data is in DynamoDB, S3 and CloudWatch, which the test does not read.
+- the park of an idle container: it is seen in Docker's list of containers, and on AWS a container parks only after 10 idle minutes;
+- the checks that nothing is stored or logged in plain text: they read the database dump, the stand-in bucket's files and the Compose logs. On AWS the data is in DynamoDB, S3 and CloudWatch, which the test does not read.
 
 ## See also
 

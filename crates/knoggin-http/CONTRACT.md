@@ -1,8 +1,7 @@
 # knoggin-http: the store layer contract
 
-For anyone working on `mcp`, `edge` (with the control routes) or `local`. The spec
-(tabs "Workspace and crates", "REST API", "Engineering rules") is the authority; this file
-says what exists and how to use it. Deviations are in `docs/spec-deviations.md`.
+For anyone working on `mcp`, `edge` (with the control routes) or `local`: what exists and
+how to use it.
 
 ## Modules
 
@@ -65,7 +64,7 @@ of the request types: set them before calling (`req.id = ...`).
 
 ## The router (for `edge`)
 
-- `store_layer(host)` holds every store route of the REST tab, `/v1/ui/*` included.
+- `store_layer(host)` holds every REST store route, `/v1/ui/*` included.
   It has no fallback, so merge it into the edge router and set the edge's fallback (404 as
   `not_found`) there. It applies its own body limits (256 KiB, `body_bytes` on the batch, none
   on the import), the request timeout (export and import exempt), `trace::observe`, error

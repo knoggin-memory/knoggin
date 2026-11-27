@@ -1,9 +1,22 @@
 # Export files
 
-Written by hand (spec tab "Testing, CI, releases", Fixtures). No script makes them: edit the
-files themselves, and keep `bad-expected.json` and the line table below in step with
-`bad.jsonl`. The rules are those of the tab "Config, CLI, local install", "Export file format"
-and "Import rules" (numbered below as R1 to R10), with the limits of the tab "Engine".
+Written by hand. No script makes them: edit the files themselves, and keep
+`bad-expected.json` and the line table below in step with `bad.jsonl`. The tables cite these
+import rules; "Engine" means the limits a save checks, and "format" the export file format:
+
+- R1: the first line is the header, and only the first.
+- R2: every line is one JSON object of a known type, with known fields of the right type and
+  in range, times at most a day ahead, and the namespace or memories it names already there.
+- R3: a memory's phase decides its fields: `full` needs a summary, `summary` has no full
+  text, and a ghost has no summary, full text, tags or labels.
+- R4: a namespace that exists and holds memories keeps its policy and creation time, and its
+  line is skipped; an empty one takes the line's policy.
+- R5: a memory whose ID is already there is `already_exists` with `onConflict=error`, and
+  skipped with `onConflict=skip`.
+- R6: `savedBy` and `client` do not travel: an imported memory is saved by `import`.
+- R8: an automatic `associative` edge is skipped, an edge that is already there is skipped and
+  keeps its weight, and both of an edge's memories must exist.
+- R9: a server's store size cap and rate limits apply.
 
 | File | What it is for |
 | --- | --- |

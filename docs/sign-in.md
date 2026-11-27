@@ -61,7 +61,7 @@ WorkOS AuthKit is the first provider Knoggin was written and tested against. In 
 - Logo: `ui/static/logo-horizontal.svg` for light backgrounds, `ui/static/logo-horizontal-white.svg` for dark ones. Icon: `ui/static/logo-mark.svg`. Convert to PNG if the dashboard asks for one.
 - Colours: page background Cream `#FCF7EF`, buttons and links Forest `#2A442A`, text Chocolate `#372416`. The accent is Terracotta `#CE6B36`.
 
-**Two things not yet confirmed against a real AuthKit environment** (measurement M13). The rules below cover both outcomes:
+**Two things not yet confirmed against a real AuthKit environment**. The rules below cover both outcomes:
 
 - **Pre-registered clients.** If AuthKit's tokens for a client you registered by hand carry no audience that names this deployment, such clients are not supported; use agents that register themselves. Never put a client ID that other applications share into `auth.audiences`: every token of that environment would then be accepted.
 - **Email in access tokens.** An agent's token creates a user only when it carries a verified email. If AuthKit's access tokens carry none, each person signs in to the web UI once first; after that their agents connect. If the provider puts a verified email in a claim of its own, name it in `auth.email_claim` (and then do not use `auth.admin_emails`; the router refuses both together).

@@ -1,8 +1,7 @@
 # knoggin-server: the foundation contract
 
 The container and broker, the router (lease, pool, reconcile, rollout), and lifecycle, admin
-and launchers. The spec (tabs "Server", "Workspace and crates", "Deployment", "Security") is
-the authority; this file says what exists and how the pieces fit. Deviations are in `docs/spec-deviations.md`.
+and launchers: what exists and how the pieces fit.
 
 ## What exists
 
