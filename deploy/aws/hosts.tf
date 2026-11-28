@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# AWS: the user hosts. Routers never run here.
+# AWS: the user hosts, on user_compute = "ec2" only. Routers never run here.
 
 locals {
   # ECS_TASK_PIDS_LIMIT caps every user task at 256 processes and threads. The core
@@ -24,16 +24,17 @@ locals {
 }
 
 resource "aws_launch_template" "hosts" {
+  count         = local.ec2 ? 1 : 0
   name_prefix   = "${var.name}-hosts-"
   image_id      = "resolve:ssm:/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id"
   instance_type = var.instance_type
   user_data     = base64encode(local.user_data)
 
   iam_instance_profile {
-    arn = aws_iam_instance_profile.hosts.arn
+    arn = one(aws_iam_instance_profile.hosts[*].arn)
   }
 
-  vpc_security_group_ids = [aws_security_group.hosts.id]
+  vpc_security_group_ids = [one(aws_security_group.hosts[*].id)]
 
   metadata_options {
     http_endpoint               = "enabled"
@@ -54,6 +55,7 @@ resource "aws_launch_template" "hosts" {
 }
 
 resource "aws_autoscaling_group" "hosts" {
+  count                 = local.ec2 ? 1 : 0
   name_prefix           = "${var.name}-hosts-"
   vpc_zone_identifier   = aws_subnet.private[*].id
   min_size              = var.min_hosts
@@ -61,8 +63,8 @@ resource "aws_autoscaling_group" "hosts" {
   protect_from_scale_in = true
 
   launch_template {
-    id      = aws_launch_template.hosts.id
-    version = aws_launch_template.hosts.latest_version
+    id      = one(aws_launch_template.hosts[*].id)
+    version = one(aws_launch_template.hosts[*].latest_version)
   }
 
   tag {

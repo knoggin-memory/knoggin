@@ -4,6 +4,7 @@
 # Trunking gives each user container its own network interface, so its security group
 # applies to it alone. It must be on before any host registers.
 resource "aws_ecs_account_setting_default" "trunking" {
+  count = local.ec2 ? 1 : 0
   name  = "awsvpcTrunking"
   value = "enabled"
 }
@@ -13,10 +14,11 @@ resource "aws_ecs_cluster" "this" {
 }
 
 resource "aws_ecs_capacity_provider" "hosts" {
-  name = "${var.name}-hosts"
+  count = local.ec2 ? 1 : 0
+  name  = "${var.name}-hosts"
 
   auto_scaling_group_provider {
-    auto_scaling_group_arn         = aws_autoscaling_group.hosts.arn
+    auto_scaling_group_arn         = one(aws_autoscaling_group.hosts[*].arn)
     managed_termination_protection = "ENABLED"
     managed_draining               = "ENABLED"
 
@@ -27,12 +29,17 @@ resource "aws_ecs_capacity_provider" "hosts" {
   }
 }
 
+# User tasks run on the hosts' capacity provider, or on Fargate.
+locals {
+  capacity_provider = local.ec2 ? one(aws_ecs_capacity_provider.hosts[*].name) : "FARGATE"
+}
+
 resource "aws_ecs_cluster_capacity_providers" "this" {
   cluster_name       = aws_ecs_cluster.this.name
-  capacity_providers = [aws_ecs_capacity_provider.hosts.name]
+  capacity_providers = [local.capacity_provider]
 
   default_capacity_provider_strategy {
-    capacity_provider = aws_ecs_capacity_provider.hosts.name
+    capacity_provider = local.capacity_provider
     weight            = 1
   }
 }

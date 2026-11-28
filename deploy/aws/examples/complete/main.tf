@@ -37,6 +37,9 @@ module "knoggin" {
   internal_cert_arn          = var.internal_cert_arn
   internal_key_arn           = var.internal_key_arn
   admin_subjects             = var.admin_subjects
+  user_compute               = var.user_compute
+  max_containers             = var.max_containers
+  container_memory_mib       = var.container_memory_mib
 }
 
 variable "name" {
@@ -86,6 +89,21 @@ variable "internal_key_arn" {
 
 variable "admin_subjects" {
   type = list(string)
+}
+
+variable "user_compute" {
+  type    = string
+  default = "ec2"
+}
+
+variable "max_containers" {
+  type    = number
+  default = null
+}
+
+variable "container_memory_mib" {
+  type    = number
+  default = 1536
 }
 
 output "load_balancer_dns_name" {

@@ -29,7 +29,7 @@ locals {
     KNOGGIN_LAUNCHER__ECS__TASK_DEFINITION   = aws_ecs_task_definition.user.arn
     KNOGGIN_LAUNCHER__ECS__SUBNETS           = join(",", aws_subnet.private[*].id)
     KNOGGIN_LAUNCHER__ECS__SECURITY_GROUPS   = aws_security_group.user.id
-    KNOGGIN_LAUNCHER__ECS__CAPACITY_PROVIDER = aws_ecs_capacity_provider.hosts.name
+    KNOGGIN_LAUNCHER__ECS__CAPACITY_PROVIDER = local.capacity_provider
     KNOGGIN_CONTAINERS__MEMORY_MIB           = tostring(var.container_memory_mib)
     KNOGGIN_CONTAINERS__POOL_TARGET          = tostring(var.pool_target)
     KNOGGIN_CONTAINERS__MAX                  = tostring(local.containers_max)
@@ -82,7 +82,7 @@ resource "aws_ecs_task_definition" "router" {
       error_message = "Set admin_subjects (recommended) or admin_emails."
     }
     precondition {
-      condition     = local.containers_per_host > 0
+      condition     = !local.ec2 || local.containers_per_host > 0
       error_message = "instance_type is not in the module's table (m8g.large, m8g.xlarge, m8g.2xlarge): set containers_per_host."
     }
   }
