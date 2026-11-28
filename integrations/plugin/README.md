@@ -8,7 +8,7 @@ plugins. `claude plugin validate` passes on this folder and on the marketplace f
 
 # Knoggin plugin
 
-Long-term memory for Claude Code and Codex, from your own Knoggin. The plugin connects the agent to Knoggin's plugin tool set, where recall is read-only. Its memory skill makes the agent show you the exact text of a memory and wait for your yes before it saves.
+Long-term memory for Claude Code and Codex, from your own Knoggin. The plugin connects the agent to Knoggin's plugin tool set, where recall is read-only. Its memory skill tells the agent when to recall, to save directly, and to tell you what it saved.
 
 ## What is in it
 
@@ -18,12 +18,16 @@ Long-term memory for Claude Code and Codex, from your own Knoggin. The plugin co
 | `.codex-plugin/plugin.json` | Codex | The manifest. It names `mcp.json` and `skills/` |
 | `.mcp.json` | Claude Code | The MCP server: `knoggin mcp --tool-set plugin` |
 | `mcp.json` | Codex | The same server, in Codex's form |
-| `skills/knoggin-memory/SKILL.md` | Both | When to recall, how to propose a save, how to change a memory |
-| `commands/remember.md`, `commands/recall.md` | Claude Code | `/remember <text>` proposes a memory and waits for a yes. `/recall <topic>` shows what Knoggin finds |
-| `hooks/hooks.json` | Claude Code | At session start, prints one fixed line: "Knoggin memory is connected. Use it when earlier context matters, and ask before saving." It reads nothing, sends nothing and calls no tool |
+| `skills/knoggin-memory/SKILL.md` | Both | When to recall, when to save, how to change a memory |
+| `commands/remember.md`, `commands/recall.md` | Claude Code | `/remember <text>` saves a memory and shows what it saved. `/recall <topic>` shows what Knoggin finds |
+| `hooks/hooks.json` | Claude Code | At session start, prints one fixed line: "Knoggin memory is connected. Use it when earlier context matters." It reads nothing, sends nothing and calls no tool |
 | `PRIVACY.md` | Both | What happens to your memories, and when a forgotten one can come back |
 
 The Codex build has no commands and no hook.
+
+## Saving
+
+The agent saves without asking you. If your agent asks before it runs a tool, that is the agent's own setting: nothing reaches Knoggin until you allow the call. To stop the agent from saving, use a read-only key.
 
 ## Install
 

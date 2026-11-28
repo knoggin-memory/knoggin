@@ -11,4 +11,4 @@ Custom MCP servers work on the web, on Business and Enterprise/Edu plans. On Pro
 3. Tick the box that you understand the risk, and choose **Create as a plugin**. When ChatGPT asks you to sign in, it opens your identity provider's page. When you are done, you are back in ChatGPT. Knoggin shows no page of its own.
 4. Install the plugin. In a chat, type `@` and choose Knoggin.
 
-ChatGPT asks before it runs a tool that changes data. Knoggin's tools say which ones only read.
+ChatGPT asks before it runs a tool that changes data. Knoggin's tools say which ones only read. Nothing is saved until you allow the call.

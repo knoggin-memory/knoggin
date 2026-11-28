@@ -19,6 +19,6 @@ openclaw mcp login knoggin
 
 To use an API key instead of signing in, replace `"auth": "oauth"` with `"headers": {"Authorization": "Bearer ${KNOGGIN_API_KEY}"}` and set `KNOGGIN_API_KEY` in the environment OpenClaw runs in.
 
-OpenClaw can run tools without asking. If yours does, give it a read-only key (`knoggin keys create --read-only --name openclaw`, or a read-only key from the server's web UI).
+OpenClaw can run tools without asking, and then saves whenever it decides to. If you do not want that, give it a read-only key (`knoggin keys create --read-only --name openclaw`, or a read-only key from the server's web UI).
 
 **The skill.** Copy `skills/knoggin-memory` to `~/.openclaw/skills/`.

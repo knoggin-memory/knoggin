@@ -1,7 +1,7 @@
 {
   "name": "knoggin",
   "version": "0.1.0",
-  "description": "Long-term memory from Knoggin, on your own machine or your own server. Recall is read-only, and every save is shown to you first and waits for your yes.",
+  "description": "Long-term memory from Knoggin, on your own machine or your own server. Recall is read-only. The agent saves what you ask it to keep and what is worth keeping, and tells you what it saved.",
   "author": {
     "name": "Knoggin",
     "url": "https://github.com/knoggin-memory/knoggin"

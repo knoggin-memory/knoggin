@@ -25,6 +25,6 @@ To report a vulnerability, see [SECURITY.md](../SECURITY.md): report privately t
 
 - Back up the master key, and keep it apart from the data ([Local install](local-install.md)).
 - Use full-disk encryption on machines that run Knoggin.
-- Give agents that run tools without asking a read-only key ([Apps and API keys](apps-and-keys.md)).
+- An agent with a read-write key saves without asking. Give a read-only key to any agent that should not save ([Apps and API keys](apps-and-keys.md)).
 - On a server, set an allow-list and name admins by subject ([Sign-in](sign-in.md)).
 - Never log request addresses in front of Knoggin: a request line can carry a search text or a one-time code.

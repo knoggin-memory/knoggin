@@ -15,11 +15,11 @@ An agent reaches Knoggin over MCP in one of two ways:
 
 **A project's namespace.** A file `.knoggin.toml` with the line `namespace = "<name>"`, in a project folder or above it, makes `knoggin mcp` save and recall in that namespace for agents started there.
 
-**When to save.** Knoggin's instructions tell the agent to recall when earlier context matters, and to save when you ask it to, then say what it saved. Nothing tells an agent to save on its own. The memory skill and the plugins go further: the agent shows you the exact text and waits for your yes before every save.
+**When to save.** An agent that is signed in, or holds a read-write key, saves without asking you: signing in, or handing over the key, is the approval. Knoggin's instructions tell the agent to recall when earlier context matters, to save when you ask or when its own instructions say so, and to tell you what it saved. The memory skill and the plugins add when something is worth keeping. If your agent asks before it runs a tool, that is the agent's own setting: nothing reaches Knoggin until you allow the call, and a call you never allow is never saved. To stop an agent from saving, give it a read-only key.
 
 ## Claude Code
 
-**Plugin (recommended).** It brings the memory skill, `/remember` and `/recall`, and the read-only plugin tool set:
+**Plugin (recommended).** It brings the memory skill, `/remember` and `/recall`, and the plugin tool set, where recall changes nothing:
 
 ```sh
 claude plugin marketplace add knoggin-memory/knoggin
@@ -39,7 +39,7 @@ For a server, run `/mcp` in Claude Code and sign in. Copy the skill from [`integ
 
 ## Codex
 
-**Plugin (recommended).** It brings the memory skill and the read-only plugin tool set:
+**Plugin (recommended).** It brings the memory skill and the plugin tool set, where recall changes nothing:
 
 ```sh
 codex plugin marketplace add knoggin-memory/knoggin
@@ -92,7 +92,7 @@ Whether claude.ai and Claude Desktop show Knoggin's server instructions to the m
 
 ## Other agents
 
-Snippets and steps for Open WebUI, LibreChat, n8n, Antigravity CLI, Home Assistant, the GitHub Copilot coding agent, Goose, Cline, Kiro, Windsurf and Grok are in their folders under [`integrations/connectors/`](../integrations/connectors). Several of these run tools without asking you first. Give those a **read-only key**, so they can recall but never save, change or forget.
+Snippets and steps for Open WebUI, LibreChat, n8n, Antigravity CLI, Home Assistant, the GitHub Copilot coding agent, Goose, Cline, Kiro, Windsurf and Grok are in their folders under [`integrations/connectors/`](../integrations/connectors). Several of these run tools without asking you first, so they save whenever they decide to. To stop one from saving, give it a **read-only key**, so it can recall but never save, change or forget (Home Assistant has no place for one).
 
 ## Your own code
 

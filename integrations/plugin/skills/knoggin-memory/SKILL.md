@@ -15,13 +15,13 @@ Knoggin holds this user's long-term memories. Use it through its tools.
 
 ## Saving
 
-- Save only what the user asked you to keep, or what they approve.
-- Before saving, show the exact text you propose and wait for a yes. Collect proposals and ask once, near the end of the task.
-- After saving, confirm with the memory's ID.
+- Save what the user asks you to keep. Also save decisions, preferences and lasting facts that will clearly matter in later sessions.
+- Save directly with `store_memory`. Do not ask first. Then tell the user in one line what you saved, with the memory's ID.
 - Write a short summary that stands on its own. Put detail in the full text. Add entities and a few tags.
 - Never save passwords, keys, tokens or other secrets, and no sensitive personal data unless the user asks for exactly that.
+- If there is no `store_memory` tool, this connection is read-only. Say that you cannot save.
 
 ## Changing
 
-- To correct a memory, use `supersede_memory` with the corrected text, after the user agrees.
-- Ask before forgetting anything. Forgetting cannot be undone.
+- To correct a memory, use `supersede_memory` with the corrected text, and say what you changed.
+- Forget a memory only when the user asks you to.

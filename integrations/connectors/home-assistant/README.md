@@ -9,4 +9,4 @@ Use the **Model Context Protocol Client** integration. There is no file to edit.
 3. When Home Assistant sees that the server needs sign-in, it asks for an OAuth client ID and secret. Knoggin issues none: make an OAuth client for Home Assistant in your identity provider and give its ID and secret. Home Assistant then opens your identity provider's sign-in page. When you are done, you are back in Home Assistant. Knoggin shows no page of its own.
 4. In **Settings**, **Devices & services**, open the settings (the cogwheel) of your conversation agent and pick Knoggin under its AI tools.
 
-**No read-only key.** A conversation agent runs tools without asking you first, and Home Assistant has no place for a read-only key: it signs in as you and gets your full access.
+**Saving.** A conversation agent runs tools without asking you first, so it saves whenever it decides to. Home Assistant has no place for a read-only key: it signs in as you and gets your full access.

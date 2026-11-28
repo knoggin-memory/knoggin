@@ -2,7 +2,7 @@
 
 The plugin connects your agent to a Knoggin that you run: the local install on your own machine, or a server you or your organization deploy. Memories go only there. The plugin sends nothing to the Knoggin project or to anyone else, and it collects no usage data.
 
-Recall through the plugin is read-only: it changes nothing, not even the record of when a memory was last read. The plugin saves a memory only after it has shown you the exact text and you have said yes.
+Recall through the plugin is read-only: it changes nothing, not even the record of when a memory was last read. The plugin saves a memory when you ask it to, or when the agent decides something is worth keeping, and it tells you what it saved.
 
 ## When a forgotten memory can come back
 
