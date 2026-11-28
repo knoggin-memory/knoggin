@@ -1655,8 +1655,8 @@ fn claims_counted(text: &str, outcome: &str) -> Option<u64> {
 }
 
 /// A store that moves makes its new container's opens ask the old one to park, again and
-/// again while the client retries; the old container gets one `park`, and another only
-/// once the request is a few seconds old.
+/// again while the client retries; the old container gets one `park` from them however
+/// long that goes on. Sending it again is the reconcile loop's.
 #[tokio::test]
 async fn repeated_asks_to_park_during_a_move_send_one_park() {
     let w = World::new().await;
@@ -1664,10 +1664,7 @@ async fn repeated_asks_to_park_during_a_move_send_one_park() {
     let f = w.fleet(BUILD, true, |_| {});
     let u = user();
     warm(&f, u).await;
-    for _ in 0..5 {
-        f.ask_park(Slot::User(u), ParkReason::Moved).await;
-    }
-    let one = |n: usize| {
+    let parks_after = |n: usize| {
         let w = &w;
         async move {
             for _ in 0..50 {
@@ -1681,9 +1678,17 @@ async fn repeated_asks_to_park_during_a_move_send_one_park() {
             w.control.parks.load(Ordering::SeqCst)
         }
     };
-    assert_eq!(one(1).await, 1);
+    for _ in 0..5 {
+        f.ask_park(Slot::User(u), ParkReason::Moved).await;
+    }
+    assert_eq!(parks_after(1).await, 1);
     assert_eq!(w.lease(u).await.park_requested(), Some(ParkReason::Moved));
-    w.clock.advance(knoggin_server::lease::PARK_AGAIN_MS);
-    f.ask_park(Slot::User(u), ParkReason::Moved).await;
-    assert_eq!(one(2).await, 2, "sent again once the request is old");
+    // Retries over a long time behind a container that does not park send nothing more.
+    for step in [10_000, 60_000, 3_600_000] {
+        w.clock.advance(step);
+        for _ in 0..3 {
+            f.ask_park(Slot::User(u), ParkReason::Moved).await;
+        }
+    }
+    assert_eq!(parks_after(2).await, 1, "one park from all the asks");
 }
