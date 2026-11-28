@@ -124,40 +124,67 @@ async fn a_router_key_that_can_delete_fails_the_bucket_self_test() {
         "bucket check no_delete failed: the router's bucket key may delete objects: give it \
          read, list and create-only upload, and nothing else"
     );
+    // The check deleted the object it uploaded, not some other name.
+    assert!(storage.keys().is_empty());
+}
+
+/// The stand-in bucket, whose delete call gives a fixed answer.
+struct DeleteAnswers(MemoryStorage, StorageError);
+#[async_trait::async_trait]
+impl ObjectStorage for DeleteAnswers {
+    async fn list(&self, prefix: &str) -> Result<Vec<ObjectInfo>, StorageError> {
+        self.0.list(prefix).await
+    }
+    async fn presign_get(
+        &self,
+        key: &str,
+        ttl: Duration,
+        now: Timestamp,
+    ) -> Result<SignedRequest, StorageError> {
+        self.0.presign_get(key, ttl, now).await
+    }
+    async fn presign_put_new(
+        &self,
+        key: &str,
+        len: u64,
+        ttl: Duration,
+        now: Timestamp,
+    ) -> Result<SignedRequest, StorageError> {
+        self.0.presign_put_new(key, len, ttl, now).await
+    }
+    async fn delete(&self, _: &[String]) -> Result<(), StorageError> {
+        Err(self.1.clone())
+    }
+}
+
+#[tokio::test]
+async fn a_refusal_other_than_access_denied_fails_the_delete_check() {
+    let clock = TestClock::new();
+    let storage = DeleteAnswers(
+        MemoryStorage::start(clock.clock()).await.unwrap(),
+        StorageError::Refused("NotImplemented".into()),
+    );
+    let now = Timestamp::from_millis(clock.now());
+    let failure = bucket_selftest(&storage, &http(), now, false)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (failure.step, failure.reason.as_str()),
+        (
+            BucketStep::NoDelete,
+            "the bucket refused the delete with NotImplemented, not AccessDenied, so the check \
+             cannot tell whether the router's bucket key may delete objects"
+        )
+    );
 }
 
 #[tokio::test]
 async fn an_outage_at_the_delete_check_fails_the_bucket_self_test() {
-    /// The stand-in bucket, whose delete call finds the bucket unreachable.
-    struct DeleteOutage(MemoryStorage);
-    #[async_trait::async_trait]
-    impl ObjectStorage for DeleteOutage {
-        async fn list(&self, prefix: &str) -> Result<Vec<ObjectInfo>, StorageError> {
-            self.0.list(prefix).await
-        }
-        async fn presign_get(
-            &self,
-            key: &str,
-            ttl: Duration,
-            now: Timestamp,
-        ) -> Result<SignedRequest, StorageError> {
-            self.0.presign_get(key, ttl, now).await
-        }
-        async fn presign_put_new(
-            &self,
-            key: &str,
-            len: u64,
-            ttl: Duration,
-            now: Timestamp,
-        ) -> Result<SignedRequest, StorageError> {
-            self.0.presign_put_new(key, len, ttl, now).await
-        }
-        async fn delete(&self, _: &[String]) -> Result<(), StorageError> {
-            Err(StorageError::Unavailable)
-        }
-    }
     let clock = TestClock::new();
-    let storage = DeleteOutage(MemoryStorage::start(clock.clock()).await.unwrap());
+    let storage = DeleteAnswers(
+        MemoryStorage::start(clock.clock()).await.unwrap(),
+        StorageError::Unavailable,
+    );
     let now = Timestamp::from_millis(clock.now());
     let failure = bucket_selftest(&storage, &http(), now, false)
         .await

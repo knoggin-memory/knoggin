@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The `knoggin admin` commands that act on a server: restore, master-key rotation,
-//! `retire-before`, the snapshot list and the self-test with its five bucket checks. They
+//! `retire-before`, the snapshot list and the self-test with its six bucket checks. They
 //! read and write the state
 //! database, the bucket and the key provider directly; where a running router must act,
 //! they write a request that the reconcile loop carries out. The binary prints.
@@ -508,7 +508,16 @@ pub async fn bucket_selftest(
         return Ok(());
     }
     match storage.delete(std::slice::from_ref(&key)).await {
-        Err(StorageError::Refused(_)) => Ok(()),
+        // Only a refusal for want of rights proves anything: a bucket that refuses the call
+        // for another reason (an unsupported request, say) may still delete one at a time.
+        Err(StorageError::Refused(code)) if code == "AccessDenied" => Ok(()),
+        Err(StorageError::Refused(code)) => Err(fail(
+            BucketStep::NoDelete,
+            format!(
+                "the bucket refused the delete with {code}, not AccessDenied, so the check \
+                 cannot tell whether the router's bucket key may delete objects"
+            ),
+        )),
         Ok(()) => Err(fail(
             BucketStep::NoDelete,
             "the router's bucket key may delete objects: give it read, list and create-only \
