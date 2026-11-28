@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Moving stores in and out: `knoggin export`, `knoggin import`, `knoggin import recalld`
-//! (tab "Config, CLI, local install", Export file format and Import from recalld) and the
-//! recovery tools `knoggin admin snapshot inspect | export` (tab "Snapshots and keys").
+//! and the recovery tools `knoggin admin snapshot inspect | export`.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;

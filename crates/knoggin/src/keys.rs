@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The local master key (tab "Snapshots and keys", Local master key): where it lives (a
+//! The local master key: where it lives (a
 //! key file or the system keychain), the record of that choice in `data/key-source.json`,
 //! the first run's choice, and `knoggin key export | import | rotate`.
 

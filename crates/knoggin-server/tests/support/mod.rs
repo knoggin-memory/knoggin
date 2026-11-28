@@ -123,7 +123,7 @@ impl Rig {
                 let parked = parked.clone();
                 let now = clock.now();
                 Box::pin(async move {
-                    // The router's "Mark gone", steps 2 to 4, cut down to the lease.
+                    // The records the router's "Mark gone" writes, cut down to the lease.
                     let lease = leases.get(caller.user_id).await.unwrap().unwrap();
                     let mut value = lease.value.clone();
                     value.set_state(LeaseState::Parked, now);

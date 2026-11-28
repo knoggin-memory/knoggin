@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The answers of the `/v1/ui/*` read models (tab "Web UI", Read-model routes), ported
-//! from recalld's `src/ui/wire.rs` with Knoggin's names: times are RFC 3339 strings,
-//! namespaces, phases and edge types are names (except the graph's typed arrays), and
-//! there is no query text. They are also the source of the UI's TypeScript types.
+//! The answers of the `/v1/ui/*` read models, ported from recalld's `src/ui/wire.rs` with
+//! Knoggin's names: times are RFC 3339 strings, namespaces, phases and edge types are names
+//! (except the graph's typed arrays), and there is no query text. They are also the source
+//! of the UI's TypeScript types.
 
 use knoggin_core::model::{AccessEvent, EdgeType, Phase};
 use knoggin_core::ops::ModelState;

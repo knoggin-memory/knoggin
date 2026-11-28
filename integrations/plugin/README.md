@@ -1,9 +1,9 @@
 <!--
 Checked on 2026-11-27 against code.claude.com/docs/en/plugins-reference, code.claude.com/docs/en/plugin-marketplaces,
 developers.openai.com/codex/plugins/build and learn.chatgpt.com/docs/developer-commands. Codex now documents a portable
-format (`plugin.json` and `mcp.json` at the plugin's root, with a `type` on every server); this build uses the
-`.codex-plugin/plugin.json` manifest, which those docs keep as a compatibility fallback, in the form of the Codex
-plugins installed on the build machine. `claude plugin validate` passes on this folder and on the marketplace file.
+format (`plugin.json` and `mcp.json` at the plugin's root, with a `type` on every server); this plugin uses the
+`.codex-plugin/plugin.json` manifest, which those docs keep as a compatibility fallback, in the form used by installed Codex
+plugins. `claude plugin validate` passes on this folder and on the marketplace file.
 -->
 
 # Knoggin plugin

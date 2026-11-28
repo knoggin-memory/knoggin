@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The reconcile loop (tab "Server", The reconcile loop): one router at a time leads,
+//! The reconcile loop: one router at a time leads,
 //! through the record `leader/reconcile`, taken when absent or expired or when this
 //! router's build is newer than the holder's, and renewed every 10 seconds. Every 30
 //! seconds the leader runs one pass of thirteen steps, each safe to repeat. When the
@@ -213,7 +213,10 @@ impl Fleet {
         })
     }
 
-    /// One pass of the loop, in order.
+    /// One pass of the loop, in order: (1) list; (2) records whose container does not
+    /// run; (3) strays; (4) stuck starts; (5) stuck claims; (6) leases without a
+    /// container; (7) park requests; (8) lifetime; (9) draining hosts; (10) rollout;
+    /// (11) the pool; (12) counters; (13) cleanup. The step docs below use these numbers.
     pub async fn pass(self: &Arc<Self>, state: &mut Reconciler) -> Result<(), StateError> {
         // 1. List.
         let pass = self.read_pass().await?;

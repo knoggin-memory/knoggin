@@ -5,8 +5,7 @@
 memories in two namespaces and 40 recalls. The test
 `crates/knoggin-core/tests/ranking_fixture.rs` rebuilds the same store with
 `knoggin_core::testing::StoreBuilder`, replays each recall at its recorded time
-and checks that Knoggin returns the same IDs in the same order (spec tab
-"Testing, CI and releases", "Making the ranking fixture").
+and checks that Knoggin returns the same IDs in the same order.
 
 Made by `scripts/make-ranking-fixture.sh <recalld checkout> [work dir]`, which
 builds recalld with `--features bench` and runs `scripts/make-ranking-fixture.py`.

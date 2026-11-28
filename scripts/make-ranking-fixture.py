@@ -2,9 +2,8 @@
 """Drives recalld to make tests/fixtures/ranking/fixture.json.
 
 Run through scripts/make-ranking-fixture.sh, with `python3 -I`. Standard
-library only. Follows spec tab "Testing, CI and releases", "Making the
-ranking fixture", steps 1 to 7; tests/fixtures/ranking/README.md describes
-the output.
+library only. The numbered steps in the comments below run in order;
+tests/fixtures/ranking/README.md describes the output.
 
 Every recalld process runs from --work with HOME, data dir, socket and logs
 inside it, a minimal environment and an explicit --config, so nothing reaches

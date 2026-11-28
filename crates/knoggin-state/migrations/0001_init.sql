@@ -1,5 +1,5 @@
 -- SPDX-License-Identifier: AGPL-3.0-only
--- The state database on Postgres (tab "State database"). `doc` is the sealed document.
+-- The state database on Postgres. `doc` is the sealed document.
 CREATE TABLE knoggin_state (
   pk         text   COLLATE "C" NOT NULL,
   sk         text   COLLATE "C" NOT NULL,

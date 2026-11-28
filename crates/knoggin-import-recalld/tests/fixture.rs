@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The recalld data fixture (tab "Config, CLI, local install", "Test fixture"): the
-//! lines the reader yields from `tests/fixtures/recalld-data` equal the committed
-//! `expected-export.jsonl` with `exportedAt` masked, and the counts equal
-//! `expected-counts.json`. The ignored test `write_expected_files` writes both; the
+//! The recalld data fixture: the lines the reader yields from `tests/fixtures/recalld-data`
+//! equal the committed `expected-export.jsonl` with `exportedAt` masked, and the counts
+//! equal `expected-counts.json`. The ignored test `write_expected_files` writes both; the
 //! script `scripts/make-recalld-data-fixture.sh` runs it.
 #![allow(
     clippy::unwrap_used,

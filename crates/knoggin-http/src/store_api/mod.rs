@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The store layer's axum router: the REST memory routes, export and import (tab "REST
-//! API", Store routes), and the web UI's read models and event stream (`ui`). It expects
-//! a `RequestContext` in the request extensions; the edge layer (or a container's
-//! middleware) puts it there.
+//! The store layer's axum router: the REST memory routes, export and import, and the web
+//! UI's read models and event stream (`ui`). It expects a `RequestContext` in the request
+//! extensions; the edge layer (or a container's middleware) puts it there.
 
 pub(crate) mod extract;
 pub(crate) mod ui;

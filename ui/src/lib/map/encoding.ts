@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// DESIGN §6 visual encoding, as graphology attributes for sigma.
+// The map's visual encoding, as graphology attributes for sigma.
 import type { MapTheme } from './theme';
 import { alpha, mix } from './theme';
 import { displaySize } from './protocol';
 
-// The graph route keeps recalld's numbers for edge types and phases (tab "Web UI");
+// The graph route keeps recalld's numbers for edge types and phases;
 // every other answer and every event names them.
 export const EDGE = { parent: 1, associative: 2, entity: 5, temporal: 6, supersedes: 7 } as const;
 export const EDGE_CODE: Record<string, number> = { parent_child: 1, associative: 2, entity: 5, temporal: 6, supersedes: 7 };
@@ -16,7 +16,7 @@ export const EDGE_NAME_LABELS: Record<string, string> = {
 };
 export const PHASE_CODE: Record<string, number> = { full: 1, summary: 2, ghost: 3 };
 
-/** A memory's look by phase (handoff, MemoryMap): each phase has its own hue,
+/** A memory's look by phase: each phase has its own hue,
  *  all solid. Full runs node → node-fading, Summary node-summary →
  *  node-summary-fading, Ghost is a solid node-ghost with no ring. Lighter
  *  means more faded. `strength` is retrievability now (0..1). */

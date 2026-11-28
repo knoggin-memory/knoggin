@@ -131,8 +131,9 @@ export function dayLabel(date: string | null, now = new Date()): string {
   return new Date(Date.UTC(yy, mm - 1, dd)).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
-/** A `return_to` the UI follows itself: a path on this site, by the server's rule (tab
- *  "Sign-in and credentials"), else `/map`. A `//host` or backslash form would leave the site. */
+/** A `return_to` the UI follows itself: a path on this site (one leading `/`, no backslash,
+ *  no control character), the same rule the server applies, else `/map`. A `//host` or backslash form
+ *  would leave the site. */
 export function safeReturnTo(p: string | null): string {
   // eslint-disable-next-line no-control-regex
   return p && p.startsWith('/') && p[1] !== '/' && !p.includes('\\') && !/[\u0000-\u001f\u007f-\u009f]/.test(p) ? p : '/map';

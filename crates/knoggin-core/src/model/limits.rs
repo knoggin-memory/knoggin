@@ -100,7 +100,7 @@ pub const DEFAULT_GHOST_TO_DELETE: f32 = 0.05;
 /// Default permastore threshold, in days.
 pub const DEFAULT_PERMASTORE_THRESHOLD: f32 = 1_500.0;
 
-// ── Engine constants (tab "Engine") ─────────────────────────────────
+// ── Engine constants ────────────────────────────────────────────────
 
 /// Largest connection bonus.
 pub const MAX_CONNECTION_BONUS: f32 = 0.15;
@@ -177,9 +177,11 @@ impl std::fmt::Debug for ContentRef<'_> {
     }
 }
 
-/// Steps 1 to 6 of the save validation (tab "Engine"), in order. Returns the parsed tags.
+/// The checks of a save that need no store, in order: the summary, the full text, the
+/// tags, the entities, topics and emotions, `createdAt`, and no client markup in the
+/// summary or full text. Returns the parsed tags.
 ///
-/// Steps 7 and 8, the namespace and the parent, need the store.
+/// The namespace and the parent are checked after these, in the store.
 pub fn validate_content(content: ContentRef<'_>, now: Timestamp) -> Result<Vec<Tag>, EngineError> {
     validate_content_within(content, now, FULL_TEXT_MAX_BYTES)
 }

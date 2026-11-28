@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `knoggin router` (tab "Server"): the edge layer in front of the forwarder and the
+//! `knoggin router`: the edge layer in front of the forwarder and the
 //! router's mode routes, the client address with trusted proxies, the panic guard, the
 //! internal listener for the broker, the reconcile loop, and the shutdown order.
 //!
-//! Start-up runs in the order of tab "Server", Rollout: the config guards ([`guards`]),
+//! Start-up runs in this order: the config guards ([`guards`]),
 //! the state database (60 seconds; Postgres migrates), the schema record, the field key,
 //! in mode `none` the users check (`knoggin_http::edge::guard::router_users`), discovery,
 //! the bucket self-test, on one host the launcher's `attach`, the rollout record
@@ -172,8 +172,8 @@ pub fn guarded(app: Router) -> Router {
 
 /// The broker on the router's internal listener, over the fleet's leases, stores and
 /// per-address counts. `one_host` is the router's address as containers reach it, which
-/// turns the blob route on. A container's `parked` runs "Mark gone" steps 2 to 4 and a
-/// stop ([`Fleet::finish_parked`]).
+/// turns the blob route on. A container's `parked` writes the records "Mark gone" writes
+/// once a container has ended, then stops it ([`Fleet::finish_parked`]).
 pub fn broker(
     fleet: &Arc<Fleet>,
     keys: Arc<dyn KeyProvider>,
@@ -312,8 +312,9 @@ pub struct RouterStart {
     pub listeners: Listeners,
     /// The metrics router, for `listeners.metrics`.
     pub metrics: Option<Router>,
-    /// Start-up steps 7 and 8, which the binary owns: the bucket self-test and, on one
-    /// host, `DockerLauncher::attach`. An error stops the start.
+    /// The start-up steps the binary owns, run after discovery and before the rollout
+    /// record: the bucket self-test and, on one host, `DockerLauncher::attach`. An error
+    /// stops the start.
     pub before_rollout: Option<BoxFuture<'static, Result<(), String>>>,
     /// For the admin status.
     pub backends: Backends,
@@ -330,8 +331,8 @@ impl std::fmt::Debug for RouterStart {
     }
 }
 
-/// `knoggin router`: the start-up steps from the config guards to the rollout record (tab
-/// "Server", Rollout), then [`run`] until `stop`. Returns the exit code: 1 when a start-up
+/// `knoggin router`: the start-up steps from the config guards to the rollout record,
+/// then [`run`] until `stop`. Returns the exit code: 1 when a start-up
 /// step refuses, 0 after a stop.
 pub async fn run_router(start: RouterStart, stop: impl Future<Output = ()> + Send) -> i32 {
     match prepare(start).await {
@@ -516,8 +517,8 @@ async fn prepare(start: RouterStart) -> Result<(RouterRole, Listeners), String> 
     ))
 }
 
-/// Serves until `stop` resolves, runs the reconcile loop, then stops in the order of
-/// tab "Server": the public and metrics listeners stop accepting and the reconcile loop
+/// Serves until `stop` resolves, runs the reconcile loop, then stops in this order:
+/// the public and metrics listeners stop accepting and the reconcile loop
 /// ends; on one host every claimed container is asked to park, all at once, and the
 /// internal listener stays open while they save; the requests in flight finish. Both
 /// waits end together, `shutdown_wait` (110 seconds) after the stop. Then the internal

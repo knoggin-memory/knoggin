@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: AGPL-3.0-only */
-/* Global component styles, from the prototype's project/app.css (Knoggin UI
-   handoff). Colours, type and radius come from tokens.css. The prototype's own
-   chrome and the styles of the screens that keep their component styles
-   (map, memory panel, Explore, Timeline, Health, search palette) are left out. */
+/* Global component styles. Colours, type and radius come from tokens.css. The
+   screens that keep their own component styles (map, memory panel, Explore,
+   Timeline, Health, search palette) are not styled here. */
 @import './tokens.css';
 @import '@fontsource/newsreader/latin-400.css';
 @import '@fontsource/newsreader/latin-500.css';
@@ -499,8 +498,8 @@ button.logo { cursor: pointer; }
 }
 
 
-/* ── Knoggin app additions (not in the prototype's sheet) ───── */
-/* The prototype's stage was a flex column; here the shell fills the page. */
+/* ── Knoggin app additions ─────────────────────────────────── */
+/* The shell fills the page. */
 .shell { height: 100%; }
 .standalone { min-height: 100%; }
 /* Dialogs are native modal <dialog> elements: closed ones stay hidden, and the
@@ -516,7 +515,7 @@ dialog.dialog::backdrop { background: var(--color-scrim); }
 .auth-foot { display: flex; flex-direction: column; align-items: center; gap: var(--space-1); }
 .wait .progress, .banner .progress { margin-top: var(--space-2); }
 .banner .progress > span, .progress > span { transition: width var(--dur-panel) var(--ease-out); }
-/* From the prototype's Health and map blocks: the parts the new pages share. */
+/* Parts of the Health and map styles that other pages share. */
 .window { display: inline-flex; align-items: center; gap: var(--space-2); color: var(--color-text-muted); font-size: var(--text-control); margin-left: var(--space-1); }
 .select {
   height: var(--control-h); padding: 0 var(--space-2); background: var(--color-surface);

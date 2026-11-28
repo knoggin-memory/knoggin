@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 // "Values come from tokens": component styles may not use raw colors, font
-// names or pixel sizes; those live in src/tokens.css. app.css is the
-// prototype's component sheet, which keeps a few layout-only numbers literal
-// (the handoff, "Open questions"), so it is checked for colours and fonts only.
+// names or pixel sizes; those live in src/tokens.css. app.css keeps a
+// few layout-only numbers literal, so it is checked for colours and fonts only.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { describe, expect, it } from 'vitest';

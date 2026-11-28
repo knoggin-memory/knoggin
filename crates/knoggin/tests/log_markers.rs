@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The log-marker test (tab "Security", Logs; tab "Engineering rules", rule 3): marker
-//! strings in every kind of sensitive value of a local install, every route and every
-//! tool run at log level `trace`, then all log output and the metrics page are searched,
+//! The log-marker test: marker strings in every kind of sensitive value of a local install,
+//! every route and every tool run at log level `trace`, then all log output and the metrics page are searched,
 //! and the data folder too. The web UI's read models and its event stream are in it, and
 //! a second test covers sign-in.
 #![allow(

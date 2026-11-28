@@ -88,7 +88,7 @@ Add `knoggin` under `mcp_servers` in `~/.hermes/config.yaml`, and copy the memor
 
 Both connect from the vendor's servers, so Knoggin needs an `https` address that the internet can reach, with sign-in on: a server, or a local install behind a tunnel ([Sign-in](sign-in.md)). Add a custom connector with the address `https://<your server>/mcp` and sign in. Steps: [claude.ai](../integrations/connectors/claude-ai/README.md), [ChatGPT](../integrations/connectors/chatgpt/README.md).
 
-Whether claude.ai and Claude Desktop show Knoggin's server instructions to the model is not yet known (measurement M15). If you want each conversation to start with your context, add this line to your own personal preferences in claude.ai: "At the start of each conversation, use Knoggin to load relevant context."
+Whether claude.ai and Claude Desktop show Knoggin's server instructions to the model is not yet known. If you want each conversation to start with your context, add this line to your own personal preferences in claude.ai: "At the start of each conversation, use Knoggin to load relevant context."
 
 ## Other agents
 

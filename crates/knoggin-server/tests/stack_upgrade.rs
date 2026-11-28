@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The one-host upgrade (tabs "Server" and "Deployment", Start, stop, upgrade, reboot):
+//! The one-host upgrade:
 //! stopping the router parks every claimed container, which saves first; the router
 //! starts again, attaches to the per-user networks that still exist, and serves
 //! everyone again. The user is served by a pool container that was started before the

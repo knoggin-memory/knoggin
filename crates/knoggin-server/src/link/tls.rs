@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! TLS configs of the internal link (tab "Server", pinning code): TLS 1.3 only, the
+//! TLS configs of the internal link, the pinning code: TLS 1.3 only, the
 //! `aws_lc_rs` provider named explicitly, no session resumption, and verifiers that trust
 //! a pin and never an authority.
 

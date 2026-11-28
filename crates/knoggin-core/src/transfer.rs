@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Export and import records: format `knoggin-export` version 1 (tab "Config, CLI,
-//! local install", "Export file format"). One [`TransferRecord`] is one JSON line.
+//! Export and import records: format `knoggin-export` version 1. One [`TransferRecord`]
+//! is one JSON line.
 //!
 //! An export holds everything except vectors and the idempotency table. An import
 //! applies one record at a time: a record that fails a check is reported and the rest
@@ -408,8 +408,8 @@ impl Store {
         }
     }
 
-    /// Applies one line of an import file (rules 2 to 10 of "Import rules"). The host
-    /// checks the header with [`ExportHeader::check`]; a header here is an error line.
+    /// Applies one line of an import file. The host checks the header with
+    /// [`ExportHeader::check`]; a header here is an error line.
     pub fn import_record(
         &mut self,
         record: TransferRecord,
@@ -469,8 +469,8 @@ impl Store {
         on_conflict: OnConflict,
         now: Timestamp,
     ) -> Result<ImportOutcome, EngineError> {
-        // The phase rules first (rule 3 of "Import rules"), then the checks of a save in
-        // the save's order, so a line reports the same first error as the request would.
+        // The phase rules first, then the checks of a save in the save's order, so a line
+        // reports the same first error as the request would.
         let ghost = r.phase == Phase::Ghost;
         match (ghost, &r.summary) {
             (false, None) => return Err(EngineError::invalid("summary", "summary is required")),

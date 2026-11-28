@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Tab "Deployment", AWS: the network and its rules. The module always makes its own VPC,
+# AWS: the network and its rules. The module always makes its own VPC,
 # because these rules would change any VPC they were put on for everything else in it.
 
 locals {
   vpc_cidr = "10.0.0.0/16"
-  # /20 per zone: one address per user container, far above the /22 the spec asks for.
+  # /20 per zone: one address per user container, far above the /22 needed.
   private_cidrs = [for i in range(2) : cidrsubnet(local.vpc_cidr, 4, i)]
   public_cidrs  = [for i in range(2) : cidrsubnet(local.vpc_cidr, 8, 240 + i)]
 }
@@ -161,8 +161,8 @@ resource "aws_security_group" "lifecycle" {
   vpc_id      = aws_vpc.this.id
 }
 
-# Every rule of every group, in two maps, so that a test can see all of them at once
-# (tab "Deployment", Network rules). The groups above hold no inline rules.
+# Every rule of every group, in two maps, so that a test can see all of them at once.
+# The groups above hold no inline rules.
 locals {
   ingress = {
     alb_https   = { group = aws_security_group.alb.id, port = 443, cidr = "0.0.0.0/0" }

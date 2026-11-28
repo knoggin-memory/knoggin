@@ -11,7 +11,7 @@
 # Microsoft.ML.OnnxRuntime 1.31.1, which holds the libraries of every target.
 # Its SHA-512 matched the packageHash of the nuget.org catalog entry
 # (QvE8+JyhEccfOL7Oz1m+cSXZGYd4QK7/BtsdoCan0eaF2qqgOSVDV/H7hN5D5JJGesJ5vINCDLDVdHLnO0xjJw==).
-# The package has no osx-x64 library (measurement M12).
+# The package has no osx-x64 library, so Intel Macs are not supported.
 
 [x86_64-unknown-linux-gnu]
 url = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.31.1/microsoft.ml.onnxruntime.1.31.1.nupkg"

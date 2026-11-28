@@ -28,7 +28,7 @@
     queryFn: () => get<AdminStatus>('/v1/admin/status'),
     enabled: !!session.local,
   }));
-  // Fading soon: the report's memories at risk, the first five as the prototype draws them.
+  // Fading soon: the report's memories at risk, the first five.
   const fading = $derived(report.data?.atRisk.slice(0, 5) ?? []);
 
   const o = $derived(report.data?.overview);

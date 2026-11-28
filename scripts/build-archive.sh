@@ -1,12 +1,12 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Builds the release archive for <target> on a machine of that target (tab "Testing, CI,
-# releases", the build job): `cargo auditable build --release --locked`, a check that
-# the binary holds the audit section `.dep-v0`, the ONNX Runtime library, the notices,
-# and dist/knoggin-<version>-<target>.tar.gz with bin/knoggin, lib/libonnxruntime.<ext>,
-# LICENSE and THIRD_PARTY_NOTICES. release.yml and scripts/release-dry-run.sh both call
-# it. Build the web UI first (pnpm -C ui build): the release binary embeds ui/dist.
+# Builds the release archive for <target> on a machine of that target: `cargo auditable
+# build --release --locked`, a check that the binary holds the audit section `.dep-v0`,
+# the ONNX Runtime library, the notices, and dist/knoggin-<version>-<target>.tar.gz with
+# bin/knoggin, lib/libonnxruntime.<ext>, LICENSE and THIRD_PARTY_NOTICES. release.yml and
+# scripts/release-dry-run.sh both call it. Build the web UI first (pnpm -C ui build): the
+# release binary embeds ui/dist.
 #
 # Needs cargo-auditable and cargo-about on PATH.
 #

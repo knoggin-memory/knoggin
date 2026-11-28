@@ -50,7 +50,7 @@ use crate::ctx::RequestContext;
 use crate::error::{ApiError, Code, LockReason};
 use crate::settings::StoreLimits;
 
-/// The snapshot timing constants of one mode (tab "Snapshots and keys").
+/// The snapshot timing constants of one mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SnapshotTiming {
     /// Wait this long after the last content change.
@@ -146,8 +146,8 @@ pub(crate) fn new_memory_id(at: Timestamp) -> MemoryId {
     MemoryId::from_uuid(Uuid::new_v7(ts))
 }
 
-/// The request hash: SHA-256 of `request_hash_input(op, request)` (tab "Engine",
-/// Idempotency), with aws-lc-rs.
+/// The request hash for idempotency: SHA-256 of `request_hash_input(op, request)`, with
+/// aws-lc-rs.
 pub fn request_hash<T: Serialize>(op: &str, request: &T) -> Result<[u8; 32], ApiError> {
     let input = request_hash_input(op, request)?;
     let d = digest::digest(&digest::SHA256, &input);
@@ -181,7 +181,7 @@ pub(crate) enum WriteKind {
     Bookkeeping,
 }
 
-/// The timers of one store (rule 1 of "When snapshots are taken").
+/// The timers of one store, which decide when it is snapshotted.
 #[derive(Debug, Default)]
 struct Timers {
     content_first: Option<Instant>,
@@ -225,7 +225,7 @@ pub(crate) struct OpenStore {
     upload_blocked: AtomicBool,
     /// Opened from a snapshot an admin chose to restore, and no save of it committed yet:
     /// the store is saved at once and takes no client write until then, so that nothing
-    /// is saved under a name the next open would pass over (tab "Server", Restore).
+    /// is saved under a name the next open would pass over.
     restoring: AtomicBool,
     dropped: AtomicBool,
     last_request: Mutex<Instant>,
@@ -537,7 +537,7 @@ impl StoreHost {
 
     /// Ends every event stream at once, and answers later ones with 204: a stream never
     /// ends by itself, so a stop or a park calls this first, before it waits for the
-    /// requests in flight (tab "Server", park sequence step 1).
+    /// requests in flight.
     pub fn end_event_streams(&self) {
         self.streams_end.send_replace(true);
     }
@@ -603,7 +603,7 @@ impl StoreHost {
     }
 
     /// A store's lock while it holds: for a minute after the last try, and for good when
-    /// the store does not fit this container (it opens only in a new one, tab "Server").
+    /// the store does not fit this container (it opens only in a new one).
     fn cached_lock(&self, id: StoreId) -> Option<LockReason> {
         let (reason, at) = lock(&self.locks).get(&id).copied()?;
         (reason == LockReason::OutOfMemory || at.elapsed() < LOCK_RETRY).then_some(reason)
@@ -651,7 +651,7 @@ impl StoreHost {
         tasks.push(task);
     }
 
-    /// Loading a store (tab "Snapshots and keys", "Loading a store").
+    /// Loads a store.
     async fn load(&self, id: StoreId) -> Result<Arc<OpenStore>, OpenFailure> {
         let mut after = None;
         let mut tries = 0;
@@ -799,7 +799,7 @@ impl StoreHost {
         if current.bookkeeping != saved.bookkeeping {
             lock(&open.timers).bookkeeping_first = Some(Instant::now());
         }
-        // Step 7 of "Loading a store": over what is left of the budget, read only.
+        // Over what is left of the budget, read only.
         if let Some(budget) = self.config.memory_budget
             && self.total_estimated().saturating_add(estimated) > budget
         {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The isolation tests against a deployed AWS stack (tab "Security", after the table of
-//! rules): `KNOGGIN_STACK_URL` names the stack and `KNOGGIN_STACK_CREDENTIALS` a JSON file
-//! of test credentials. Without both, `stack_isolation.rs` starts the one-host stack.
+//! The isolation tests against a deployed AWS stack: `KNOGGIN_STACK_URL` names the stack and
+//! `KNOGGIN_STACK_CREDENTIALS` a JSON file of test credentials. Without both, `stack_isolation.rs`
+//! starts the one-host stack.
 //!
 //! The AWS run adds a network probe that ECS allows: a one-off task of the pinned
 //! `busybox`, copied by digest into the deployment's ECR repository, run on the user hosts
@@ -78,7 +78,7 @@ pub fn target_from_env() -> Target {
 }
 
 /// The test credentials file. A and B are two test identities that the provider lets
-/// in; the run removes B at the end (rule I17). `admin` is an identity of
+/// in; the run removes B at the end. `admin` is an identity of
 /// `admin_subjects` or `admin_emails`.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -268,7 +268,7 @@ pub fn script(checks: &[(String, String)], upload: &Upload) -> String {
     script
 }
 
-/// Rule I9 on AWS, from a one-off probe task in the user network. The keep-alive of the
+/// The network probes on AWS, from a one-off probe task in the user network. The keep-alive of the
 /// test keeps the user containers of A and B running meanwhile.
 pub async fn network_probe(c: &Credentials) {
     let config = knoggin_server::aws::sdk_config(None, None).await;

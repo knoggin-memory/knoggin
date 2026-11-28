@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `knoggin lifecycle` (tab "Server", The lifecycle task): thins snapshots, erases deleted
+//! `knoggin lifecycle`, the lifecycle task: thins snapshots, erases deleted
 //! stores and users, and keeps house. It is the only code that deletes objects, and it
 //! holds no master key, no data key and no field key: it reads only unsealed fields.
 //! Each run logs counts only, and a run that fails part-way is safe to repeat.
@@ -103,7 +103,7 @@ impl Lifecycle {
         Ok(report)
     }
 
-    /// Step 1: for every store that is not deleted, deletes the snapshots `thin` gives
+    /// Thinning: for every store that is not deleted, deletes the snapshots `thin` gives
     /// no label. Objects under the folder that are not snapshot names are left alone.
     async fn thin_all(
         &self,
@@ -161,8 +161,8 @@ async fn delete_prefix(storage: &dyn ObjectStorage, prefix: &str) -> Result<(), 
     delete(storage, &keys).await
 }
 
-/// The one place that deletes objects (tab "Security", I11; a test checks that no other
-/// code calls `ObjectStorage::delete`).
+/// The one place that deletes objects (a test checks that no other code calls
+/// `ObjectStorage::delete`).
 async fn delete(storage: &dyn ObjectStorage, keys: &[String]) -> Result<(), StorageError> {
     if keys.is_empty() {
         return Ok(());
@@ -216,7 +216,7 @@ pub async fn run(
 mod tests {
     use std::path::Path;
 
-    /// I11: only this module calls `ObjectStorage::delete`. Every other `.delete(` in the
+    /// Only this module calls `ObjectStorage::delete`. Every other `.delete(` in the
     /// crate's code must be on a receiver that is not the bucket.
     #[test]
     fn nothing_else_deletes_objects() {

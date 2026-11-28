@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Tab "Deployment", AWS: the router's four secrets. The operator fills the Secrets Manager
+# AWS: the router's four secrets. The operator fills the Secrets Manager
 # entries by hand (deploy-aws.md), so no value ever sits in the OpenTofu state. The
 # router's execution role reads them and ECS hands them to the router as environment
-# variables, under the names the config loader reads (tab "Config, CLI, local install").
+# variables, under the names the config loader reads.
 
 locals {
   router_secrets = {

@@ -47,7 +47,7 @@ export type ApiErrorBody = { error: ErrorBody };
 /** A live event as sent. */
 export type WireEvent = UiEvent;
 
-/** `storage` and `containers` are generated as plain JSON; their shape is the tab "REST API"'s. */
+/** `storage` and `containers` are generated as plain JSON; their shape is the REST API's. */
 export type AdminStatus = Omit<GeneratedAdminStatus, 'storage' | 'containers'> & {
   storage: { bucket: string; region: string } | null;
   containers: { claimed: number; ready: number; starting: number } | null;

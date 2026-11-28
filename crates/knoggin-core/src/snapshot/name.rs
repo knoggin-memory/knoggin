@@ -144,7 +144,7 @@ impl KeptBecause {
 const MINUTE_MS: i64 = 60_000;
 const HOUR_MS: i64 = 60 * MINUTE_MS;
 
-/// The server's thinning rule (tab "Server", the lifecycle task): one label per object,
+/// The thinning rule of the server's lifecycle task: one label per object,
 /// in the order given, or `None` for an object the next run deletes.
 ///
 /// Kept: the highest name and the recorded `newest` (even below unrecorded higher

@@ -166,7 +166,7 @@ pub struct RequestContext {
     pub client: Option<String>,
 }
 
-// Namespace and client names are sensitive (tab "Engineering rules", logging).
+// Namespace and client names are sensitive, so logs never show them.
 impl fmt::Debug for RequestContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("RequestContext")

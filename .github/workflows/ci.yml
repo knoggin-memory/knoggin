@@ -1,6 +1,6 @@
 name: CI
 
-# Tab "Testing, CI, releases", CI.
+# Every check a pull request and main must pass.
 
 on:
   pull_request:
@@ -139,7 +139,7 @@ jobs:
           curl -fsSL -o "$RUNNER_TEMP/nextest.tar.gz" https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.152/cargo-nextest-0.9.152-aarch64-unknown-linux-gnu.tar.gz
           echo "ca1f81a5b86533eb45ab97e0064aa88e925e53aab9a698ca6331a7cad1f85f07  $RUNNER_TEMP/nextest.tar.gz" | sha256sum -c -
           tar -xzf "$RUNNER_TEMP/nextest.tar.gz" -C "$HOME/.cargo/bin" cargo-nextest
-      # --no-capture prints the M9 table on a pass too, so the numbers can be recorded.
+      # --no-capture prints the latency table on a pass too, so the numbers can be recorded.
       - name: Budget tier
         run: cargo nextest run -p knoggin-core --release --locked --run-ignored only -E 'binary(budgets)' --no-capture
 
@@ -353,7 +353,7 @@ jobs:
 
   # The SDK tier: unit tests, and contract tests against a daemon built from this commit
   # and started in test mode, on the lowest and the highest supported Python; the linters
-  # and type checkers the SDK tab names; `uv build`; and the integrations test. uv comes
+  # and type checkers the SDK uses; `uv build`; and the integrations test. uv comes
   # from its PyPI wheel, checked against its SHA-256; uv checks the Python builds it
   # downloads itself.
   sdk:

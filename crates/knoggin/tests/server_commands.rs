@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The server commands' arguments and refusals (tab "Config, CLI, local install", Server
-//! commands): every missing or unsupported setting is refused before anything connects,
-//! with the setting's name, and wrong usage exits with 2. Nothing here reaches a network.
+//! The server commands' arguments and refusals: every missing or unsupported setting is refused
+//! before anything connects, with the setting's name, and wrong usage exits with 2. Nothing here
+//! reaches a network.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

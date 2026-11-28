@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The bodies of the broker's routes (tab "Server", the broker), shared by the broker and
+//! The bodies of the broker's routes, shared by the broker and
 //! the container's `RouterBackend` so that the two ends cannot drift, and the broker's
 //! error codes.
 

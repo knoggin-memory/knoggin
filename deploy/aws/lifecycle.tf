@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Tab "Server", the lifecycle task: one Fargate task every 10 minutes. It thins snapshots
+# The lifecycle task: one Fargate task every 10 minutes. It thins snapshots
 # and erases deleted stores and users. It holds no key.
 
 resource "aws_ecs_task_definition" "lifecycle" {

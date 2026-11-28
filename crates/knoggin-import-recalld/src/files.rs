@@ -81,7 +81,7 @@ pub(crate) struct Located {
     pub given: PathBuf,
     /// The given folder's parent.
     pub parent: PathBuf,
-    /// The lock files to test, in the order of "Before reading", step 2.
+    /// The lock files to test, in the order `hold_locks` tests them.
     pub locks: Vec<PathBuf>,
 }
 
@@ -96,7 +96,7 @@ fn owner_lock(dir: &Path) -> PathBuf {
     dir.with_file_name(name)
 }
 
-/// Step 1 of "Before reading": find the store, and with it the lock files.
+/// Before reading: finds the store, and with it the lock files.
 pub(crate) fn locate(path: &Path) -> Result<Located, ImportError> {
     let (given, parent) = resolve(path)?;
     require_dir(&given)?;
@@ -124,7 +124,7 @@ pub(crate) fn locate(path: &Path) -> Result<Located, ImportError> {
     })
 }
 
-/// Step 2 of "Before reading": a shared lock on each lock file that exists, without
+/// Before reading, after `locate`: a shared lock on each lock file that exists, without
 /// waiting and without creating one. The locks are held while the copies are made, so
 /// that recalld cannot start in the middle.
 pub(crate) fn hold_locks(paths: &[PathBuf]) -> Result<Vec<File>, ImportError> {

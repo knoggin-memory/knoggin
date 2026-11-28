@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The recall light (DESIGN §7): a WebGL2 layer over the map. Every pulse and
+// The recall light: a WebGL2 layer over the map. Every pulse and
 // glow is one instanced quad whose motion is computed in the shader from its
 // start time and duration, so the CPU uploads once per event and only sets
 // uniforms per frame. The loop runs only while something is lit.

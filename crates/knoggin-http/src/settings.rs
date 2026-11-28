@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The settings that the store layer reads (tab "Config, CLI, local install"). The binary
-//! fills them from the file and the environment; the edge layer adds its own here.
+//! The settings that the store layer reads. The binary fills them from the file and the
+//! environment; the edge layer adds its own here.
 
 use serde::Deserialize;
 

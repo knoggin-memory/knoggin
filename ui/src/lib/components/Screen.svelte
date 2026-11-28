@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 <!-- The main column every view shares. It holds the one waiting indicator that
-     applies (tab "Web UI"): locked, updating and waking take the screen; the
+     applies: locked, updating and waking take the screen; the
      others are banners above a screen that stays usable. The short notice for
      `rate_limited` can show beside a banner. -->
 <script lang="ts">

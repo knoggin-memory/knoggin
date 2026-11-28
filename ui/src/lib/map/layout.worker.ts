@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-// The map's physics, off the main thread (DESIGN §6): d3-force with
+// The map's physics, off the main thread: d3-force with
 // Barnes–Hut many-body, link, collide and gentle centering. Positions are
 // streamed back as transferable Float32Arrays.
 import { forceCollide, forceLink, forceManyBody, forceSimulation, forceX, forceY, type SimulationNodeDatum } from 'd3-force';
@@ -193,7 +193,7 @@ self.onmessage = (e: MessageEvent<ToWorker>) => {
       if (!m.known[i]) unknown.push(i);
       return { i, r: nodeSize(m.degree[i]), hub: hubness(m.degree[i]), deg: Math.max(1, m.degree[i]), x: m.x[i], y: m.y[i] };
     });
-    // New memories appear next to their neighbors (DESIGN §6).
+    // New memories appear next to their neighbors.
     const anyKnown = unknown.length < m.n;
     for (const i of unknown) {
       // Beside its strongest known link at a random angle, not at the average

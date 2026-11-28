@@ -1,9 +1,9 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Writes THIRD_PARTY_NOTICES at the repository root (tab "Testing, CI, releases"): the
-# licences of the Rust crates (cargo-about with about.hbs and about.toml), ONNX
-# Runtime's LICENSE and ThirdPartyNotices.txt from target/onnxruntime/<target>/ (run
+# Writes THIRD_PARTY_NOTICES at the repository root: the licences of the Rust crates
+# (cargo-about with about.hbs and about.toml), ONNX Runtime's LICENSE and
+# ThirdPartyNotices.txt from target/onnxruntime/<target>/ (run
 # scripts/fetch-onnxruntime.sh <target> first), and the model's licence.
 #
 # Usage: scripts/third-party-notices.sh <target>

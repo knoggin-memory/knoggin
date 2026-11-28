@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The admin commands on a server (tab "Server": Restore, Bucket self-test, Rollout's
-//! `retire-before`; tab "Snapshots and keys": Rotation), in process: the state file in
+//! The admin commands on a server (restore, the bucket self-test, `retire-before` and
+//! master-key rotation), in process: the state file in
 //! memory, `MemoryStorage`, and for the restore the real container role and broker.
 #![allow(
     clippy::unwrap_used,

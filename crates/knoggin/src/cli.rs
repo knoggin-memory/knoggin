@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The command tree and every command's output (tab "Config, CLI, local install",
-//! Commands). Output for people goes to standard output, logs and errors to standard
-//! error; `--json` prints the route's body unchanged, or one flat object.
+//! The command tree and every command's output. Output for people goes to standard output, logs and
+//! errors to standard error; `--json` prints the route's body unchanged, or one flat object.
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::io::{BufRead, Write as _};
@@ -502,7 +501,7 @@ async fn dispatch(cli: Cli, env: &Env, warnings: Vec<&'static str>) -> anyhow::R
     }
 }
 
-/// The server's admin commands (tab "Config, CLI, local install", Server commands).
+/// The server's admin commands.
 async fn admin(ctx: &Ctx<'_>, config: &Config, c: AdminCommand) -> anyhow::Result<u8> {
     use knoggin_server::admin::{self, Admin, RestoreOutcome};
     use knoggin_state::system_clock;
@@ -812,7 +811,7 @@ async fn open(ctx: &Ctx<'_>, print_url: bool) -> anyhow::Result<u8> {
         eprintln!(
             "knoggin: the web UI is on 127.0.0.1, not on a name under localhost: this system's \
              resolver cannot keep such a name local, so another account's earlier page on that \
-             port could be reused (tab \"Security\", I19)"
+             port could be reused"
         );
     }
     if print_url {
@@ -1280,7 +1279,7 @@ async fn use_previous(ctx: &Ctx<'_>, config: &Config, yes: bool) -> anyhow::Resu
 
 async fn healthcheck(ctx: &Ctx<'_>, url: Option<String>) -> anyhow::Result<u8> {
     let ready = match url {
-        // The address as given, such as `http://127.0.0.1:8080/readyz` (tab "Deployment").
+        // The address as given, such as `http://127.0.0.1:8080/readyz`.
         Some(url) => {
             let http = reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))

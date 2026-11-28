@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Tab "Deployment", "Variables and outputs" and "Sizing".
+# The module's variables and its sizing table.
 
 variable "name" {
   description = "Name of the deployment. Prefixes every resource; the internal zone is <name>.internal."
@@ -145,8 +145,8 @@ variable "containers_per_host" {
 }
 
 locals {
-  # Memory and the network interface cap with trunking, from AWS documentation
-  # (tab "Deployment", Sizing). Measurement M6 corrects these on a real account.
+  # Memory and the network interface cap with trunking, from AWS documentation. A
+  # measurement on a real account may correct these.
   hosts_table = {
     "m8g.large"   = { memory_gib = 8, interfaces = 10 }
     "m8g.xlarge"  = { memory_gib = 16, interfaces = 20 }

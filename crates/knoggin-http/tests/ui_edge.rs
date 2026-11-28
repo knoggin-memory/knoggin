@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The web UI through the daemon's edge: the UI's files beside the API, the event stream's
-//! cap per user, the locked daemon (tab "Web UI", Serving and Live events), and what an
-//! app's key sees of the user's other stores in the read models and the stream (tab
-//! "Security", rule I3).
+//! cap per user, the locked daemon, and what an app's key sees of the user's other stores
+//! in the read models and the stream (an app's key reaches its own store only).
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -238,8 +237,9 @@ async fn mcp(env: &EdgeEnv, secret: Option<&str>, client: &str, tool: &str, args
     serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap()
 }
 
-/// I3: with a key of app X, the read models show no client name, event or count of the
-/// personal store or of app Y; only the figures of the process itself are shared.
+/// Each app's store is kept apart: with a key of app X, the read models show no client
+/// name, event or count of the personal store or of app Y; only the figures of the process
+/// itself are shared.
 #[tokio::test]
 async fn an_apps_read_models_show_nothing_of_the_users_other_stores() {
     let env = EdgeEnv::new().await;
@@ -382,8 +382,9 @@ async fn next_event(body: &mut Body, buf: &mut String, wait: Duration) -> Option
     }
 }
 
-/// I3: with the event stream of app X open, a save, a recall and a forget in the personal
-/// store and in app Y put no event on it; a save in X then does.
+/// Each app's store is kept apart: with the event stream of app X open, a save, a recall
+/// and a forget in the personal store and in app Y put no event on it; a save in X then
+/// does.
 #[tokio::test]
 async fn an_apps_event_stream_carries_nothing_of_the_users_other_stores() {
     let env = EdgeEnv::new().await;

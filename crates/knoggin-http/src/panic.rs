@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The body of the panic hook. Only `main` installs a hook (tab "Engineering rules").
+//! The body of the panic hook. Only `main` installs a hook.
 
 use std::io::Write;
 use std::panic::PanicHookInfo;

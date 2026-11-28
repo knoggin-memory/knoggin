@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! What only the multi-user server needs (tab "Server").
+//! What only the multi-user server needs.
 //!
 //! The foundation holds the settings, the pinned internal link with its secrets and
 //! tokens, object storage, and the launcher interface. The router role (`router`, with

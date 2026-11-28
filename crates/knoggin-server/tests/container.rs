@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The container role in process against the broker (tab "Server": hello, claim, the
-//! park sequence, the memory budget, the 64 MiB of bodies in flight, `lease_lost`; tab
-//! "Security": rows I4 and I7 as far as they run in one process).
+//! The container role in process against the broker: hello, claim, the park sequence, the
+//! memory budget, the 64 MiB of bodies in flight, `lease_lost`, and, as far as they run in
+//! one process, that a container serves only its claimed user and stops once replaced.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -114,7 +114,7 @@ async fn hello_claim_and_the_router_token() {
     assert_eq!(status.user_id, Some(a.user));
     assert_eq!(status.generation, Some(g));
 
-    // I4: a request for another user is refused; the claimed user is served.
+    // A request for another user is refused; the claimed user is served.
     let (status, _, _) = c
         .forward(b.user, b.store, Method::GET, "/v1/memories", Body::empty())
         .await;

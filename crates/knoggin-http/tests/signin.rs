@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Sign-in (tab "Sign-in and credentials", Tests that must exist): access tokens, their
-//! reach, web sign-in and cookie sessions, users and admins, a local install with
-//! sign-in on, and the browser checks, all in one process against the edge layer with the
-//! test issuer. A server is the edge in the router's role on its public listener; the
-//! router itself (`knoggin-server`) is not in these tests.
+//! Sign-in: access tokens, their reach, web sign-in and cookie sessions, users and admins,
+//! a local install with sign-in on, and the browser checks, all in one process against the
+//! edge layer with the test issuer. A server is the edge in the router's role on its public
+//! listener; the router itself (`knoggin-server`) is not in these tests.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -805,8 +804,8 @@ async fn web_sign_in_sessions_and_their_cookies() {
     assert_eq!(r.json["signedOutReason"], "expired");
 }
 
-/// Step 1 on the daemon's fixed listener: a request to a sign-in route is charged to the
-/// bucket of requests without a credential whatever cookies it carries, before its code
+/// The address bucket on the daemon's fixed listener: a request to a sign-in route is charged
+/// to the bucket of requests without a credential whatever cookies it carries, before its code
 /// exchange, so one login cookie and its `state` cannot drive a flood of token requests.
 /// A callback that signs in gives its token back.
 #[tokio::test]

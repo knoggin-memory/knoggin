@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The `knoggin serve` role: one user container (tab "Server"). It listens on the
+//! The `knoggin serve` role: one user container. It listens on the
 //! internal link with a certificate it made itself, proves itself in `hello`, takes one
 //! user in `claim`, serves the store layer for that user behind the router token, saves
 //! through [`RouterBackend`], and parks (saves, reports `parked`, returns) after its idle
@@ -443,7 +443,9 @@ fn build(config: ServeConfig) -> Option<(Arc<Shared>, Arc<rustls::ServerConfig>)
     Some((shared, tls))
 }
 
-/// The main loop: waits for a claim, then for a park trigger, and runs the park sequence.
+/// The main loop: waits for a claim, then for a park trigger, and runs the park sequence:
+/// (1) end the event streams and wait for the requests in flight, cutting off the rest;
+/// (2) save every store; (3) report `parked`; (4) if a save failed, serve again.
 async fn drive(s: &Arc<Shared>, stop: impl Future<Output = ()> + Send) -> ServeEnd {
     let mut stop = pin!(stop);
     let mut lost = s.link.lost.subscribe();

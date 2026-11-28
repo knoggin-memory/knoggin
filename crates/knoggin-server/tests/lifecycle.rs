@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The lifecycle task on `MemoryStorage` and the local state file, with a set clock (tab
-//! "Server", The lifecycle task and its tests).
+//! The lifecycle task on `MemoryStorage` and the local state file, with a set clock.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

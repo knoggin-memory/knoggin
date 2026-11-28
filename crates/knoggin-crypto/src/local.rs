@@ -401,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn key_id_is_the_spec_hash() {
+    fn key_id_is_the_versioned_sha256_prefix() {
         let key = [0u8; KEY_LEN];
         let mut input = b"knoggin-kek-id-v1".to_vec();
         input.extend_from_slice(&key);

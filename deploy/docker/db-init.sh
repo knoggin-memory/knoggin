@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
 # Runs once, when the database volume is first made (the Postgres image runs every
-# script in /docker-entrypoint-initdb.d). Makes the three logins of tab "Deployment" from
+# script in /docker-entrypoint-initdb.d). Makes the three logins from
 # the three URL files, so that no password is typed twice:
 #   postgres_url            the router: owns the database and its tables
 #   postgres_url_lifecycle  the lifecycle task: SELECT and DELETE only

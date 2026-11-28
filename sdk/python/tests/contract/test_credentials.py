@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-"""The SDK's part of the tests of the tab "Sign-in and credentials": API keys, the local socket, and "not running".
+"""The SDK's part of the sign-in and credential tests: API keys, the local socket, and "not running".
 
 These need a daemon this run started, because they make, revoke and rotate keys and delete stores
 through the control routes on its socket.

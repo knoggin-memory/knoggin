@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: AGPL-3.0-only
 # Makes tests/fixtures/ranking/fixture.json from recalld at the reference commit.
-# See spec tab "Testing, CI and releases", "Making the ranking fixture", and
-# tests/fixtures/ranking/README.md for the output format.
+# See tests/fixtures/ranking/README.md for the output format.
 #
 # Usage: scripts/make-ranking-fixture.sh <recalld checkout> [work dir]
 #

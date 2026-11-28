@@ -1,16 +1,15 @@
 name: Model release
 
-# Tab "Testing, CI, releases" and tab "Embeddings", Download and check: puts the pinned
-# model files on a release tagged model-<identity string>, a download source of `knoggin model
+# Puts the pinned model files on a release tagged model-<identity string>, a download source of `knoggin model
 # fetch` and of the image's model stage (the only one for the patched graph). Started by hand.
 #
-# graph = patched (measurement M5, the graph knoggin-embed pins): the graph with
+# graph = patched (the faster compute path, the graph knoggin-embed pins): the graph with
 #   accuracy_level = 4, made by scripts/patch_q4_graph.py, with a notice that says it was
 #   modified, plus the same weights and tokenizer, under model-$PATCHED_IDENTITY. The
 #   graph's only download source, so run this before any build that pins it
-#   (docs/maintainers.md, M5).
+#   (docs/maintainers.md, "The faster compute path").
 # graph = published: the three files from Hugging Face at the pinned commit, as they are,
-#   under model-$PUBLISHED_IDENTITY, for builds from before the M5 switch.
+#   under model-$PUBLISHED_IDENTITY, for builds from before the switch to the patched graph.
 
 on:
   workflow_dispatch:

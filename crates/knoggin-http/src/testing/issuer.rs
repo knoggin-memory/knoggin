@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The test issuer (tab "Sign-in and credentials", The test issuer): a small OpenID
-//! Connect provider for tests, in test mode only. It publishes a discovery document and
-//! one RSA and one P-256 key, approves every sign-in at once, exchanges codes, and mints
-//! tokens with any claims a test wants. Never use it for real users.
+//! The test issuer: a small OpenID Connect provider for tests, in test mode only. It
+//! publishes a discovery document and one RSA and one P-256 key, approves every sign-in at
+//! once, exchanges codes, and mints tokens with any claims a test wants. Never use it for
+//! real users.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

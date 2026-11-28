@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The forwarder (tab "Server", How a store request is served): the router's store routes.
+//! The forwarder: the router's store routes.
 //! Each request waits for its user's container (claiming one if needed), goes to it over
 //! the pinned link with the client's credentials and `Knoggin-` headers removed and the
 //! internal headers added last, and comes back through the filter, so that a container

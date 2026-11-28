@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Tab "Deployment", "User task definition", and the rules for every user container.
+# The user task definition, and the rules for every user container.
 
 locals {
   # <account>.dkr.ecr.<region>.amazonaws.com/<repository>@sha256:<digest>
@@ -33,7 +33,7 @@ resource "aws_ecs_task_definition" "user" {
     readonlyRootFilesystem = true
     portMappings           = [{ containerPort = 8443, protocol = "tcp" }]
     linuxParameters        = { capabilities = { drop = ["ALL"] }, maxSwap = 0 }
-    # Measurement M11: if a task cannot start with this on ECS, remove this one line.
+    # Unconfirmed on ECS: if a task cannot start with this, remove this one line.
     dockerSecurityOptions = ["no-new-privileges"]
     ulimits = [
       { name = "core", softLimit = 0, hardLimit = 0 },

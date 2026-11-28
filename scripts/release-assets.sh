@@ -1,8 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Turns the archives in <dir> into a release's files (tab "Testing, CI, releases", the
-# publish job; release.yml runs it in the job assets): an SPDX SBOM per archive made by
+# Turns the archives in <dir> into a release's files (release.yml runs it in the job
+# assets, ahead of the publish job): an SPDX SBOM per archive made by
 # syft from what the archive holds, install.sh stamped with the version and each
 # archive's SHA-256, and SHA256SUMS over all of them. release.yml and
 # scripts/release-dry-run.sh both call it.

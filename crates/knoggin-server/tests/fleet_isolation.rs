@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The fleet's isolation tests (tab "Security", rows I1, I3 to I7, and the internal
-//! link's checks of tab "Server"), in one process: two users behind one router, each with
-//! a container that runs the real container role. The test holds the internal secret, so
-//! it can call the broker with a container's own token, which the real stack does not
-//! allow from outside. Checks that need each container on its own address run on Linux
-//! only, where each fake container listens on its own `127.0.0.x`; elsewhere they are
-//! skipped with a printed reason.
+//! The fleet's isolation tests and the internal link's checks, in one process: two users behind one
+//! router, each with a container that runs the real container role. The test holds the internal
+//! secret, so it can call the broker with a container's own token, which the real stack does not
+//! allow from outside. Checks that need each container on its own address run on Linux only, where
+//! each fake container listens on its own `127.0.0.x`; elsewhere they are skipped with a printed
+//! reason.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -108,7 +107,7 @@ fn own_address(c: &Container) -> Option<IpAddr> {
 }
 
 #[tokio::test]
-async fn i1_a_users_request_reaches_only_their_own_container_and_stores() {
+async fn a_users_request_reaches_only_their_own_container_and_stores() {
     let t = two().await;
     let (a, b) = (&t.alice, &t.bob);
     assert_ne!(a.3.id, b.3.id, "one container per user");
@@ -138,7 +137,7 @@ async fn i1_a_users_request_reaches_only_their_own_container_and_stores() {
 }
 
 #[tokio::test]
-async fn i4_a_container_refuses_a_forwarded_request_for_another_user() {
+async fn a_container_refuses_a_forwarded_request_for_another_user() {
     let t = two().await;
     let (a, b) = (&t.alice, &t.bob);
     let peers = Arc::new(Peers::default());
@@ -177,7 +176,7 @@ async fn i4_a_container_refuses_a_forwarded_request_for_another_user() {
 }
 
 #[tokio::test]
-async fn i5_a_container_holding_bobs_token_cannot_reach_alices_stores() {
+async fn a_container_holding_bobs_token_cannot_reach_alices_stores() {
     let t = two().await;
     let (a, b) = (&t.alice, &t.bob);
     let from = own_address(&b.3);
@@ -226,7 +225,7 @@ async fn i5_a_container_holding_bobs_token_cannot_reach_alices_stores() {
 }
 
 #[tokio::test]
-async fn i6_a_container_cannot_use_another_containers_identity() {
+async fn a_container_cannot_use_another_containers_identity() {
     let t = two().await;
     let (a, b) = (&t.alice, &t.bob);
     // Alice's user ID with Bob's token.
@@ -267,7 +266,7 @@ async fn i6_a_container_cannot_use_another_containers_identity() {
 }
 
 #[tokio::test]
-async fn i7_a_replaced_container_gets_lease_lost() {
+async fn a_replaced_container_gets_lease_lost() {
     let t = two().await;
     let b = &t.bob;
     let fleet =
@@ -468,11 +467,11 @@ async fn mcp(
     serde_json::from_str(v["result"]["content"][0]["text"].as_str().unwrap()).unwrap()
 }
 
-/// Rule I3 through one container, which holds every store of its user: an
+/// Stores kept apart within one container, which holds every store of its user: an
 /// `Idempotency-Key` is kept per store, app X's read models show nothing of the personal
 /// store or of app Y, and X's event stream carries none of their events.
 #[tokio::test]
-async fn i3_one_container_keeps_a_users_stores_apart() {
+async fn one_container_keeps_a_users_stores_apart() {
     let d = Deployment::new(false).await;
     let r = d.router("0.1.0").await;
     let mut keys = Vec::new();

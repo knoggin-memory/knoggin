@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The broker: the routes of the router's internal listener that user containers call
-//! (tab "Server", the broker). Open a store, begin and commit a snapshot, report a park,
+//! The broker: the routes of the router's internal listener that user containers call.
+//! Open a store, begin and commit a snapshot, report a park,
 //! and on one host the blob route that forwards snapshot bytes to the bucket.
 //!
 //! Every call proves the container token of the container it names, and must come from
@@ -54,7 +54,8 @@ const MAX_COUNT: u64 = 1_000_000_000;
 /// The longest `lastWriteClient` a commit may carry, in characters.
 const MAX_CLIENT_CHARS: usize = 64;
 
-/// What the router runs when a container reports `parked`: steps 2 to 4 of "Mark gone"
+/// What the router runs when a container reports `parked`: "Mark gone" without its stop
+/// (how the container ended, then the record `gone` and the lease parked in one write)
 /// for that container, then a stop in case it lingers. It belongs to the router's lease
 /// code; the broker has checked the caller and its lease first.
 pub type OnParked = Arc<

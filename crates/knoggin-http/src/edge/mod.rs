@@ -1,11 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The edge layer (tabs "Sign-in and credentials" and "REST API"): it checks the
-//! credential, resolves it to a user, one store and permissions, applies rate limits and
-//! the browser checks, and serves the control routes. The store layer behind it reads only
-//! the `RequestContext` the edge puts in the request extensions.
+//! The edge layer: it checks the credential, resolves it to a user, one store and
+//! permissions, applies rate limits and the browser checks, and serves the control routes.
+//! The store layer behind it reads only the `RequestContext` the edge puts in the request
+//! extensions.
 //!
 //! Both sign-in modes: the local socket, local web sessions, API keys, and with `oauth`
 //! access tokens, web sign-in and cookie sessions (`oauth`, `signin`).
+//!
+//! A request on a checked route passes these steps; open routes skip steps 3 to 13.
+//! Steps 4 to 9 are alternatives: the first credential the request carries decides (a
+//! bearer value, else the socket, else the cookie, else sign-in off). Comments in this
+//! module and in `check` name the steps by number:
+//!
+//! 1. The address buckets: the router's fixed ceiling per client address counts every
+//!    request; the daemon's fixed bucket and the router's bucket per address count a
+//!    request without a credential or with a refused one.
+//! 2. The browser checks (`browser`).
+//! 3. A malformed `Authorization` header (two of them, or no `Bearer` token) is refused.
+//! 4. The local socket: the install's own user.
+//! 5. A local web session, only on the daemon's local web listener.
+//! 6. An API key: its form, then an active key record.
+//! 7. An access token, in mode `oauth` only.
+//! 8. The session cookie, in mode `oauth` only.
+//! 9. On a server with sign-in off, a request without a credential.
+//! 10. A deleted account: refused, except on the routes a deleted account may still use.
+//!     An account an admin removed is refused on every route.
+//! 11. The store: an API key's store must be live, and a store route selects its store.
+//! 12. The bucket per credential and, on the router, the bucket per user.
+//! 13. Control routes need the socket, a session, or sign-in off.
 
 mod browser;
 mod check;
@@ -104,7 +126,7 @@ impl AuthMode {
     }
 }
 
-/// The settings the edge reads (tab "Config, CLI, local install").
+/// The settings the edge reads.
 #[derive(Debug, Clone)]
 pub struct EdgeConfig {
     /// Daemon or router.

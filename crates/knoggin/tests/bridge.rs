@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `knoggin mcp`, the stdio bridge (tab "MCP", Tests that must exist): scripted sessions over
+//! `knoggin mcp`, the stdio bridge: scripted sessions over
 //! pipes on both revisions and both tool sets, a daemon that is not yet running, no TCP
 //! connection, `KNOGGIN_API_KEY`, and the answers it makes up itself.
 #![allow(

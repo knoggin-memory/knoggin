@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The broker's counts, all in the router's memory (tab "Server", limits per container
-//! and per user, per peer address): calls of one container, bytes one user moves in an
+//! The broker's counts, all in the router's memory (limits per container and per user,
+//! per peer address): calls of one container, bytes one user moves in an
 //! hour, and connections and failed tokens of one peer address. With several routers each
 //! keeps its own; that is accepted.
 

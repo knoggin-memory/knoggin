@@ -12,7 +12,7 @@ export default ts.config(
   {
     languageOptions: { globals: { ...globals.browser, ...globals.node } },
     rules: {
-      // Stored strings are always text (tab "Security"): no {@html} anywhere.
+      // Stored strings are always text: no {@html} anywhere.
       'svelte/no-at-html-tags': 'error',
       'svelte/require-each-key': 'off',
       'svelte/no-navigation-without-resolve': 'off',

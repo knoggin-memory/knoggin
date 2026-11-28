@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The embedding model on the binary's side (tab "Embeddings"): the loop that checks and
+//! The embedding model on the binary's side: the loop that checks and
 //! downloads the files and loads the two providers, the ONNX Runtime library path, and
 //! `knoggin model fetch | verify`.
 

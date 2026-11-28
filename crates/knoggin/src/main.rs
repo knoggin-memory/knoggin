@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The `knoggin` binary: parses the command line, loads the config, builds the pieces and
-//! runs a role or a command (tab "Workspace and crates", knoggin (the binary)).
+//! runs a role or a command.
 
 mod bridge;
 mod cli;

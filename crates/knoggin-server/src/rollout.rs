@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Rollout (tab "Server", Rollout): the rollout record at a router's start, and the
+//! Rollout: the rollout record at a router's start, and the
 //! leader's rollout steps on each pass. A user container never changes build in place:
 //! it parks, and the next claim takes a container of the claim build. On one host the
 //! claim build is the router's own and the record's `claim` and `desired` are not used.
@@ -14,10 +14,11 @@ use crate::launcher::BuildInfo;
 use crate::lease::Fleet;
 use crate::reconcile::Pass;
 
-/// Step 9 of a router's start: writes the rollout record. None there: this router as
-/// `claim` and `desired`. A newer build, or the same build with another spec, becomes
-/// `desired`; an older one leaves the record alone unless `allow_downgrade` is set. Each
-/// write is conditional; a router that loses reads again.
+/// At a router's start, after the bucket self-test and before it listens: writes the
+/// rollout record. None there: this router as `claim` and `desired`. A newer build, or the
+/// same build with another spec, becomes `desired`; an older one leaves the record alone
+/// unless `allow_downgrade` is set. Each write is conditional; a router that loses reads
+/// again.
 pub async fn at_start(
     meta: &Meta,
     own: &BuildSpec,
@@ -73,7 +74,7 @@ pub(crate) struct RolloutView {
 }
 
 impl Fleet {
-    /// Step 10 of the reconcile loop.
+    /// The reconcile loop's rollout pass.
     pub(crate) async fn rollout_steps(
         self: &Arc<Self>,
         pass: &Pass,

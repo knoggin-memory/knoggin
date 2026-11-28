@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `LocalBackend`: snapshot files under `<data dir>/stores/<store id>/`, data keys wrapped
-//! by the local key provider and kept in the store records of the local state file (tab
-//! "Snapshots and keys", Local files).
+//! by the local key provider and kept in the store records of the local state file.
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -285,8 +284,8 @@ fn names(dir: &Path) -> io::Result<Vec<SnapshotName>> {
     Ok(out)
 }
 
-/// The generation of this open and the snapshot to load (tab "Snapshots and keys",
-/// "Loading a store" and "A missing snapshot on a local install").
+/// The generation of this open and the snapshot to load, including when a snapshot is
+/// missing on a local install.
 fn pick(
     dir: &Path,
     floor: Option<SnapshotName>,

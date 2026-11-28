@@ -145,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn document_recipe_matches_the_spec_example() {
+    fn document_recipe_matches_the_worked_example() {
         let labels = Labels {
             entities: vec!["Maya".into()],
             ..Labels::default()

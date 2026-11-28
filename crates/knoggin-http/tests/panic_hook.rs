@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The panic hook, alone in its own test binary because a hook is process-wide (tab
-//! "Engineering rules"): a router handler panics with a marker in its message, and the
-//! hook's line names the place and not the marker.
+//! The panic hook, alone in its own test binary because a hook is process-wide: a router
+//! handler panics with a marker in its message, and the hook's line names the place and not
+//! the marker.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Fleet tests of a store request's life (tab "Server", Tests that must exist): claim
+//! Fleet tests of a store request's life: claim
 //! (with races), park under each trigger, crashes, the reconcile loop, and rollout between
 //! two builds side by side. Routers run through `router::run_router`; containers run the
 //! real container role in the fake launcher.
@@ -491,7 +491,7 @@ async fn three_crashes_through_requests_pause_the_user() {
 
 #[tokio::test]
 async fn a_long_import_through_the_router_is_not_cut_by_the_request_timeout() {
-    // The spec's case is a 40-second import; this test runs a 10-second one against a
+    // The case is a 40-second import; this test runs a 10-second one against a
     // request timeout of 3 seconds and the fleet's 2 seconds of silence before `status`.
     let d = Deployment::new(false).await;
     let r = d

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! An independent MCP client (`rmcp`) connects over streamable HTTP, lists the tools,
-//! stores a memory and recalls it, once over the older revisions and once over the
-//! current one (tab "MCP", Tests that must exist).
+//! stores a memory and recalls it, once over the older revisions and once over the current
+//! one.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,

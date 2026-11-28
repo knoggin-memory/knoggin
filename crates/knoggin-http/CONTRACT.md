@@ -1,8 +1,7 @@
 # knoggin-http: the store layer contract
 
-For anyone working on `mcp`, `edge` (with the control routes) or `local`. The spec
-(tabs "Workspace and crates", "REST API", "Engineering rules") is the authority; this file
-says what exists and how to use it. Deviations are in `docs/spec-deviations.md`.
+For anyone working on `mcp`, `edge` (with the control routes) or `local`: what exists and
+how to use it.
 
 ## Modules
 
@@ -37,7 +36,7 @@ Lifecycle: `close(store)` (save, then drop; stays open if the save fails), `drop
 (deleted: no save), `save_all()` (park, shutdown; returns the failures, the role retries),
 `shutdown()` (stop tasks, refuse requests), `lease_lost()` (a watch the container waits on),
 `end_event_streams()` (ends every event stream at once and answers new ones 204; call it
-first on a stop and at step 1 of a park, before waiting for requests in flight).
+first on a stop and when a park starts, before waiting for requests in flight).
 Status: `store_status(store)` (also retries a stale lock in the background), `report()` (the
 container's `status` answer: open stores, opening, locks), `counters`, `model_state()`.
 
@@ -65,7 +64,7 @@ of the request types: set them before calling (`req.id = ...`).
 
 ## The router (for `edge`)
 
-- `store_layer(host)` holds every store route of the REST tab, `/v1/ui/*` included.
+- `store_layer(host)` holds every REST store route, `/v1/ui/*` included.
   It has no fallback, so merge it into the edge router and set the edge's fallback (404 as
   `not_found`) there. It applies its own body limits (256 KiB, `body_bytes` on the batch, none
   on the import), the request timeout (export and import exempt), `trace::observe`, error

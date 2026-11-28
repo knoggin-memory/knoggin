@@ -138,9 +138,8 @@ async fn sweep(host: &StoreHost, open: &Arc<OpenStore>) {
     }
 }
 
-/// Takes one snapshot of `open` if it has unsaved changes (rules 2 to 7 of "When
-/// snapshots are taken"). One runs at a time per store. A store that was dropped is never
-/// saved.
+/// Takes one snapshot of `open` if it has unsaved changes. One runs at a time per store. A
+/// store that was dropped is never saved.
 pub(super) async fn snapshot(host: &StoreHost, open: &Arc<OpenStore>) -> Result<(), BackendError> {
     let mut state = open.save.lock().await;
     loop {
@@ -225,7 +224,7 @@ pub(super) async fn snapshot(host: &StoreHost, open: &Arc<OpenStore>) -> Result<
                 metrics::histogram!("knoggin_snapshot_bytes").record(len as f64);
                 return Ok(());
             }
-            // Rule 6: take the next sequence at once.
+            // A name already taken: take the next sequence at once.
             Err(BackendError::NameTaken) => state.next_sequence += 1,
             Err(e) => {
                 open.snapshot_failed.store(true, Ordering::Relaxed);

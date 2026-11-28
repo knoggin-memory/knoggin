@@ -1,10 +1,10 @@
 #!/bin/sh
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# Makes the secrets folder of the one-host stack and writes every value once (tab
-# "Deployment", Secrets). Needs only Docker and OpenSSL, and no root. Run it once, from
-# this folder, after setting KNOGGIN_IMAGE in .env. A file that already exists is kept,
-# so running it again only fills in what is missing.
+# Makes the secrets folder of the one-host stack and writes every value once.
+# Needs only Docker and OpenSSL, and no root. Run it once, from this folder, after setting
+# KNOGGIN_IMAGE in .env. A file that already exists is kept, so running it again only
+# fills in what is missing.
 #
 # The web client secret comes from your identity provider: set KNOGGIN_WEB_CLIENT_SECRET,
 # or type it when asked.
@@ -80,6 +80,6 @@ if [ ! -e "$dir/web_client_secret" ]; then
 fi
 
 # The folder keeps other accounts out; the files must be readable by every service's
-# user, so they are 0444 (tab "Deployment", Secrets).
+# user, so they are 0444.
 chmod 0444 "$dir"/*
 echo "done: $dir"

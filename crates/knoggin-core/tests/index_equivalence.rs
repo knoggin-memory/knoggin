@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Index equivalence (tab "Engine", "Index rules"): random sequences of every write
-//! operation, and after each step the live indexes must equal a rebuild from the
-//! memories and edges alone. A step that fails must leave the store unchanged.
+//! Index equivalence: random sequences of every write operation, and after each step the
+//! live indexes must equal a rebuild from the memories and edges alone. A step that
+//! fails must leave the store unchanged.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -41,7 +41,7 @@ const QUERIES: [&str; 20] = [
 ];
 
 proptest! {
-    // 256 cases, pinned so that PROPTEST_CASES cannot lower it (tab "Engineering rules").
+    // 256 cases, pinned so that PROPTEST_CASES cannot lower it.
     #![proptest_config(ProptestConfig { cases: 256, max_shrink_iters: 2_000, ..ProptestConfig::default() })]
 
     #[test]

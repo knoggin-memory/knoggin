@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The small HTTP client that the local commands and the stdio bridge use over the
-//! daemon's Unix socket (tab "Sign-in and credentials", The local socket). It sends no
+//! daemon's Unix socket. It sends no
 //! secret, never opens a TCP port, and connects only when the home folder and the socket's
 //! peer are this user's own.
 

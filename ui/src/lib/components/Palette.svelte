@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<!-- ⌘K palette (DESIGN §5, §8 Search): Knoggin's own hybrid search
+<!-- ⌘K palette: Knoggin's own hybrid search
      (GET /v1/ui/search), which records no access, with explain. No UI-side
      index: every keystroke asks the server. -->
 <script lang="ts">

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The one-host stack's lifecycle (tabs "Server" and "Testing, CI, releases"): a request
+//! The one-host stack's lifecycle: a request
 //! claims a container, which serves and parks when idle; a container that crashes after
 //! its snapshot loses nothing, one that crashes before it loses that write and the store
 //! still loads; an admin restore brings back an older snapshot; the bucket self-test

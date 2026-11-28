@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Export and import (tab "REST API", Export and import; the file format in the tab
-//! "Config, CLI, local install").
+//! Export and import. The file format is that of `knoggin_core::transfer`.
 //!
 //! An export reads pages of 1,000 memories, each under its own short read lock, and is
 //! ended when the client takes less than 256 KiB in any 60 seconds while more is waiting.

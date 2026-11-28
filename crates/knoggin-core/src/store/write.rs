@@ -70,7 +70,7 @@ impl Store {
         self.last_write_client.clone_from(&ctx.client);
     }
 
-    /// Saves one memory (tab "Engine", "Saving a memory"). `vector` is the document
+    /// Saves one memory. `vector` is the document
     /// embedding when the host already has it. One that is not valid for the store's
     /// model counts as a failed embedding: the memory is saved `Pending` with one
     /// failure, as `apply_embedding` treats the same vector.
@@ -171,9 +171,9 @@ impl Store {
         ctx: &WriteContext,
         now: Timestamp,
     ) -> Result<StoredMemory, EngineError> {
-        // Steps 1 to 6.
+        // The checks that need no store.
         let tags = validate_content(args.content, now)?;
-        // Step 7: the namespace (a supersede takes the old memory's).
+        // The namespace (a supersede takes the old memory's).
         let namespace = match args.supersedes {
             Some(old) => self
                 .memories
@@ -183,7 +183,7 @@ impl Store {
                 .ok_or_else(|| EngineError::NotFound(format!("memory {old} not found")))?,
             None => self.resolve_namespace(args.namespace)?.id,
         };
-        // Step 8: the parent.
+        // The parent.
         if let Some(parent) = args.parent
             && !self
                 .memories

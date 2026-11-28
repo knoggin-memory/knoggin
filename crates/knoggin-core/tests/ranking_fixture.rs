@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Knoggin's ranking equals recalld's: the fixture's store, rebuilt with
 //! `StoreBuilder`, answers each of the 40 recorded recalls with recalld's IDs in
-//! recalld's order (spec tab "Testing, CI and releases", "Making the ranking fixture").
+//! recalld's order. `scripts/make-ranking-fixture.sh` makes the fixture.
 //!
 //! Two allowances, and only these: adjacent hits whose final scores are closer than
 //! 0.0005 may come in either order, and closer than 0.02 for a query with `entities`.
@@ -274,7 +274,7 @@ fn compare(store: &Store, q: &FixtureQuery) -> Result<Vec<(usize, f32)>, String>
             i += 1;
             continue;
         }
-        // The two allowances of the spec: adjacent hits in Knoggin's own result whose
+        // The two allowances: adjacent hits in Knoggin's own result whose
         // scores are closer than the tolerance may come in either order.
         if i + 1 < got.len() && got[i] == want[i + 1] && got[i + 1] == want[i] {
             let gap = (hits[i].score - hits[i + 1].score).abs();

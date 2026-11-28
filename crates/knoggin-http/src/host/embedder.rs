@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The `Embedder`: two OS threads, one per provider (tab "Embeddings", Threads and the
-//! queue). A recall never waits behind a save, and a waiting duplicate check goes before
-//! queue work. The async side talks to the threads through `tokio::sync` channels and
-//! never blocks a runtime thread.
+//! The `Embedder`: two OS threads, one per provider, and the queue. A recall never waits
+//! behind a save, and a waiting duplicate check goes before queue work. The async side
+//! talks to the threads through `tokio::sync` channels and never blocks a runtime thread.
 
 use std::collections::VecDeque;
 use std::fmt;

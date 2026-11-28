@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The web UI's read models, `/v1/ui/*` (tab "Web UI", Read-model routes and Live events).
-//! They are store routes that need `memory:read`; none records access or changes
-//! anything. A route that takes `namespace` covers every namespace without it, and none
-//! reads the `Knoggin-Namespace` header. The shaping is in [`shape`]; the engine only
-//! supplies the data.
+//! The web UI's read models and live events, `/v1/ui/*`. They are store routes that need
+//! `memory:read`; none records access or changes anything. A route that takes `namespace`
+//! covers every namespace without it, and none reads the `Knoggin-Namespace` header. The
+//! shaping is in [`shape`]; the engine only supplies the data.
 
 pub(crate) mod shape;
 pub(crate) mod wire;

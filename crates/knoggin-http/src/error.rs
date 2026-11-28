@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `ApiError` and the closed list of error codes (tab "REST API", Errors).
+//! `ApiError` and the closed list of error codes.
 //!
 //! Every error a client sees is one `ApiError`. Its response carries the error itself in
 //! the response extensions, so that an outer layer can fill in the request ID

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Web sign-in and its routes (tab "Sign-in and credentials", Web sign-in): the
-//! authorization-code flow with PKCE, the sealed login cookie, the callback's checks and
-//! user rules, cookie sessions and logout, and the protected-resource metadata.
+//! Web sign-in and its routes: the authorization-code flow with PKCE, the sealed login
+//! cookie, the callback's checks and user rules, cookie sessions and logout, and the
+//! protected-resource metadata.
 
 use axum::extract::{Request, State};
 use axum::response::{IntoResponse, Response};
@@ -223,7 +223,7 @@ async fn callback(
     match finish_sign_in(&edge, o, request.uri(), request.headers()).await {
         Ok((session, to)) => {
             // Only a callback that does not sign in counts against the fixed listener's
-            // bucket (step 1), which charged every callback before its code exchange.
+            // bucket, which charged every callback before its code exchange.
             edge.give_back_address(&arrival, client);
             redirect(
                 &to,

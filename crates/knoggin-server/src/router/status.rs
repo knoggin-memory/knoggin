@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The router's three mode routes (tab "REST API", and tab "Workspace and crates"): the
+//! The router's three mode routes: the
 //! store status (from the lease and the container's `status`, which does not wake it),
 //! the admin status (from the container records, the rollout record and the users), and
 //! the admin snapshot list (from the bucket, labelled by the same `thin` the lifecycle

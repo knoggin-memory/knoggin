@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! Object storage for snapshots (tab "Workspace and crates"): `ObjectStorage`, with
+//! Object storage for snapshots: `ObjectStorage`, with
 //! `S3Storage` for any S3-compatible service and `MemoryStorage`, the fast tests' stand-in
 //! that serves real signed links on a loopback port. The router and the admin commands
 //! never read or write an object directly: they hand out signed requests, and whoever

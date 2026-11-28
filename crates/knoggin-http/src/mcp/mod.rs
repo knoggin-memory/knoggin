@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The MCP endpoint (tab "MCP"): the protocol layer ported from recalld, the streamable
-//! HTTP transport, and the two tool sets at `/mcp` and `/mcp/plugin`. Every tool calls
-//! the same `StoreHost` method as its REST route. The store layer mounts `routes`.
+//! The MCP endpoint: the protocol layer ported from recalld, the streamable HTTP transport,
+//! and the two tool sets at `/mcp` and `/mcp/plugin`. Every tool calls the same `StoreHost`
+//! method as its REST route. The store layer mounts `routes`.
 
 mod args;
 #[doc(hidden)]
@@ -94,9 +94,9 @@ pub(crate) fn routes(host: Arc<StoreHost>) -> Router {
 mod tests {
     use super::*;
 
-    /// The texts of the MCP tab, byte for byte.
+    /// The server instructions, byte for byte.
     #[test]
-    fn instructions_match_the_spec() {
+    fn instructions_are_the_fixed_texts() {
         assert_eq!(
             instructions(
                 ToolSet::Full,

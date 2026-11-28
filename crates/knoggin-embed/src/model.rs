@@ -42,7 +42,7 @@ pub struct PinnedFile {
 }
 
 /// The graph: the published `model_q4.onnx` with `accuracy_level = 4` on every
-/// `MatMulNBits` node (measurement M5, `scripts/patch_q4_graph.py`). Only the project's
+/// `MatMulNBits` node (the faster compute path, `scripts/patch_q4_graph.py`). Only the project's
 /// release serves it; `repo_path` names the file it was made from.
 pub const GRAPH: PinnedFile = PinnedFile {
     repo_path: "onnx/model_q4.onnx",
@@ -300,13 +300,13 @@ pub async fn ensure_from(
         return Ok(dir);
     }
 
-    // Step 1: one downloader at a time. The lock goes when `_lock` drops.
+    // One downloader at a time. The lock goes when `_lock` drops.
     make_dir(root).await?;
     let _lock = lock(root.join(".lock")).await?;
     make_dir(&dir).await?;
     let trusted = trusted_dir(root).await && trusted_dir(&dir).await;
 
-    // Step 2.
+    // The files already there.
     let mut missing = Vec::new();
     let mut done = 0;
     for file in &source.files {
@@ -330,7 +330,7 @@ pub async fn ensure_from(
         return Ok(dir);
     }
 
-    // Step 3.
+    // Enough free space before any download.
     let free = (source.free_space)(&dir).map_err(io_err("read the free space of", &dir))?;
     if free < MIN_FREE_BYTES {
         return Err(ModelError::DiskFull {
@@ -340,7 +340,7 @@ pub async fn ensure_from(
         });
     }
 
-    // Steps 4 to 8.
+    // Each missing file, smallest first.
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(30))
@@ -367,7 +367,7 @@ enum Check {
     Wrong { actual: String },
 }
 
-/// Step 2 for one file. Changes nothing on disk.
+/// Checks one file already on disk. Changes nothing on disk.
 async fn check(dir: &Path, file: &SourceFile, trusted: bool) -> Result<Check, ModelError> {
     let path = dir.join(&file.name);
     let meta = match tokio::fs::symlink_metadata(&path).await {
@@ -405,7 +405,7 @@ fn kind(meta: &fs::Metadata) -> &'static str {
     }
 }
 
-/// Steps 4 to 7 for one file: every source in order until one gives the right bytes.
+/// Downloads one file: every source in order until one gives the right bytes.
 async fn fetch_file(
     client: &reqwest::Client,
     dir: &Path,
@@ -430,7 +430,7 @@ async fn fetch_file(
                 continue;
             }
         }
-        // Step 6.
+        // The hash.
         let actual = sha256_file(part.clone()).await?;
         if actual != file.sha256 {
             remove(&part).await?;
@@ -469,8 +469,8 @@ fn failed(step: &'static str, detail: impl ToString) -> Fetch {
     }
 }
 
-/// Step 5 and the back-off of step 7: brings `part` to the full size from one address,
-/// synced. It does not check the hash.
+/// Brings `part` to the full size from one address, resuming it and backing off between
+/// tries, synced. It does not check the hash.
 async fn fetch_part(
     client: &reqwest::Client,
     url: &str,
@@ -697,7 +697,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn identity_string_matches_the_spec() {
+    fn identity_string_is_the_pinned_one() {
         assert_eq!(
             identity_json(),
             r#"{"dimensions":768,"document_recipe":"doc-v1","graph_sha256":"1afd951bf447f631786cc1302921f94d4bc30f602ee6a61e8e517d0a3203c8a8","max_tokens":1024,"model":"google/embeddinggemma-2","normalization":"l2","precision":"q4","query_recipe":"query-v1","source":"onnx-community/embeddinggemma-2-ONNX@daa72c51243991dfcaf9f9137d2c573d8f7790c0","tokenizer_sha256":"4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4","weights_sha256":"c3975f2d1ab7a1878ae31a7d7a9b7804a827aff3800b60dfceafce21cac3df49"}"#

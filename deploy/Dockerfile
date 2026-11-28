@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 #
-# The one Knoggin image for every server role (tab "Deployment", The image). Build it
+# The one Knoggin image for every server role. Build it
 # from the repository root:
 #
 #   docker build -f deploy/Dockerfile -t knoggin .
@@ -112,9 +112,9 @@ RUN --mount=type=cache,id=knoggin-cargo-registry,target=/usr/local/cargo/registr
     cp target/release/knoggin THIRD_PARTY_NOTICES /out/
 
 # ------------------------------------------------------------------------- model
-# The three model files of tab "Embeddings", from the first source that works, checked
-# with sha256sum -c; a mismatch fails the build. The graph is the patched one of
-# measurement M5, which only the project's release serves.
+# The three model files, from the first source that works, checked
+# with sha256sum -c; a mismatch fails the build. The graph is the patched one (the faster
+# compute path, docs/maintainers.md), which only the project's release serves.
 FROM buildpack-deps@sha256:b5d0ed7866dacf9d66c4becf6ffe684c52c39b34be9ac9a60e3efa2e081f942e AS model-0
 RUN set -eu; \
     identity=embeddinggemma-2-q4-768-1d894cac0c7bb07b; \

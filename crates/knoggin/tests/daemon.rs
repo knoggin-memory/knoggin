@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The daemon's start-up, locked mode and shut-down (tab "Config, CLI, local install",
-//! Tests that must exist: Daemon), each in a temporary home in test mode.
+//! The daemon's start-up, locked mode and shut-down, each in a temporary home in test
+//! mode.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -346,9 +346,9 @@ fn chmod(path: &Path, mode: u32) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
 }
 
-/// Start-up step 3: each refusal, on the process.
+/// The start-up checks of the settings, folders and key file: each refusal, on the process.
 #[test]
-fn start_up_refuses_what_step_3_refuses() {
+fn start_up_refuses_unsafe_settings_folders_and_key_files() {
     // A folder that group or others can write: home, run, data, state, stores, key folder.
     for (dir, mode) in [
         ("", 0o770),

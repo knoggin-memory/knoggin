@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The router's lease, claim, "Mark gone", pool, reconcile, rollout and forwarding rules
-//! (tab "Server", Tests that must exist), run against stub containers that the fake
+//! run against stub containers that the fake
 //! launcher starts in this process, over one shared in-memory state database.
 #![allow(
     clippy::unwrap_used,
@@ -513,18 +513,18 @@ async fn a_step_the_state_database_fails_does_not_stop_the_pass() {
 async fn a_pass_with_the_launcher_unreachable_skips_its_steps_and_does_the_rest() {
     let w = World::new().await;
     let f = w.fleet(BUILD, true, |c| c.containers.pool_target = 1);
-    // A container that died (step 2 needs the launcher's list).
+    // A container that died (finding it needs the launcher's list).
     let (dead_user, alive_user) = (user(), user());
     let dead = warm(&f, dead_user).await;
     w.launcher.kill(&w.launcher.handle_of(dead).unwrap(), false);
-    // A warm lease whose container record is gone and an hour old (steps 6 and 13).
+    // A warm lease whose container record is gone and an hour old (lease and cleanup passes).
     let lost = warm(&f, alive_user).await;
     let rec = w.containers().get(lost).await.unwrap().unwrap();
     let mut gone = rec.value.clone();
     gone.state = ContainerState::Gone;
     gone.gone_ms = Some(w.clock.now() - 3_600_001);
     w.containers().put(&gone, rec.cond()).await.unwrap();
-    // A start past its limit (step 4).
+    // A start past its limit (the stuck-start pass).
     let stuck = knoggin_state::record::Container::starting(
         Uuid::now_v7(),
         BUILD.into(),

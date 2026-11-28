@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The edge layer of the local daemon in one process: the credential check with each
 //! credential kind, the control routes, the browser checks, rate limits and the mode
-//! routes (tabs "Sign-in and credentials" and "REST API", Tests that must exist).
+//! routes.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -503,7 +503,7 @@ async fn a_deleted_store_stops_its_keys_until_the_undo() {
         .local(Method::GET, &format!("/v1/stores/{app}/keys"), None)
         .await;
     assert_eq!(list.status, StatusCode::OK);
-    // I12: a key revoked while its store is deleted stays refused after the undo.
+    // A key revoked while its store is deleted stays refused after the undo.
     let gone = env
         .local(
             Method::DELETE,
@@ -809,8 +809,9 @@ async fn undoing_an_account_deletion_leaves_an_app_deleted_earlier_deleted() {
     assert_eq!(r.status, StatusCode::OK, "{}", r.json);
 }
 
-/// I3: an `Idempotency-Key` belongs to one store. The same key and body sent to app X and
-/// then to app Y run in both, and only a repeat to X is a replay.
+/// Each app's store is kept apart: an `Idempotency-Key` belongs to one store. The same key
+/// and body sent to app X and then to app Y run in both, and only a repeat to X is a
+/// replay.
 #[tokio::test]
 async fn an_idempotency_key_is_kept_per_store() {
     let env = EdgeEnv::new().await;
@@ -1357,8 +1358,8 @@ async fn rate_limits() {
 #[tokio::test]
 async fn each_bucket_runs_before_the_checks_after_it() {
     let env = EdgeEnv::with(tight).await;
-    // Step 1 before step 2: a request the browser checks refuse still takes from the fixed
-    // bucket (3 here), and an empty bucket answers before those checks.
+    // The address bucket before the browser checks: a request the browser checks refuse
+    // still takes from the fixed bucket (3 here), and an empty bucket answers before them.
     let cross_origin = [("origin", "http://evil.example")];
     for _ in 0..3 {
         let r = env
@@ -1370,7 +1371,8 @@ async fn each_bucket_runs_before_the_checks_after_it() {
         .call(fixed(), Method::GET, "/healthz", None, &cross_origin)
         .await;
     assert_eq!(r.error(), Code::RateLimited);
-    // Step 12 before step 13: an API key on a control route spends its bucket (2 here).
+    // The credential's bucket before the control-route check: an API key on a control
+    // route spends its bucket (2 here).
     let (secret, _) = env.key(env.personal, json!(["memory:read"]), 90).await;
     for _ in 0..2 {
         let r = env
@@ -1386,7 +1388,8 @@ async fn each_bucket_runs_before_the_checks_after_it() {
 
 #[tokio::test]
 async fn a_cookie_does_not_get_around_the_fixed_listeners_bucket() {
-    // Mode `none` ignores a cookie, so a request with only a cookie is charged at step 1.
+    // Mode `none` ignores a cookie, so a request with only a cookie is charged to the
+    // bucket of requests without a credential.
     let env = EdgeEnv::with(tight).await;
     let cookie = [("cookie", "knoggin_session=whatever")];
     for _ in 0..3 {

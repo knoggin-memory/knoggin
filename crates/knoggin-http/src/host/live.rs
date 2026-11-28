@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! What the web UI reads live from an open store (tab "Web UI", Live events): the events of
-//! each open store, kept in memory and sent to the event streams, and the latencies that
-//! `GET /v1/ui/system` reports. Events hold memory IDs and client names, never text or a
-//! query, and names in place of numbers.
+//! What the web UI reads live from an open store: the events of each open store, kept in
+//! memory and sent to the event streams, and the latencies that `GET /v1/ui/system`
+//! reports. Events hold memory IDs and client names, never text or a query, and names in
+//! place of numbers.
 
 use std::collections::{HashSet, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};

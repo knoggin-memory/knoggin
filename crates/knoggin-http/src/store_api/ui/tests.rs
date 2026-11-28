@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The web UI's TypeScript types (tab "Engineering rules", ts-rs): every API shape the UI
-//! reads or sends, written into `ui/src/lib/api/types/` by the explicit step
-//! `export_ui_types`, and a test that fails when the committed files are out of date.
+//! The web UI's TypeScript types, made with ts-rs: every API shape the UI reads or sends,
+//! written into `ui/src/lib/api/types/` by the explicit step `export_ui_types`, and a test
+//! that fails when the committed files are out of date.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -73,7 +73,7 @@ fn export(dir: &Path) {
         SessionToken,
         ErrorEnvelope,
     );
-    // Every source file starts with the licence line (tab "Engineering rules").
+    // Every source file starts with the licence line.
     for (name, text) in files(dir) {
         let path = dir.join(name);
         std::fs::write(path, format!("{SPDX}\n{text}")).unwrap();

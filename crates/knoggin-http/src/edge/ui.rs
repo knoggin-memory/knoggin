@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The web UI's files (tab "Web UI", Serving): `ui/dist`, embedded in the binary in a
-//! release build and read from disk in a debug build. Every `GET` path that is not the
-//! API's is the UI's: a file that exists is served as it is, any other path gets
-//! `index.html`, and the app routes on the client.
+//! The web UI's files: `ui/dist`, embedded in the binary in a release build and read from
+//! disk in a debug build. Every `GET` path that is not the API's is the UI's: a file that
+//! exists is served as it is, any other path gets `index.html`, and the app routes on the
+//! client.
 
 use std::borrow::Cow;
 use std::sync::LazyLock;

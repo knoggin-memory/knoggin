@@ -8,7 +8,7 @@
 
 [auth]
 mode = "oauth"
-# Your identity provider (tab "Sign-in and credentials" of the docs).
+# Your identity provider (docs/sign-in.md).
 issuer = "https://auth.example.com"
 provider_name = "Example sign-in"
 web_client_id = "your-web-client-id"

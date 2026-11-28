@@ -2,7 +2,7 @@
 //! The binary's AWS wiring against a moto container: `knoggin admin selftest` with
 //! `state.backend = "dynamodb"` and `keys.provider = "kms"` reads and writes the table
 //! (the schema record) and makes and unwraps a data key. The child process finds moto
-//! through `AWS_ENDPOINT_URL` alone, as the tab "Testing, CI, releases" says, with dummy
+//! through `AWS_ENDPOINT_URL` alone, with dummy
 //! keys, no shared config or credentials file and no instance metadata.
 #![allow(
     clippy::unwrap_used,
