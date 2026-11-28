@@ -21,7 +21,7 @@ INTEGRATIONS = ROOT / "integrations"
 MARKETPLACES = [ROOT / ".claude-plugin" / "marketplace.json", ROOT / ".agents" / "plugins" / "marketplace.json"]
 SKILL = INTEGRATIONS / "connectors" / "_skill" / "knoggin-memory" / "SKILL.md"
 HOOKS = INTEGRATIONS / "plugin" / "hooks" / "hooks.json"
-HOOK_LINE = "Knoggin memory is connected. Use it when earlier context matters, and ask before saving."
+HOOK_LINE = "Knoggin memory is connected. Use it when earlier context matters."
 REPO_URL = "https://github.com/knoggin-memory/knoggin"
 URL = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s\"'`<>)\]]+")
 LIVE_KEY = re.compile(r"knoggin_live_[A-Za-z0-9_-]{43}")
@@ -97,6 +97,21 @@ def test_skill_copies_match_the_source() -> None:
     for copy in copies:
         assert copy.parent.name == "knoggin-memory", copy
         assert copy.read_bytes() == source, f"{copy.relative_to(ROOT)} differs from {SKILL.relative_to(ROOT)}"
+
+
+def test_no_text_asks_for_a_yes_before_saving() -> None:
+    """Agents save directly; whether a person approves a tool call is the agent's own setting."""
+    phrases = ("wait for a yes", "waits for your yes", "ask before saving", "propose")
+    checked = [p for p in files() + sorted((ROOT / ".claude-plugin").rglob("*")) if p.is_file()]
+    assert len(checked) > 50
+    found = [
+        f"{p.relative_to(ROOT)}: {w!r}"
+        for p in checked
+        if p.name != "test_integrations.py"
+        for w in phrases
+        if w in p.read_text(encoding="utf-8").lower()
+    ]
+    assert found == []
 
 
 def test_the_hook_prints_only_the_fixed_line(tmp_path: Path) -> None:

@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo 'Knoggin memory is connected. Use it when earlier context matters, and ask before saving.'"
+            "command": "echo 'Knoggin memory is connected. Use it when earlier context matters.'"
           }
         ]
       }

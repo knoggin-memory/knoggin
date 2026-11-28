@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "knoggin",
-      "description": "Long-term memory from Knoggin. Recall is read-only, and every save is shown to you first and waits for your yes.",
+      "description": "Long-term memory from Knoggin. Recall is read-only. The agent saves what is worth keeping and tells you what it saved.",
       "source": "./integrations/plugin",
       "category": "productivity"
     }
