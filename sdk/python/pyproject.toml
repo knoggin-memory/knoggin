@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: Apache-2.0
 [project]
 name = "knoggin"
 # The shared release version: release-please bumps it with Cargo.toml and ui/package.json.
