@@ -142,7 +142,7 @@ impl Rig {
             leases: leases.clone(),
             stores: stores.clone(),
             keys: keys.clone(),
-            storage: storage.clone(),
+            storage: Arc::new(storage.without_delete()),
             clock: clock.clock(),
             link_ttl: Duration::from_secs(300),
             memory_limit_bytes: options.memory_limit_bytes,

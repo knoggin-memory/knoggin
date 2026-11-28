@@ -6,7 +6,7 @@ Day-to-day work on a Knoggin server: health, metrics, logs, admin commands, upgr
 
 - `GET /healthz` answers when the process is up.
 - `GET /readyz` answers when it is ready to serve. The load balancer and the Compose health check call it. `knoggin healthcheck --url http://127.0.0.1:8080/readyz` does the same from a script and exits 0 or 1.
-- `knoggin admin selftest` checks the state database (one read), the key provider (wraps and unwraps a test key) and the bucket (five checks of create-only uploads, signed links and listing). The router runs the bucket checks at every start and refuses to start if one fails.
+- `knoggin admin selftest` checks the state database (one read), the key provider (wraps and unwraps a test key) and the bucket (six checks: create-only uploads, signed links, listing, and that the router's key cannot delete). The router runs the bucket checks at every start and refuses to start if one fails. Only the lifecycle task deletes snapshots; `storage.router_may_delete = true` lets the router start with a key that can delete, for providers whose keys cannot separate writing from deleting, and logs a warning at every start.
 
 The web UI's **Server status** page, for admins, shows the build, the containers, the snapshot list of any store, and the rollout.
 

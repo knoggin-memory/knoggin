@@ -118,7 +118,7 @@ impl World {
             self.db.clone(),
             Arc::new(test_field_keys()),
             launcher,
-            self.storage.clone(),
+            Arc::new(self.storage.without_delete()),
             self.clock.clock(),
         )
         .unwrap()

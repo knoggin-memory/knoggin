@@ -235,6 +235,7 @@ mod tests {
             force_path_style: path_style,
             credentials_file: None,
             link_ttl_seconds: 300,
+            router_may_delete: false,
         }
     }
 

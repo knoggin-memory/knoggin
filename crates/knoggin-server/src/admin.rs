@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The `knoggin admin` commands that act on a server: restore, master-key rotation,
-//! `retire-before`, the snapshot list and the self-test with its five bucket checks. They
+//! `retire-before`, the snapshot list and the self-test with its six bucket checks. They
 //! read and write the state
 //! database, the bucket and the key provider directly; where a running router must act,
 //! they write a request that the reconcile loop carries out. The binary prints.
@@ -360,7 +360,7 @@ pub async fn rotate_master_key(
     Ok((kek_id, count))
 }
 
-/// One of the five checks of the bucket self-test.
+/// One of the six checks of the bucket self-test.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BucketStep {
     /// 1. A signed create-only upload succeeds.
@@ -374,6 +374,8 @@ pub enum BucketStep {
     Expiry,
     /// 5. A listing shows the object with the right size at once.
     Listing,
+    /// 6. The router's own credentials cannot delete the object of step 1.
+    NoDelete,
 }
 
 impl BucketStep {
@@ -385,6 +387,7 @@ impl BucketStep {
             Self::Signed => "signed",
             Self::Expiry => "expiry",
             Self::Listing => "listing",
+            Self::NoDelete => "no_delete",
         }
     }
 }
@@ -401,13 +404,15 @@ pub struct BucketFailure {
 
 const SELFTEST_BODY: &[u8] = b"knoggin bucket self-test\n";
 
-/// The five bucket checks, with objects under `selftest/`. `http` sends the signed
-/// requests (no redirects); `now` is the signing time. The router runs this at start and
-/// refuses to start if it fails; `admin selftest` runs it too.
+/// The six bucket checks, with objects under `selftest/`. `http` sends the signed
+/// requests (no redirects); `now` is the signing time. With `router_may_delete`
+/// (`storage.router_may_delete`) the delete check only logs a warning. The router runs this
+/// at start and refuses to start if it fails; `admin selftest` runs it too.
 pub async fn bucket_selftest(
     storage: &dyn ObjectStorage,
     http: &reqwest::Client,
     now: Timestamp,
+    router_may_delete: bool,
 ) -> Result<(), BucketFailure> {
     let fail = |step: BucketStep, reason: String| BucketFailure { step, reason };
     let ttl = Duration::from_secs(60);
@@ -480,15 +485,47 @@ pub async fn bucket_selftest(
         .await
         .map_err(|e| fail(BucketStep::Listing, e.to_string()))?;
     match listed.iter().find(|o| o.key == key) {
-        Some(o) if o.size == len => Ok(()),
-        Some(o) => Err(fail(
-            BucketStep::Listing,
-            format!("the listing gives {} bytes, not {len}", o.size),
+        Some(o) if o.size == len => {}
+        Some(o) => {
+            return Err(fail(
+                BucketStep::Listing,
+                format!("the listing gives {} bytes, not {len}", o.size),
+            ));
+        }
+        None => {
+            return Err(fail(
+                BucketStep::Listing,
+                "the listing does not show the new object".into(),
+            ));
+        }
+    }
+    // 6. Only the lifecycle task may delete; the router's key must not be able to.
+    if router_may_delete {
+        tracing::warn!(
+            kind = "bucket",
+            "storage.router_may_delete is set: the router's bucket key is not checked for delete rights"
+        );
+        return Ok(());
+    }
+    match storage.delete(std::slice::from_ref(&key)).await {
+        // Only a refusal for want of rights proves anything: a bucket that refuses the call
+        // for another reason (an unsupported request, say) may still delete one at a time.
+        Err(StorageError::Refused(code)) if code == "AccessDenied" => Ok(()),
+        Err(StorageError::Refused(code)) => Err(fail(
+            BucketStep::NoDelete,
+            format!(
+                "the bucket refused the delete with {code}, not AccessDenied, so the check \
+                 cannot tell whether the router's bucket key may delete objects; if this bucket cannot \
+                 separate the rights, set storage.router_may_delete = true"
+            ),
         )),
-        None => Err(fail(
-            BucketStep::Listing,
-            "the listing does not show the new object".into(),
+        Ok(()) => Err(fail(
+            BucketStep::NoDelete,
+            "the router's bucket key may delete objects: give it read, list and create-only \
+             upload, and nothing else"
+                .into(),
         )),
+        Err(e) => Err(fail(BucketStep::NoDelete, e.to_string())),
     }
 }
 
@@ -546,7 +583,7 @@ pub struct SelftestReport {
     pub database: Result<(), String>,
     /// A data key made under the nil store ID and unwrapped again.
     pub key_provider: Result<(), String>,
-    /// The five bucket checks.
+    /// The six bucket checks.
     pub bucket: Result<(), BucketFailure>,
 }
 
@@ -558,12 +595,14 @@ impl SelftestReport {
 }
 
 /// `admin selftest`: the state database (one read), the key provider and the bucket.
+/// `router_may_delete` is `storage.router_may_delete`.
 pub async fn selftest(
     db: Arc<dyn StateDb>,
     keys: &dyn KeyProvider,
     storage: &dyn ObjectStorage,
     http: &reqwest::Client,
     now: Timestamp,
+    router_may_delete: bool,
 ) -> SelftestReport {
     // The schema read is the health check.
     let database = Meta::new(db)
@@ -586,7 +625,7 @@ pub async fn selftest(
         }
     }
     .await;
-    let bucket = bucket_selftest(storage, http, now).await;
+    let bucket = bucket_selftest(storage, http, now, router_may_delete).await;
     SelftestReport {
         database,
         key_provider,

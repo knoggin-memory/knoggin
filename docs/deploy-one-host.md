@@ -57,10 +57,10 @@ Every secret is a file in `./secrets`, mounted read-only into only the services 
 
 ## Your own bucket
 
-The bundled SeaweedFS is for trials: its internal interfaces have no sign-in, and the router's key there can delete. For real use:
+The bundled SeaweedFS is for trials: its internal interfaces have no sign-in, and the router's key there can delete, so `compose.yaml` sets `KNOGGIN_STORAGE__ROUTER_MAY_DELETE` for the router. For real use:
 
 1. Point `[storage]` in `config.toml` at your S3-compatible bucket (`bucket`, `region`, `endpoint_url`, `force_path_style`).
-2. Give the router a key that can read, list and create objects but not delete them, in `secrets/s3_credentials`. Give the lifecycle task a key that can also delete, in `secrets/s3_credentials_lifecycle`. Without scoped keys the router can delete too.
+2. Give the router a key that can read, list and create objects but not delete them, in `secrets/s3_credentials`. Give the lifecycle task a key that can also delete, in `secrets/s3_credentials_lifecycle`. Remove the `KNOGGIN_STORAGE__ROUTER_MAY_DELETE` line from the router in `compose.yaml`: the router then refuses to start with a key that can delete.
 3. Leave the bucket's versioning and its own backups off, or accept that they keep an erased store readable for as long as they keep its objects.
 4. Drop `local-s3` from `COMPOSE_PROFILES` in `.env`.
 5. Run `docker compose exec router knoggin admin selftest`. The router also runs it at every start and refuses a bucket that fails.

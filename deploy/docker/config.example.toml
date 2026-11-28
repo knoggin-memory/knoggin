@@ -34,7 +34,8 @@ postgres_doc_key_file = "/run/secrets/state_key"
 
 [storage]
 # The bundled SeaweedFS (profile local-s3). For your own S3-compatible bucket, change
-# these and drop local-s3 from COMPOSE_PROFILES.
+# these, drop local-s3 from COMPOSE_PROFILES, and remove KNOGGIN_STORAGE__ROUTER_MAY_DELETE
+# from the router in compose.yaml.
 bucket = "knoggin"
 region = "us-east-1"
 endpoint_url = "http://s3:8333"
