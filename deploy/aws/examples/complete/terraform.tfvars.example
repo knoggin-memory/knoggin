@@ -9,3 +9,9 @@ internal_secret_arn        = "arn:aws:secretsmanager:us-east-1:111122223333:secr
 internal_cert_arn          = "arn:aws:secretsmanager:us-east-1:111122223333:secret:knoggin/internal-cert-AbCdEf"
 internal_key_arn           = "arn:aws:secretsmanager:us-east-1:111122223333:secret:knoggin/internal-key-AbCdEf"
 admin_subjects             = ["user_0000"]
+
+# User containers run on shared EC2 hosts by default. For one Fargate task per container
+# instead, choose at the first apply:
+# user_compute         = "fargate"
+# max_containers       = 50
+# container_memory_mib = 2048

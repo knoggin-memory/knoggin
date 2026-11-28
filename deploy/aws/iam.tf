@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# AWS permissions. The user task has no role at all. Every policy here
-# is the module's own, so a test can read each statement.
+# AWS permissions. The user task has no task role; on Fargate it has an execution role
+# (fargate.tf). Every policy here is the module's own, so a test can read each statement.
 
 locals {
   cluster_arn         = aws_ecs_cluster.this.arn
@@ -45,18 +45,21 @@ locals {
 # other hosts. ecs:DiscoverPollEndpoint supports no resource, so it is the one ECS action
 # on "*".
 resource "aws_iam_role" "hosts" {
+  count              = local.ec2 ? 1 : 0
   name_prefix        = "${var.name}-hosts-"
   assume_role_policy = local.trust.hosts
 }
 
 resource "aws_iam_instance_profile" "hosts" {
+  count       = local.ec2 ? 1 : 0
   name_prefix = "${var.name}-hosts-"
-  role        = aws_iam_role.hosts.name
+  role        = one(aws_iam_role.hosts[*].name)
 }
 
 resource "aws_iam_role_policy" "hosts" {
-  name = "ecs-host"
-  role = aws_iam_role.hosts.id
+  count = local.ec2 ? 1 : 0
+  name  = "ecs-host"
+  role  = one(aws_iam_role.hosts[*].id)
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = concat([
@@ -104,7 +107,7 @@ resource "aws_iam_role_policy" "router" {
   role = aws_iam_role.router.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid       = "EcsRunUserTask"
         Effect    = "Allow"
@@ -152,7 +155,16 @@ resource "aws_iam_role_policy" "router" {
         Action   = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:UpdateItem", "dynamodb:DeleteItem", "dynamodb:ConditionCheckItem"]
         Resource = aws_dynamodb_table.state.arn
       },
-    ]
+      ], [
+      # On Fargate, RunTask hands ECS the user task's execution role.
+      for s in [{
+        Sid       = "PassUserExecutionRole"
+        Effect    = "Allow"
+        Action    = "iam:PassRole"
+        Resource  = one(aws_iam_role.user_execution[*].arn)
+        Condition = { StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" } }
+      }] : s if !local.ec2
+    ])
   })
 }
 

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `EcsLauncher`: user containers as ECS tasks of the family `knoggin-user`. `launch` is one
-//! `RunTask` with the capacity provider, `binpack` on memory, the user subnets and security groups
-//! without a public address, `startedBy` `knoggin-pool`, the tag `knoggin:container-id` and a
-//! container override that sets the five environment values and nothing else. No user identifier
+//! `RunTask` with the capacity provider, `binpack` on memory (except on Fargate, which places
+//! each task on its own), the user subnets and security groups without a public address,
+//! `startedBy` `knoggin-pool`, the tag `knoggin:container-id` and a container override that
+//! sets the five environment values and nothing else. No user identifier
 //! goes into a tag, an override or `startedBy`: those show in the console and in CloudTrail.
 //! `describe` and `list` read `DescribeTasks` (with tags) and mark the tasks whose host is
 //! `DRAINING` (`DescribeContainerInstances`); a task the API does not know is left out, so the
@@ -195,6 +196,20 @@ fn run_task(
                 .build()
         })
         .collect();
+    // Fargate takes no placement strategy. AWS reserves capacity provider names that start
+    // with `FARGATE`, so these two can only mean Fargate.
+    let binpack = (!matches!(
+        settings.capacity_provider.as_str(),
+        "FARGATE" | "FARGATE_SPOT"
+    ))
+    .then(|| {
+        vec![
+            PlacementStrategy::builder()
+                .r#type(PlacementStrategyType::Binpack)
+                .field("memory")
+                .build(),
+        ]
+    });
     Ok(client
         .run_task()
         .cluster(&settings.cluster)
@@ -207,12 +222,7 @@ fn run_task(
                 .build()
                 .map_err(refused)?,
         )
-        .placement_strategy(
-            PlacementStrategy::builder()
-                .r#type(PlacementStrategyType::Binpack)
-                .field("memory")
-                .build(),
-        )
+        .set_placement_strategy(binpack)
         .network_configuration(
             NetworkConfiguration::builder()
                 .awsvpc_configuration(
@@ -415,6 +425,10 @@ mod tests {
     }
 
     async fn stub() -> (MockServer, EcsLauncher) {
+        stub_with(settings()).await
+    }
+
+    async fn stub_with(settings: EcsSettings) -> (MockServer, EcsLauncher) {
         let server = MockServer::start().await;
         let conf = EcsLauncher::with_timeouts(
             aws_sdk_ecs::config::Builder::new()
@@ -428,7 +442,7 @@ mod tests {
                 ),
         )
         .build();
-        (server, EcsLauncher::from_conf(conf, settings()))
+        (server, EcsLauncher::from_conf(conf, settings))
     }
 
     fn answer(status: u16, body: Value) -> ResponseTemplate {
@@ -489,7 +503,7 @@ mod tests {
     /// capacity provider, binpack on memory, the network without a public address,
     /// `startedBy`, the ID tag, and an override of the five environment values only.
     #[tokio::test]
-    async fn run_task_carries_the_tabs_fields_and_nothing_of_the_user() {
+    async fn run_task_carries_the_launch_fields_and_nothing_of_the_user() {
         let (server, ecs) = stub().await;
         let arn = "arn:aws:ecs:eu-west-1:111122223333:task/knoggin/abc";
         Mock::given(header("x-amz-target", target("RunTask").as_str()))
@@ -543,6 +557,32 @@ mod tests {
             calls(&server).await[0].1["taskDefinition"],
             settings().task_definition
         );
+    }
+
+    /// On Fargate `RunTask` carries the same capacity provider strategy and no placement strategy.
+    #[tokio::test]
+    async fn run_task_on_fargate_has_no_placement_strategy() {
+        for provider in ["FARGATE", "FARGATE_SPOT"] {
+            let (server, ecs) = stub_with(EcsSettings {
+                capacity_provider: provider.into(),
+                ..settings()
+            })
+            .await;
+            Mock::given(method("POST"))
+                .respond_with(answer(
+                    200,
+                    json!({ "tasks": [{ "taskArn": "arn:aws:ecs:eu-west-1:111122223333:task/knoggin/abc" }] }),
+                ))
+                .mount(&server)
+                .await;
+            ecs.launch(&spec("knoggin-user:7")).await.unwrap();
+            let body = &calls(&server).await[0].1;
+            assert_eq!(body.get("placementStrategy"), None, "{provider}");
+            assert_eq!(
+                body["capacityProviderStrategy"],
+                json!([{ "capacityProvider": provider, "weight": 1, "base": 0 }])
+            );
+        }
     }
 
     #[tokio::test]

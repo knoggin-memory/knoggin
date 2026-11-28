@@ -2,13 +2,13 @@
 
 The OpenTofu module in `deploy/aws/` builds the Knoggin server in one AWS region. It is the target for people who must not see each other's memories. This guide copies the image, fills the secrets, applies the module, and covers sizing, upgrades and restores. The module's own `README.md` lists every part it makes.
 
-**What it protects, and what not.** Each user's container runs alone on its own network interface, with no role and no way to other containers. Routers run on separate machines. Whoever operates the AWS account can still read every store; see [Security](security.md).
+**What it protects, and what not.** Each user's container runs alone on its own network interface, with no task role and no way to other containers. By default the containers share EC2 hosts; with `user_compute = "fargate"` each one is its own Fargate task, in its own microVM (below). Routers run on separate machines. Whoever operates the AWS account can still read every store; see [Security](security.md).
 
 ## What it makes
 
 - Its own VPC, with two private subnets, two public subnets for the load balancer, one NAT gateway, S3 and DynamoDB endpoints, and a DNS firewall.
 - Two routers on Fargate behind an Application Load Balancer.
-- An ECS cluster of Graviton4 hosts (`m8g.xlarge` by default) for the user containers, one task per active user.
+- The user containers, one ECS task each: on an ECS cluster of Graviton4 hosts (`m8g.xlarge` by default), or on Fargate.
 - A DynamoDB table (the state database), a KMS key (the master key) and an S3 bucket (encrypted snapshots).
 - A lifecycle task every 10 minutes, and one CloudWatch log group per role, kept 30 days.
 
@@ -88,7 +88,7 @@ Required variables:
 | `auth_web_client_secret_arn`, `internal_secret_arn`, `internal_cert_arn`, `internal_key_arn` | The four ARNs from step 2 |
 | `admin_subjects` or `admin_emails` | At least one. Subjects are recommended |
 
-Optional, with defaults: `instance_type` (`m8g.xlarge`), `min_hosts` (1), `max_hosts` (4), `container_memory_mib` (1536), `pool_target` (2), `retention_days` (7), `allowed_email_domains` (empty), `dns_allow` (empty), and `containers_per_host` (needed only for an instance type outside the module's table). The account setting `awsvpcTrunking` is turned on for the region.
+Optional, with defaults: `user_compute` (`ec2`; see [Hosts or Fargate](#hosts-or-fargate)), `instance_type` (`m8g.xlarge`), `min_hosts` (1), `max_hosts` (4), `container_memory_mib` (1536), `pool_target` (2), `retention_days` (7), `allowed_email_domains` (empty), `dns_allow` (empty), and `containers_per_host` (needed only for an instance type outside the module's table). On Fargate, also `user_task_cpu` (512) and `max_containers` (required). On EC2 hosts the account setting `awsvpcTrunking` is turned on for the region.
 
 When it is done, point your host name at the output `load_balancer_dns_name`, open `https://<your name>` and sign in. Agents connect to `https://<your name>/mcp` ([Connecting agents](connect-agents.md)).
 
@@ -96,9 +96,27 @@ When it is done, point your host name at the output `load_balancer_dns_name`, op
 
 **Check the module without an account:** `tofu fmt -check -recursive`, then `tofu init -backend=false -lockfile=readonly && tofu validate && tofu test` in `deploy/aws`. The tests use a mock provider and send nothing to AWS.
 
+## Hosts or Fargate
+
+The variable `user_compute` chooses where every user container runs. There is one choice for all of them.
+
+- **`ec2` (default):** shared Graviton4 hosts in an Auto Scaling group. Each container has its own network interface and a share of the host's CPU. Cheapest per container.
+- **`fargate`:** one Fargate task per container, each in its own microVM, so no two containers share a kernel. Its CPU is a hard cap, `user_task_cpu` (256, 512 or 1024 units; 1024 is one vCPU). Set `max_containers` (it becomes `containers.max`) and a `container_memory_mib` that Fargate offers for `user_task_cpu`. The module allows 512, 1024 or 2048 with 256; 1024, 2048, 3072 or 4096 with 512; and 2048, 3072, 4096, 5120, 6144, 7168 or 8192 with 1024. 2048 is recommended, so the default 1536 is refused. The module adds a user execution role, which pulls the image and writes the logs, and interface endpoints for ECR and CloudWatch Logs, so the user containers still reach nothing outside the VPC.
+
+A combination that does not fit, such as `max_containers` on `ec2`, fails at plan with a message that names the fix.
+
+**Choose at the first apply.** Switching a running deployment is a planned outage:
+
+1. Set `pool_target = 0` and run `tofu apply`. The new routers keep no ready containers and stop those left in the pool.
+2. In a quiet hour, run `admin retire-before now` ([Admin commands](#admin-commands)). It sets the retire time and prints how many leases are still active; the routers then park those containers a few at a time. Run it again until it prints 0 and `knoggin_containers` is 0 for `claimed`, `ready` and `starting`. A user who sends a request meanwhile gets a new container, which the next run parks.
+3. Stop the routers: `aws ecs update-service --cluster <name> --service router --desired-count 0`. Check that `aws ecs list-tasks --cluster <name> --family <name>-user` lists no task; if one is listed, set the count back to 2 and repeat step 2.
+4. Change `user_compute` and its variables, set `pool_target` back, and run `tofu apply`. The module sets the router service's count to 2, so this apply also brings the routers back. If the apply times out while it deletes the hosts, run it again.
+
 ## Sizing
 
-Each user's container gets `container_memory_mib` (1,536 MiB) and a share of the host's CPU. Two things cap the containers on one host: its memory, less a reserve, and its limit on network interfaces.
+[Operations](operations.md#sizing) has the sizing table for both choices.
+
+On EC2 hosts, each user's container gets `container_memory_mib` (1,536 MiB) and a share of the host's CPU. Two things cap the containers on one host: its memory, less a reserve, and its limit on network interfaces.
 
 | Host | Memory | Containers at 1,536 MiB | Price per hour (us-east-1) | Per container-hour |
 | --- | --- | --- | --- | --- |
@@ -106,7 +124,7 @@ Each user's container gets `container_memory_mib` (1,536 MiB) and a share of the
 | `m8g.xlarge` | 16 GiB | 10 | $0.180 | $0.018 |
 | `m8g.2xlarge` | 32 GiB | 20 | $0.359 | $0.018 |
 
-These are estimates from AWS's documentation and prices of November 2026; they have not been measured on AWS yet. The module sets `containers.max` to `max_hosts` times the containers per host. Only active users hold a container: one parks after 10 idle minutes. CPU is shared, not reserved, so one busy user can slow the others on the same host.
+These are estimates from AWS's documentation and prices of November 2026; they have not been measured on AWS yet. The module sets `containers.max` to `max_hosts` times the containers per host, or to `max_containers` on Fargate. Only active users hold a container: one parks after 10 idle minutes. CPU is shared, not reserved, so one busy user can slow the others on the same host.
 
 A user's open stores must fit in the container's memory. Raise `container_memory_mib` if users with very large stores see `resource_exhausted`.
 
@@ -191,7 +209,7 @@ cargo nextest run -p knoggin-server --run-ignored only -E 'binary(stack_isolatio
 
 Set all three key variables. The repository's `.cargo/config.toml` turns off the shared AWS config and credentials files and the instance metadata for every test, and fills a key variable that is not set with a dummy value.
 
-**What it checks.** Every isolation check that goes through the public address runs as on one host: each user and app reaches only its own stores, a revoked key is refused at once, an access token reaches only memories and the session route, and a removed user's credentials stop working. The network check (a user container reaches only the router's internal port) runs as a one-off probe task, because ECS cannot join a task's network namespace. The test registers a task definition `<name>-isolation-probe` for the `busybox` copy, runs it once on the user hosts with the EC2 launch type, the user subnets, the user security group and no role, and deregisters it. From there, another user container, the router's public and metrics ports, the metadata address, an outside address, a lookup of an outside name, and an upload to the outside bucket must all fail; only the router's internal port answers. The probe reports through its exit code, so it needs no log group. The test first makes the same upload from your machine, which must work, so that the refusal inside means something.
+**What it checks.** Every isolation check that goes through the public address runs as on one host: each user and app reaches only its own stores, a revoked key is refused at once, an access token reaches only memories and the session route, and a removed user's credentials stop working. The network check (a user container reaches only the router's internal port) runs as a one-off probe task, because ECS cannot join a task's network namespace. The test registers a task definition `<name>-isolation-probe` for the `busybox` copy, runs it once where the user containers run (on the user hosts with the EC2 launch type, or on Fargate with the user execution role to pull the image), with the user subnets, the user security group and no task role, and deregisters it. From there, another user container, the router's public and metrics ports, the metadata address, an outside address, a lookup of an outside name, and an upload to the outside bucket must all fail; only the router's internal port answers. The probe reports through its exit code, so it needs no log group. The test first makes the same upload from your machine, which must work, so that the refusal inside means something.
 
 **What it skips, and why.** These steps need the Docker daemon of the one-host stack:
 

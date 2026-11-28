@@ -90,28 +90,56 @@ variable "admin_emails" {
   default     = []
 }
 
+variable "user_compute" {
+  description = "Where user containers run: \"ec2\" on shared Graviton4 hosts, or \"fargate\" with one Fargate task (its own microVM) per container. Choose at the first apply."
+  type        = string
+  default     = "ec2"
+
+  validation {
+    condition     = contains(["ec2", "fargate"], var.user_compute)
+    error_message = "user_compute must be \"ec2\" or \"fargate\"."
+  }
+}
+
 variable "instance_type" {
-  description = "Instance type of the user hosts (Graviton4)."
+  description = "Instance type of the user hosts (Graviton4). ec2 only."
   type        = string
   default     = "m8g.xlarge"
 }
 
 variable "min_hosts" {
-  description = "Least number of user hosts."
+  description = "Least number of user hosts. ec2 only."
   type        = number
   default     = 1
 }
 
 variable "max_hosts" {
-  description = "Most user hosts. containers.max is this times the containers per host."
+  description = "Most user hosts. containers.max is this times the containers per host. ec2 only."
   type        = number
   default     = 4
 }
 
 variable "container_memory_mib" {
-  description = "Memory of one user container: the task definition's limit and containers.memory_mib."
+  description = "Memory of one user container: the task definition's limit and containers.memory_mib. On fargate it must be a size Fargate offers for user_task_cpu; 2048 is recommended."
   type        = number
   default     = 1536
+}
+
+variable "user_task_cpu" {
+  description = "CPU units of one user task on fargate (1024 is one vCPU): 256, 512 or 1024. A hard cap. fargate only."
+  type        = number
+  default     = 512
+
+  validation {
+    condition     = contains([256, 512, 1024], var.user_task_cpu)
+    error_message = "user_task_cpu must be 256, 512 or 1024."
+  }
+}
+
+variable "max_containers" {
+  description = "Most user containers at once (containers.max). Required on fargate; on ec2 it is max_hosts times the containers per host, and this stays unset."
+  type        = number
+  default     = null
 }
 
 variable "pool_target" {
@@ -139,7 +167,7 @@ variable "dns_allow" {
 }
 
 variable "containers_per_host" {
-  description = "User containers that fit on one host. Needed only when instance_type is not in the module's table."
+  description = "User containers that fit on one host. Needed only when instance_type is not in the module's table. ec2 only."
   type        = number
   default     = null
 }
@@ -162,5 +190,14 @@ locals {
     floor((local.host.memory_gib - max(1, floor(local.host.memory_gib / 16))) * 1024 / var.container_memory_mib),
   )
   containers_per_host = coalesce(var.containers_per_host, local.fit, 0)
-  containers_max      = var.max_hosts * local.containers_per_host
+
+  ec2            = var.user_compute == "ec2"
+  containers_max = local.ec2 ? var.max_hosts * local.containers_per_host : var.max_containers
+
+  # The task memory sizes Fargate offers for each CPU size.
+  fargate_memory = {
+    256  = [512, 1024, 2048]
+    512  = [1024, 2048, 3072, 4096]
+    1024 = [2048, 3072, 4096, 5120, 6144, 7168, 8192]
+  }
 }

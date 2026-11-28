@@ -53,6 +53,19 @@ Admin commands run where the router runs, with its config, and act on the state 
 
 Store IDs are in the web UI's Users and Server status pages. `--json` prints any command's output as JSON.
 
+## Sizing
+
+Count containers, not users: one for each active user, one more for each active isolated app, and one more for each active shared app. Size for up to 6 per heavy user. A container parks after 10 idle minutes.
+
+| | AWS on EC2 hosts (`user_compute = "ec2"`, default) | AWS on Fargate (`user_compute = "fargate"`) |
+| --- | --- | --- |
+| Memory per container | 1,536 MiB | 2,048 MiB recommended |
+| CPU per container | A share of the host; bursts to the host | 0.5 vCPU by default, a hard cap |
+| `containers.max` | `max_hosts` times the containers per host | `max_containers` |
+| Memory for a container's open stores, `(memory - 928 MiB) × 0.4` | 243 MiB | 448 MiB at 2,048 MiB |
+
+[Deploy on AWS](deploy-aws.md#hosts-or-fargate) explains the choice and the host sizes.
+
 ## Upgrades and rollout
 
 A user's container never changes build in place. It parks, and the user's next request gets a container of the new build.

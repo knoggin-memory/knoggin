@@ -150,6 +150,7 @@ resource "aws_security_group" "user" {
 }
 
 resource "aws_security_group" "hosts" {
+  count       = local.ec2 ? 1 : 0
   name        = "${var.name}-hosts"
   description = "Knoggin user hosts"
   vpc_id      = aws_vpc.this.id
@@ -162,23 +163,27 @@ resource "aws_security_group" "lifecycle" {
 }
 
 # Every rule of every group, in two maps, so that a test can see all of them at once.
-# The groups above hold no inline rules.
+# The groups above hold no inline rules. A rule with `only` exists on that user_compute only.
 locals {
-  ingress = {
-    alb_https   = { group = aws_security_group.alb.id, port = 443, cidr = "0.0.0.0/0" }
-    router_alb  = { group = aws_security_group.router.id, port = 8080, from = aws_security_group.alb.id }
-    router_user = { group = aws_security_group.router.id, port = 8443, from = aws_security_group.user.id }
-    user_router = { group = aws_security_group.user.id, port = 8443, from = aws_security_group.router.id }
-  }
-  egress = {
-    alb_router    = { group = aws_security_group.alb.id, port = 8080, to = aws_security_group.router.id }
-    router_user   = { group = aws_security_group.router.id, port = 8443, to = aws_security_group.user.id }
-    router_https  = { group = aws_security_group.router.id, port = 443, cidr = "0.0.0.0/0" }
-    user_s3       = { group = aws_security_group.user.id, port = 443, prefix_list = aws_vpc_endpoint.s3.prefix_list_id }
-    user_router   = { group = aws_security_group.user.id, port = 8443, to = aws_security_group.router.id }
-    hosts_https   = { group = aws_security_group.hosts.id, port = 443, cidr = "0.0.0.0/0" }
-    lifecycle_out = { group = aws_security_group.lifecycle.id, port = 443, cidr = "0.0.0.0/0" }
-  }
+  ingress = { for k, r in {
+    alb_https           = { group = aws_security_group.alb.id, port = 443, cidr = "0.0.0.0/0" }
+    router_alb          = { group = aws_security_group.router.id, port = 8080, from = aws_security_group.alb.id }
+    router_user         = { group = aws_security_group.router.id, port = 8443, from = aws_security_group.user.id }
+    user_router         = { group = aws_security_group.user.id, port = 8443, from = aws_security_group.router.id }
+    endpoints_user      = { group = one(aws_security_group.endpoints[*].id), port = 443, from = aws_security_group.user.id, only = "fargate" }
+    endpoints_router    = { group = one(aws_security_group.endpoints[*].id), port = 443, from = aws_security_group.router.id, only = "fargate" }
+    endpoints_lifecycle = { group = one(aws_security_group.endpoints[*].id), port = 443, from = aws_security_group.lifecycle.id, only = "fargate" }
+  } : k => r if lookup(r, "only", var.user_compute) == var.user_compute }
+  egress = { for k, r in {
+    alb_router     = { group = aws_security_group.alb.id, port = 8080, to = aws_security_group.router.id }
+    router_user    = { group = aws_security_group.router.id, port = 8443, to = aws_security_group.user.id }
+    router_https   = { group = aws_security_group.router.id, port = 443, cidr = "0.0.0.0/0" }
+    user_s3        = { group = aws_security_group.user.id, port = 443, prefix_list = aws_vpc_endpoint.s3.prefix_list_id }
+    user_router    = { group = aws_security_group.user.id, port = 8443, to = aws_security_group.router.id }
+    user_endpoints = { group = aws_security_group.user.id, port = 443, to = one(aws_security_group.endpoints[*].id), only = "fargate" }
+    hosts_https    = { group = one(aws_security_group.hosts[*].id), port = 443, cidr = "0.0.0.0/0", only = "ec2" }
+    lifecycle_out  = { group = aws_security_group.lifecycle.id, port = 443, cidr = "0.0.0.0/0" }
+  } : k => r if lookup(r, "only", var.user_compute) == var.user_compute }
 }
 
 resource "aws_vpc_security_group_ingress_rule" "this" {

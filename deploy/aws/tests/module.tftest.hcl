@@ -52,6 +52,11 @@ override_resource {
 }
 
 override_resource {
+  target = aws_iam_role.user_execution
+  values = { arn = "arn:aws:iam::111122223333:role/knoggin-user-exec" }
+}
+
+override_resource {
   target = aws_iam_role.scheduler
   values = { arn = "arn:aws:iam::111122223333:role/knoggin-scheduler" }
 }
@@ -127,6 +132,11 @@ override_resource {
 override_resource {
   target = aws_security_group.lifecycle
   values = { id = "sg-lifecycle" }
+}
+
+override_resource {
+  target = aws_security_group.endpoints
+  values = { id = "sg-endpoints" }
 }
 
 override_resource {
@@ -285,7 +295,7 @@ run "network_rules" {
     error_message = "The VPC's default group has every rule removed."
   }
   assert {
-    condition     = length([for r in aws_vpc_security_group_ingress_rule.this : r if r.security_group_id == aws_security_group.hosts.id || r.security_group_id == aws_security_group.lifecycle.id]) == 0
+    condition     = length([for r in aws_vpc_security_group_ingress_rule.this : r if r.security_group_id == aws_security_group.hosts[0].id || r.security_group_id == aws_security_group.lifecycle.id]) == 0
     error_message = "The hosts and the lifecycle task accept no inbound traffic."
   }
 }
@@ -475,26 +485,26 @@ run "hosts" {
       "ECS_RESERVED_MEMORY=512",
       "ECS_CONTAINER_STOP_TIMEOUT=120s",
       "kernel.core_pattern=|/bin/false",
-    ] : contains(split("\n", base64decode(aws_launch_template.hosts.user_data)), line)])
+    ] : contains(split("\n", base64decode(aws_launch_template.hosts[0].user_data)), line)])
     error_message = "The user data writes every ecs.config line and the core pattern."
   }
   assert {
     condition = (
-      one(aws_launch_template.hosts.metadata_options).http_tokens == "required" &&
-      one(aws_launch_template.hosts.metadata_options).http_put_response_hop_limit == 1
+      one(aws_launch_template.hosts[0].metadata_options).http_tokens == "required" &&
+      one(aws_launch_template.hosts[0].metadata_options).http_put_response_hop_limit == 1
     )
     error_message = "The hosts require metadata tokens with a hop limit of 1."
   }
   assert {
-    condition     = aws_launch_template.hosts.key_name == null && one(one(aws_launch_template.hosts.block_device_mappings).ebs).encrypted == "true"
+    condition     = aws_launch_template.hosts[0].key_name == null && one(one(aws_launch_template.hosts[0].block_device_mappings).ebs).encrypted == "true"
     error_message = "No SSH key; an encrypted root volume."
   }
   assert {
     condition = (
-      aws_ecs_account_setting_default.trunking.name == "awsvpcTrunking" && aws_ecs_account_setting_default.trunking.value == "enabled" &&
-      one(one(aws_ecs_capacity_provider.hosts.auto_scaling_group_provider).managed_scaling).target_capacity == 100 &&
-      one(aws_ecs_capacity_provider.hosts.auto_scaling_group_provider).managed_termination_protection == "ENABLED" &&
-      one(aws_ecs_capacity_provider.hosts.auto_scaling_group_provider).managed_draining == "ENABLED"
+      aws_ecs_account_setting_default.trunking[0].name == "awsvpcTrunking" && aws_ecs_account_setting_default.trunking[0].value == "enabled" &&
+      one(one(aws_ecs_capacity_provider.hosts[0].auto_scaling_group_provider).managed_scaling).target_capacity == 100 &&
+      one(aws_ecs_capacity_provider.hosts[0].auto_scaling_group_provider).managed_termination_protection == "ENABLED" &&
+      one(aws_ecs_capacity_provider.hosts[0].auto_scaling_group_provider).managed_draining == "ENABLED"
     )
     error_message = "Trunking on; managed scaling at 100, termination protection and draining on."
   }
@@ -503,20 +513,20 @@ run "hosts" {
 run "host_role" {
   assert {
     condition = length(setintersection(
-      flatten([for s in jsondecode(aws_iam_role_policy.hosts.policy).Statement : s.Action]),
+      flatten([for s in jsondecode(aws_iam_role_policy.hosts[0].policy).Statement : s.Action]),
       ["ecs:CreateCluster", "ecs:UpdateContainerInstancesState", "ecs:DeregisterContainerInstance"],
     )) == 0
     error_message = "The host role may not create clusters, drain or deregister hosts."
   }
   assert {
-    condition     = alltrue([for a in flatten([for s in jsondecode(aws_iam_role_policy.hosts.policy).Statement : s.Action]) : !strcontains(a, "*")])
+    condition     = alltrue([for a in flatten([for s in jsondecode(aws_iam_role_policy.hosts[0].policy).Statement : s.Action]) : !strcontains(a, "*")])
     error_message = "The host role holds no wildcard action."
   }
   # Every ECS resource is this cluster or one of its container instances; the one action
   # that supports no resource is the only one on "*".
   assert {
     condition = alltrue(flatten([
-      for s in jsondecode(aws_iam_role_policy.hosts.policy).Statement : [
+      for s in jsondecode(aws_iam_role_policy.hosts[0].policy).Statement : [
         for r in flatten([s.Resource]) : (
           r == aws_ecs_cluster.this.arn ||
           r == "arn:aws:ecs:eu-west-1:111122223333:container-instance/knoggin/*" ||
@@ -528,19 +538,19 @@ run "host_role" {
   }
   assert {
     condition = [
-      for s in jsondecode(aws_iam_role_policy.hosts.policy).Statement : s.Condition if contains(flatten([s.Action]), "ecs:TagResource")
+      for s in jsondecode(aws_iam_role_policy.hosts[0].policy).Statement : s.Condition if contains(flatten([s.Action]), "ecs:TagResource")
     ] == [{ StringEquals = { "ecs:CreateAction" = "RegisterContainerInstance" } }]
     error_message = "ecs:TagResource only under ecs:CreateAction = RegisterContainerInstance."
   }
   assert {
     condition = [
-      for s in jsondecode(aws_iam_role_policy.hosts.policy).Statement : s.Resource if anytrue([for a in flatten([s.Action]) : startswith(a, "logs:")])
+      for s in jsondecode(aws_iam_role_policy.hosts[0].policy).Statement : s.Resource if anytrue([for a in flatten([s.Action]) : startswith(a, "logs:")])
     ] == ["${aws_cloudwatch_log_group.this["user"].arn}:*"]
     error_message = "The host role writes the user log group only."
   }
   assert {
     condition = [
-      for s in jsondecode(aws_iam_role_policy.hosts.policy).Statement : s.Resource if contains(flatten([s.Action]), "ecr:BatchGetImage")
+      for s in jsondecode(aws_iam_role_policy.hosts[0].policy).Statement : s.Resource if contains(flatten([s.Action]), "ecr:BatchGetImage")
     ] == ["arn:aws:ecr:eu-west-1:111122223333:repository/knoggin"]
     error_message = "The hosts pull only from the deployment's repository."
   }
@@ -627,4 +637,265 @@ run "image_elsewhere" {
     image = "444455556666.dkr.ecr.eu-west-1.amazonaws.com/knoggin@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   }
   expect_failures = [aws_ecs_task_definition.user]
+}
+
+run "ec2_has_no_fargate_parts" {
+  assert {
+    condition = (
+      length(aws_iam_role.user_execution) == 0 && length(aws_iam_role_policy.user_execution) == 0 &&
+      length(aws_security_group.endpoints) == 0 && length(aws_vpc_endpoint.fargate) == 0
+    )
+    error_message = "On ec2 there is no user execution role, no endpoint group and no interface endpoint."
+  }
+  assert {
+    condition = (
+      !contains(keys(aws_vpc_security_group_egress_rule.this), "user_endpoints") &&
+      length([for k in keys(aws_vpc_security_group_ingress_rule.this) : k if startswith(k, "endpoints_")]) == 0
+    )
+    error_message = "On ec2 no rule names the endpoint group."
+  }
+  assert {
+    condition     = !contains(flatten([for s in jsondecode(aws_iam_role_policy.router.policy).Statement : s.Action]), "iam:PassRole")
+    error_message = "On ec2 the router passes no role."
+  }
+  assert {
+    condition = (
+      aws_ecs_cluster_capacity_providers.this.capacity_providers == toset(["knoggin-hosts"]) &&
+      one(aws_ecs_cluster_capacity_providers.this.default_capacity_provider_strategy).capacity_provider == "knoggin-hosts" &&
+      [for e in jsondecode(aws_ecs_task_definition.router.container_definitions)[0].environment : e.value if e.name == "KNOGGIN_LAUNCHER__ECS__CAPACITY_PROVIDER"] == ["knoggin-hosts"]
+    )
+    error_message = "On ec2 the cluster and the router use the hosts' capacity provider only."
+  }
+}
+
+run "fargate_user_task" {
+  variables {
+    user_compute         = "fargate"
+    max_containers       = 50
+    container_memory_mib = 2048
+  }
+  assert {
+    condition = (
+      aws_ecs_task_definition.user.requires_compatibilities == toset(["FARGATE"]) &&
+      aws_ecs_task_definition.user.cpu == "512" && aws_ecs_task_definition.user.memory == "2048" &&
+      aws_ecs_task_definition.user.network_mode == "awsvpc" &&
+      one(aws_ecs_task_definition.user.runtime_platform).cpu_architecture == "ARM64" &&
+      length(aws_ecs_task_definition.user.volume) == 0
+    )
+    error_message = "The user task runs on Fargate, Arm64, in awsvpc mode, without volumes, with 0.5 vCPU and 2,048 MiB."
+  }
+  assert {
+    condition = (
+      aws_ecs_task_definition.user.task_role_arn == null &&
+      aws_ecs_task_definition.user.execution_role_arn == aws_iam_role.user_execution[0].arn
+    )
+    error_message = "The user task has no task role, and the user execution role as its execution role."
+  }
+  assert {
+    condition = (
+      jsonencode(jsondecode(aws_ecs_task_definition.user.container_definitions)[0].linuxParameters) == jsonencode({ capabilities = { drop = ["ALL"] } }) &&
+      jsonencode(jsondecode(aws_ecs_task_definition.user.container_definitions)[0].ulimits) == jsonencode([{ name = "nofile", softLimit = 8192, hardLimit = 8192 }])
+    )
+    error_message = "Every capability dropped and none added; no swap setting; nofile is the only limit."
+  }
+  assert {
+    condition     = length(setintersection(keys(jsondecode(aws_ecs_task_definition.user.container_definitions)[0]), ["cpu", "dockerSecurityOptions", "environment", "secrets", "mountPoints"])) == 0
+    error_message = "No container CPU share, no Docker security options, and no environment, secret or mount of its own."
+  }
+  assert {
+    condition = (
+      jsondecode(aws_ecs_task_definition.user.container_definitions)[0].readonlyRootFilesystem == true &&
+      jsondecode(aws_ecs_task_definition.user.container_definitions)[0].privileged == false &&
+      jsondecode(aws_ecs_task_definition.user.container_definitions)[0].user == "65532:65532" &&
+      jsondecode(aws_ecs_task_definition.user.container_definitions)[0].memory == 2048 &&
+      jsondecode(aws_ecs_task_definition.user.container_definitions)[0].stopTimeout == 120 &&
+      jsondecode(aws_ecs_task_definition.user.container_definitions)[0].logConfiguration.options["awslogs-group"] == aws_cloudwatch_log_group.this["user"].name
+    )
+    error_message = "Read-only root, not privileged, 65532:65532, 2,048 MiB, a 120-second stop, logs to the user log group."
+  }
+}
+
+run "fargate_has_no_hosts" {
+  variables {
+    user_compute         = "fargate"
+    max_containers       = 50
+    container_memory_mib = 2048
+  }
+  assert {
+    condition = (
+      length(aws_launch_template.hosts) == 0 && length(aws_autoscaling_group.hosts) == 0 &&
+      length(aws_ecs_account_setting_default.trunking) == 0 && length(aws_ecs_capacity_provider.hosts) == 0 &&
+      length(aws_iam_role.hosts) == 0 && length(aws_iam_instance_profile.hosts) == 0 &&
+      length(aws_iam_role_policy.hosts) == 0 && length(aws_security_group.hosts) == 0
+    )
+    error_message = "On fargate there are no hosts, no host role, no host group and no trunking setting."
+  }
+  assert {
+    condition     = !contains(keys(aws_vpc_security_group_egress_rule.this), "hosts_https")
+    error_message = "On fargate there is no host egress rule."
+  }
+  assert {
+    condition = (
+      aws_ecs_cluster_capacity_providers.this.capacity_providers == toset(["FARGATE"]) &&
+      one(aws_ecs_cluster_capacity_providers.this.default_capacity_provider_strategy).capacity_provider == "FARGATE"
+    )
+    error_message = "On fargate the cluster's only capacity provider is FARGATE."
+  }
+}
+
+run "fargate_network" {
+  variables {
+    user_compute         = "fargate"
+    max_containers       = 50
+    container_memory_mib = 2048
+  }
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_egress_rule.this : jsonencode([r.ip_protocol, r.from_port, r.to_port, r.referenced_security_group_id, r.cidr_ipv4, r.prefix_list_id])
+      if r.security_group_id == aws_security_group.user.id
+      ]) == toset([
+      jsonencode(["tcp", 443, 443, null, null, aws_vpc_endpoint.s3.prefix_list_id]),
+      jsonencode(["tcp", 8443, 8443, aws_security_group.router.id, null, null]),
+      jsonencode(["tcp", 443, 443, aws_security_group.endpoints[0].id, null, null]),
+    ])
+    error_message = "User containers may reach only the S3 prefix list and the endpoint group on 443, and the router's group on 8443."
+  }
+  assert {
+    condition = [
+      for r in aws_vpc_security_group_ingress_rule.this : jsonencode([r.ip_protocol, r.from_port, r.to_port, r.referenced_security_group_id, r.cidr_ipv4, r.prefix_list_id])
+      if r.security_group_id == aws_security_group.user.id
+    ] == [jsonencode(["tcp", 8443, 8443, aws_security_group.router.id, null, null])]
+    error_message = "User containers accept TCP 8443 from the router's group and nothing else."
+  }
+  assert {
+    condition = toset([
+      for r in aws_vpc_security_group_ingress_rule.this : jsonencode([r.ip_protocol, r.from_port, r.to_port, r.referenced_security_group_id, r.cidr_ipv4, r.prefix_list_id])
+      if r.security_group_id == aws_security_group.endpoints[0].id
+      ]) == toset([for g in [aws_security_group.user.id, aws_security_group.router.id, aws_security_group.lifecycle.id] :
+      jsonencode(["tcp", 443, 443, g, null, null])
+    ])
+    error_message = "The endpoints accept exactly 443 from the user, router and lifecycle groups."
+  }
+  assert {
+    condition     = length([for r in aws_vpc_security_group_egress_rule.this : r if r.security_group_id == aws_security_group.endpoints[0].id]) == 0
+    error_message = "The endpoint group has no egress rule."
+  }
+  assert {
+    condition = (
+      toset([for e in aws_vpc_endpoint.fargate : e.service_name]) == toset(["com.amazonaws.eu-west-1.ecr.api", "com.amazonaws.eu-west-1.ecr.dkr", "com.amazonaws.eu-west-1.logs"]) &&
+      alltrue([for e in aws_vpc_endpoint.fargate : (
+        e.vpc_endpoint_type == "Interface" && e.private_dns_enabled &&
+        e.security_group_ids == toset([aws_security_group.endpoints[0].id]) &&
+        e.subnet_ids == toset(aws_subnet.private[*].id)
+      )])
+    )
+    error_message = "Three interface endpoints (ecr.api, ecr.dkr, logs) in the private subnets, with private DNS and the endpoint group."
+  }
+  assert {
+    condition = alltrue([for e in aws_vpc_endpoint.fargate : [
+      for s in jsondecode(e.policy).Statement : jsonencode([s.Effect, s.Principal, s.Condition])
+    ] == [jsonencode(["Allow", "*", { StringEquals = { "aws:PrincipalAccount" = "111122223333" } }])]])
+    error_message = "Each endpoint lets through only principals of this account."
+  }
+}
+
+run "fargate_router" {
+  variables {
+    user_compute         = "fargate"
+    max_containers       = 50
+    container_memory_mib = 2048
+  }
+  assert {
+    condition = { for e in jsondecode(aws_ecs_task_definition.router.container_definitions)[0].environment : e.name => e.value if contains([
+      "KNOGGIN_LAUNCHER__ECS__CAPACITY_PROVIDER", "KNOGGIN_CONTAINERS__MAX", "KNOGGIN_CONTAINERS__MEMORY_MIB",
+      ], e.name) } == {
+      KNOGGIN_LAUNCHER__ECS__CAPACITY_PROVIDER = "FARGATE"
+      KNOGGIN_CONTAINERS__MAX                  = "50"
+      KNOGGIN_CONTAINERS__MEMORY_MIB           = "2048"
+    }
+    error_message = "The router launches on FARGATE, with containers.max from max_containers and the task's memory."
+  }
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role_policy.router.policy).Statement : jsonencode([s.Sid, s.Effect, s.Resource, s.Condition])
+      if contains(flatten([s.Action]), "iam:PassRole")
+      ] == [jsonencode([
+        "PassUserExecutionRole", "Allow", aws_iam_role.user_execution[0].arn,
+        { StringEquals = { "iam:PassedToService" = "ecs-tasks.amazonaws.com" } },
+    ])]
+    error_message = "The router passes the user execution role only, to ECS tasks only."
+  }
+  assert {
+    condition = alltrue([
+      for a in flatten([for s in jsondecode(aws_iam_role_policy.router.policy).Statement : s.Action]) : !can(regex("\\*|Delete", a)) || a == "dynamodb:DeleteItem"
+    ])
+    error_message = "The router may not delete objects, and holds no wildcard action."
+  }
+}
+
+run "fargate_user_execution_role" {
+  variables {
+    user_compute         = "fargate"
+    max_containers       = 50
+    container_memory_mib = 2048
+  }
+  assert {
+    condition = toset(flatten([
+      for s in jsondecode(aws_iam_role_policy.user_execution[0].policy).Statement : [
+        for a in flatten([s.Action]) : jsonencode([s.Effect, a, s.Resource, try(s.Condition, null)])
+      ]
+      ])) == toset(concat(
+      [jsonencode(["Allow", "ecr:GetAuthorizationToken", "*", null])],
+      [for a in ["BatchCheckLayerAvailability", "GetDownloadUrlForLayer", "BatchGetImage"] :
+      jsonencode(["Allow", "ecr:${a}", "arn:aws:ecr:eu-west-1:111122223333:repository/knoggin", null])],
+      [for a in ["CreateLogStream", "PutLogEvents"] :
+      jsonencode(["Allow", "logs:${a}", "${aws_cloudwatch_log_group.this["user"].arn}:*", null])],
+    ))
+    error_message = "The user execution role pulls from the deployment's repository and writes the user log group, and nothing else."
+  }
+  assert {
+    condition = [
+      for s in jsondecode(aws_iam_role.user_execution[0].assume_role_policy).Statement : jsonencode([s.Effect, s.Principal, s.Action, s.Condition])
+      ] == [jsonencode([
+        "Allow", { Service = "ecs-tasks.amazonaws.com" }, "sts:AssumeRole",
+        { StringEquals = { "aws:SourceAccount" = "111122223333" } },
+    ])]
+    error_message = "Only ECS tasks of this account may take the user execution role."
+  }
+}
+
+run "fargate_refuses_a_memory_size_it_does_not_offer" {
+  command = plan
+  variables {
+    user_compute   = "fargate"
+    max_containers = 50
+  }
+  expect_failures = [aws_ecs_task_definition.user]
+}
+
+run "fargate_needs_max_containers" {
+  command = plan
+  variables {
+    user_compute         = "fargate"
+    container_memory_mib = 2048
+  }
+  expect_failures = [aws_ecs_task_definition.user]
+}
+
+run "ec2_refuses_max_containers" {
+  command = plan
+  variables {
+    max_containers = 50
+  }
+  expect_failures = [aws_ecs_task_definition.user]
+}
+
+run "user_compute_is_ec2_or_fargate" {
+  command = plan
+  variables {
+    user_compute         = "lambda"
+    max_containers       = 50
+    container_memory_mib = 2048
+  }
+  expect_failures = [var.user_compute]
 }
