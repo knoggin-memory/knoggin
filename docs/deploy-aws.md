@@ -108,9 +108,9 @@ A combination that does not fit, such as `max_containers` on `ec2`, fails at pla
 **Choose at the first apply.** Switching a running deployment is a planned outage:
 
 1. Set `pool_target = 0` and run `tofu apply`. The new routers keep no ready containers and stop those left in the pool.
-2. In a quiet hour, run `admin retire-before now` ([Admin commands](#admin-commands)). It parks the active containers in batches and prints how many leases are still active. Run it again until it prints 0 and `knoggin_containers` is 0 for `claimed`, `ready` and `starting`. A user who sends a request meanwhile gets a new container, which the next run parks.
+2. In a quiet hour, run `admin retire-before now` ([Admin commands](#admin-commands)). It sets the retire time and prints how many leases are still active; the routers then park those containers a few at a time. Run it again until it prints 0 and `knoggin_containers` is 0 for `claimed`, `ready` and `starting`. A user who sends a request meanwhile gets a new container, which the next run parks.
 3. Stop the routers: `aws ecs update-service --cluster <name> --service router --desired-count 0`. Check that `aws ecs list-tasks --cluster <name> --family <name>-user` lists no task; if one is listed, set the count back to 2 and repeat step 2.
-4. Change `user_compute` and its variables, set `pool_target` back, and run `tofu apply`. The module sets the router service's count to 2, so this apply also brings the routers back.
+4. Change `user_compute` and its variables, set `pool_target` back, and run `tofu apply`. The module sets the router service's count to 2, so this apply also brings the routers back. If the apply times out while it deletes the hosts, run it again.
 
 ## Sizing
 
