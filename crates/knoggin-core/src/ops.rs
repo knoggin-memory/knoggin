@@ -86,13 +86,16 @@ pub struct AccessHit {
     pub kind: AccessKind,
 }
 
-/// The two change counters. The host compares them with those of the last snapshot.
+/// The change counters. The host compares them with those of the last snapshot.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangeCounters {
     /// Saves, forgets, moves, reinforcements, namespace writes, imports.
     pub content: u64,
     /// Access recording, vectors landing, failed embeddings, sweeps, model changes.
     pub bookkeeping: u64,
+    /// Client operations that removed at least one memory: a forget, a batch forget, a
+    /// namespace delete. Decay sweeps never raise it.
+    pub forgets: u64,
 }
 
 /// Counts for status pages and for the snapshot commit.

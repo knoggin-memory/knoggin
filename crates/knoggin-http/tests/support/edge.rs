@@ -231,7 +231,14 @@ impl EdgeEnv {
     /// A second user, made directly in the database, with its personal store.
     pub async fn other_user(&self, subject: &str) -> (UserId, StoreId) {
         let store = StoreId::from_uuid(Uuid::now_v7());
-        let (_, wrapped) = self.keys.generate(store).await.unwrap();
+        let (_, wrapped) = self
+            .keys
+            .generate(knoggin_crypto::KeyScope {
+                store,
+                generation: 0,
+            })
+            .await
+            .unwrap();
         let (u, _) = self
             .users
             .create(

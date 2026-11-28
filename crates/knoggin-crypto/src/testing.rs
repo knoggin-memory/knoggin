@@ -17,7 +17,7 @@ use std::error::Error;
 use knoggin_core::StoreId;
 
 use crate::container::{self, Header};
-use crate::key::DataKey;
+use crate::key::{DataKey, KeyScope};
 use crate::local::{LocalKeyProvider, MasterKeySet};
 
 /// The one key of the test key set. Public on purpose: it protects nothing.
@@ -41,8 +41,8 @@ pub fn seal_to_vec(header: Header, key: DataKey, content: Vec<u8>) -> Vec<u8> {
         .concat()
 }
 
-/// Makes a new data key for `store` under the test key set and seals `content` with it,
-/// as a store's snapshot. Returns the whole file.
+/// Makes a new data key for `store` and `generation` under the test key set and seals
+/// `content` with it, as a store's snapshot. Returns the whole file.
 pub fn seal_snapshot(
     store: StoreId,
     generation: u64,
@@ -51,7 +51,9 @@ pub fn seal_snapshot(
     content_format: u32,
     content: Vec<u8>,
 ) -> Vec<u8> {
-    let (key, wrapped) = test_provider().generate_key(store).unwrap();
+    let (key, wrapped) = test_provider()
+        .generate_key(KeyScope { store, generation })
+        .unwrap();
     let header = Header::new(
         store,
         generation,
@@ -63,11 +65,16 @@ pub fn seal_snapshot(
     seal_to_vec(header, key, content)
 }
 
-/// Opens a whole file as the recovery tools do: unwrap the header's data key with the test
-/// key set, decrypt, and return the header with the content. Checks no expected name.
+/// Opens a whole file: unwrap the header's data key with the test key set, for the header's
+/// store and generation, decrypt, and return the header with the content. Checks no
+/// expected name.
 pub fn open_snapshot(bytes: &[u8]) -> Result<(Header, Vec<u8>), Box<dyn Error>> {
     let (header, n) = container::read_header(bytes)?;
-    let key = test_provider().unwrap_key(header.store_id, &header.wrapped_key())?;
+    let scope = KeyScope {
+        store: header.store_id,
+        generation: header.generation,
+    };
+    let key = test_provider().unwrap_key(scope, &header.wrapped_key())?;
     let content = container::open(&header, &key, &bytes[n..], u64::MAX)?;
     Ok((header, content))
 }

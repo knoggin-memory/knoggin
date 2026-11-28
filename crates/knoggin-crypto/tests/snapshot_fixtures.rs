@@ -95,7 +95,7 @@ fn edge_types(s: &Store) -> BTreeSet<EdgeType> {
 #[test]
 fn empty_v1() {
     let (content, s) = open(EMPTY);
-    assert_eq!(content.len(), 168);
+    assert_eq!(content.len(), 169);
     assert_eq!(s.created_at(), t(T0));
     assert_eq!(
         (s.model().id.as_str(), s.model().dimensions),
@@ -107,7 +107,14 @@ fn empty_v1() {
     );
     assert_eq!(s.memories().count(), 0);
     assert_eq!(s.graph().len(), 0);
-    assert_eq!((s.changes().content, s.changes().bookkeeping), (0, 0));
+    assert_eq!(
+        (
+            s.changes().content,
+            s.changes().bookkeeping,
+            s.changes().forgets
+        ),
+        (0, 0, 0)
+    );
 }
 
 #[test]
@@ -124,7 +131,14 @@ fn small_v1() {
         FakeProvider::new().vector(&m1.summary)
     );
     assert_eq!(s.memory(mid(2)).unwrap().embedding, EmbeddingState::Pending);
-    assert_eq!((s.changes().content, s.changes().bookkeeping), (2, 0));
+    assert_eq!(
+        (
+            s.changes().content,
+            s.changes().bookkeeping,
+            s.changes().forgets
+        ),
+        (2, 0, 0)
+    );
 }
 
 #[test]
@@ -142,7 +156,15 @@ fn full_v1() {
     assert_eq!(s.vectors().len(), 4);
     assert_eq!(edge_types(&s), EdgeType::ALL.into_iter().collect());
     assert!(s.graph().iter().any(|e| !e.auto_created) && s.graph().iter().any(|e| e.auto_created));
-    assert_eq!((s.changes().content, s.changes().bookkeeping), (13, 4));
+    assert_eq!(
+        (
+            s.changes().content,
+            s.changes().bookkeeping,
+            s.changes().forgets
+        ),
+        (15, 4, 1)
+    );
+    assert!(s.memory(mid(10)).is_none(), "the forgotten memory is gone");
     let edge = |source: u8, edge_type, target: u8| {
         s.graph()
             .iter()
@@ -399,6 +421,19 @@ fn full() -> Store {
         Ok((s.forget_memory(req, &ctx(), t(T0 + 31 * MIN))?, Vec::new()))
     })
     .unwrap();
+    // A forget that removed a memory, so the forget counter is in use.
+    save(
+        &mut s,
+        10,
+        json!({ "summary": "A note to forget" }),
+        false,
+        T0 + 40 * MIN,
+    );
+    let req = ForgetMemory {
+        id: mid(10),
+        namespace: None,
+    };
+    s.forget_memory(req, &ctx(), t(T0 + 41 * MIN)).unwrap();
     s
 }
 

@@ -9,12 +9,12 @@ use aws_lc_rs::aead::{AES_256_GCM, Aad, LessSafeKey, NONCE_LEN, Nonce, UnboundKe
 use aws_lc_rs::digest::{SHA256, digest};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use knoggin_core::StoreId;
 use serde::Deserialize;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 use crate::key::{
-    DataKey, KEY_LEN, KeyError, KeyProvider, WrappedKey, decode_key, encode_key, fill_random,
+    DataKey, KEY_LEN, KeyError, KeyProvider, KeyScope, WrappedKey, decode_key, encode_key,
+    fill_random,
 };
 
 /// Prefix of the `kek_id` of every key in a local key set.
@@ -200,8 +200,15 @@ fn key_id(key: &[u8; KEY_LEN]) -> String {
     })
 }
 
-fn wrap_aad(kek_id: &str, store: StoreId) -> Vec<u8> {
-    [WRAP_AAD, kek_id.as_bytes(), store.as_bytes()].concat()
+/// `"knoggin-dek-wrap-v1" || kek_id || store ID (16 bytes) || generation (8 bytes, little-endian)`.
+fn wrap_aad(kek_id: &str, scope: KeyScope) -> Vec<u8> {
+    [
+        WRAP_AAD,
+        kek_id.as_bytes(),
+        scope.store.as_bytes(),
+        &scope.generation.to_le_bytes(),
+    ]
+    .concat()
 }
 
 fn aead_key(key: &MasterKey) -> Result<LessSafeKey, KeyError> {
@@ -222,7 +229,7 @@ impl LocalKeyProvider {
     }
 
     /// Wraps `key` under the current master key. Used by master-key rotation only.
-    pub fn wrap(&self, store: StoreId, key: &DataKey) -> Result<WrappedKey, KeyError> {
+    pub fn wrap(&self, scope: KeyScope, key: &DataKey) -> Result<WrappedKey, KeyError> {
         let kek_id = self.keys.current_kek_id();
         let sealing = aead_key(self.keys.current_key()?)?;
         let mut nonce = [0u8; NONCE_LEN];
@@ -233,7 +240,7 @@ impl LocalKeyProvider {
         let tag = sealing
             .seal_in_place_separate_tag(
                 Nonce::assume_unique_for_key(nonce),
-                Aad::from(wrap_aad(&kek_id, store)),
+                Aad::from(wrap_aad(&kek_id, scope)),
                 &mut blob[NONCE_LEN..],
             )
             .map_err(|_| KeyError::Unwrap)?;
@@ -242,16 +249,16 @@ impl LocalKeyProvider {
     }
 
     /// The synchronous body of `KeyProvider::generate`.
-    pub(crate) fn generate_key(&self, store: StoreId) -> Result<(DataKey, WrappedKey), KeyError> {
+    pub(crate) fn generate_key(&self, scope: KeyScope) -> Result<(DataKey, WrappedKey), KeyError> {
         let key = DataKey::random()?;
-        let wrapped = self.wrap(store, &key)?;
+        let wrapped = self.wrap(scope, &key)?;
         Ok((key, wrapped))
     }
 
     /// The synchronous body of `KeyProvider::unwrap`.
     pub(crate) fn unwrap_key(
         &self,
-        store: StoreId,
+        scope: KeyScope,
         wrapped: &WrappedKey,
     ) -> Result<DataKey, KeyError> {
         let unknown = || KeyError::UnknownMasterKey {
@@ -269,7 +276,7 @@ impl LocalKeyProvider {
         let nonce = Nonce::try_assume_unique_for_key(nonce).map_err(|_| KeyError::Unwrap)?;
         let mut buf = Zeroizing::new(sealed.to_vec());
         let plain = aead_key(master)?
-            .open_in_place(nonce, Aad::from(wrap_aad(&wrapped.kek_id, store)), &mut buf)
+            .open_in_place(nonce, Aad::from(wrap_aad(&wrapped.kek_id, scope)), &mut buf)
             .map_err(|_| KeyError::Unwrap)?;
         let mut key = [0u8; KEY_LEN];
         key.copy_from_slice(plain);
@@ -287,21 +294,26 @@ impl fmt::Debug for LocalKeyProvider {
 
 #[async_trait]
 impl KeyProvider for LocalKeyProvider {
-    async fn generate(&self, store: StoreId) -> Result<(DataKey, WrappedKey), KeyError> {
-        self.generate_key(store)
+    async fn generate(&self, scope: KeyScope) -> Result<(DataKey, WrappedKey), KeyError> {
+        self.generate_key(scope)
     }
 
-    async fn unwrap(&self, store: StoreId, wrapped: &WrappedKey) -> Result<DataKey, KeyError> {
-        self.unwrap_key(store, wrapped)
+    async fn unwrap(&self, scope: KeyScope, wrapped: &WrappedKey) -> Result<DataKey, KeyError> {
+        self.unwrap_key(scope, wrapped)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use knoggin_core::StoreId;
+
     use super::*;
 
-    fn store(n: u8) -> StoreId {
-        StoreId::from_bytes([n; 16])
+    fn store(n: u8) -> KeyScope {
+        KeyScope {
+            store: StoreId::from_bytes([n; 16]),
+            generation: 0,
+        }
     }
 
     #[tokio::test]
@@ -346,6 +358,43 @@ mod tests {
         bad.blob.truncate(59);
         assert!(matches!(
             p.unwrap(store(1), &bad).await,
+            Err(KeyError::Unwrap)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_wrapped_key_opens_only_for_its_store_and_generation() {
+        let p = LocalKeyProvider::new(MasterKeySet::generate().unwrap());
+        let scope = |n: u8, generation: u64| KeyScope {
+            store: StoreId::from_bytes([n; 16]),
+            generation,
+        };
+        let (key, wrapped) = p.generate(scope(1, 5)).await.unwrap();
+        assert_eq!(
+            p.unwrap(scope(1, 5), &wrapped).await.unwrap().expose(),
+            key.expose()
+        );
+        for other in [scope(1, 6), scope(2, 5), scope(1, 0)] {
+            assert!(
+                matches!(p.unwrap(other, &wrapped).await, Err(KeyError::Unwrap)),
+                "{other:?}"
+            );
+        }
+        // The associated data: label, master key ID, store ID, generation little-endian.
+        assert_eq!(
+            wrap_aad("local:x", scope(1, 5)),
+            [
+                &b"knoggin-dek-wrap-v1local:x"[..],
+                &[1; 16],
+                &[5, 0, 0, 0, 0, 0, 0, 0]
+            ]
+            .concat()
+        );
+        // The state-file scope and the item scope are distinct from each other.
+        assert_eq!(KeyScope::STATE.store, StoreId::default());
+        let (_, state) = p.generate(KeyScope::STATE).await.unwrap();
+        assert!(matches!(
+            p.unwrap(KeyScope::ITEMS, &state).await,
             Err(KeyError::Unwrap)
         ));
     }

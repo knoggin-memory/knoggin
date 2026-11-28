@@ -572,11 +572,11 @@ pub async fn selftest(
         .map_err(|e| e.to_string());
     let key_provider = async {
         let (key, wrapped) = keys
-            .generate(StoreId::default())
+            .generate(knoggin_crypto::KeyScope::STATE)
             .await
             .map_err(|e| e.to_string())?;
         let back = keys
-            .unwrap(StoreId::default(), &wrapped)
+            .unwrap(knoggin_crypto::KeyScope::STATE, &wrapped)
             .await
             .map_err(|e| e.to_string())?;
         if knoggin_crypto::token::eq(key.expose(), back.expose()) {

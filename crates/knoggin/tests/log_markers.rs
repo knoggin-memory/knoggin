@@ -126,7 +126,13 @@ fn key_bytes(home: &Home) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
         if path.extension().is_some_and(|e| e == "kgs") {
             let (header, _) = container::read_header(&bytes).unwrap();
             let key = rt
-                .block_on(provider.unwrap(header.store_id, &header.wrapped_key()))
+                .block_on(provider.unwrap(
+                    knoggin_crypto::KeyScope {
+                        store: header.store_id,
+                        generation: 0,
+                    },
+                    &header.wrapped_key(),
+                ))
                 .unwrap();
             data.push(key.expose().to_vec());
         }

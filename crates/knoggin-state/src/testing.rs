@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicI64, Ordering};
 use knoggin_core::time::MILLIS_PER_DAY;
 use knoggin_core::{Sensitive, StoreId, UserId};
 use knoggin_crypto::{
-    KeyProvider, LocalKeyProvider, testing::test_key_set, testing::test_provider,
+    KeyProvider, KeyScope, LocalKeyProvider, testing::test_key_set, testing::test_provider,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -144,7 +144,11 @@ async fn raw(db: &dyn StateDb, pk: &str, sk: &str) -> Value {
 
 async fn new_store(name: &str) -> NewStore {
     let id = sid();
-    let (_, wrapped) = test_provider().generate(id).await.unwrap();
+    let scope = KeyScope {
+        store: id,
+        generation: 0,
+    };
+    let (_, wrapped) = test_provider().generate(scope).await.unwrap();
     NewStore {
         id,
         name: s(name),
@@ -1645,14 +1649,18 @@ async fn rewrap(db: &Arc<dyn StateDb>, keys: &Arc<FieldKeys>) {
         .unwrap();
     assert_eq!(n, before.len());
     let after = all_stores().await;
+    let scope = |store| KeyScope {
+        store,
+        generation: 0,
+    };
     for (b, a) in before.iter().zip(&after) {
         assert_eq!(a.value.kek_id, new_kek);
         let old_key = old
-            .unwrap(b.value.id, &b.value.wrapped().unwrap())
+            .unwrap(scope(b.value.id), &b.value.wrapped().unwrap())
             .await
             .unwrap();
         let new_key = rotated
-            .unwrap(a.value.id, &a.value.wrapped().unwrap())
+            .unwrap(scope(a.value.id), &a.value.wrapped().unwrap())
             .await
             .unwrap();
         assert_eq!(old_key.expose(), new_key.expose());

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `KmsKeyProvider`: data keys wrapped by one KMS key. `generate` is `GenerateDataKey` with
 //! `KeySpec = AES_256`; `unwrap` is `Decrypt` with `KeyId` set to the configured key. Both carry
-//! the encryption context `{ "knoggin:store": "<store id>" }`, so a blob opens only for its own
-//! store, and the router's role may use the key only with that context key. KMS rotates its own key
-//! material and keeps the old material, so old blobs keep working and nothing is re-wrapped.
+//! the encryption context `{ "knoggin:store": "<store id>", "knoggin:generation": "<decimal>" }`,
+//! so a blob opens only for its own store and generation, and the router's role may use the key
+//! only with the store context key. KMS rotates its own key material and keeps the old material,
+//! so old blobs keep working and nothing is re-wrapped.
 
 use std::time::Duration;
 
@@ -14,13 +15,14 @@ use aws_sdk_kms::config::timeout::TimeoutConfig;
 use aws_sdk_kms::error::{ProvideErrorMetadata, SdkError};
 use aws_sdk_kms::primitives::Blob;
 use aws_sdk_kms::types::DataKeySpec;
-use knoggin_core::StoreId;
 use knoggin_crypto::key::KEY_LEN;
-use knoggin_crypto::{DataKey, KeyError, KeyProvider, WrappedKey};
+use knoggin_crypto::{DataKey, KeyError, KeyProvider, KeyScope, WrappedKey};
 use zeroize::Zeroizing;
 
-/// The encryption context's one key; the router's KMS statement requires it.
+/// The encryption context's store key; the router's KMS statement requires it.
 pub const CONTEXT_KEY: &str = "knoggin:store";
+/// The encryption context's generation key, in decimal.
+pub const GENERATION_KEY: &str = "knoggin:generation";
 /// One try of a call.
 const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(10);
 /// One call with its retries.
@@ -96,13 +98,14 @@ fn kms_err<E: ProvideErrorMetadata, R>(e: &SdkError<E, R>, kek_id: &str) -> KeyE
 
 #[async_trait]
 impl KeyProvider for KmsKeyProvider {
-    async fn generate(&self, store: StoreId) -> Result<(DataKey, WrappedKey), KeyError> {
+    async fn generate(&self, scope: KeyScope) -> Result<(DataKey, WrappedKey), KeyError> {
         let mut answer = self
             .client
             .generate_data_key()
             .key_id(&self.key_id)
             .key_spec(DataKeySpec::Aes256)
-            .encryption_context(CONTEXT_KEY, store.to_string())
+            .encryption_context(CONTEXT_KEY, scope.store.to_string())
+            .encryption_context(GENERATION_KEY, scope.generation.to_string())
             .send()
             .await
             .map_err(|e| kms_err(&e, &self.key_id))?;
@@ -120,7 +123,7 @@ impl KeyProvider for KmsKeyProvider {
         Ok((key, WrappedKey { kek_id, blob }))
     }
 
-    async fn unwrap(&self, store: StoreId, wrapped: &WrappedKey) -> Result<DataKey, KeyError> {
+    async fn unwrap(&self, scope: KeyScope, wrapped: &WrappedKey) -> Result<DataKey, KeyError> {
         // A key wrapped by a local key set (one host) has no KMS key to open it.
         if wrapped.kek_id.starts_with("local:") {
             return Err(KeyError::UnknownMasterKey {
@@ -132,7 +135,8 @@ impl KeyProvider for KmsKeyProvider {
             .decrypt()
             .key_id(&self.key_id)
             .ciphertext_blob(Blob::new(wrapped.blob.clone()))
-            .encryption_context(CONTEXT_KEY, store.to_string())
+            .encryption_context(CONTEXT_KEY, scope.store.to_string())
+            .encryption_context(GENERATION_KEY, scope.generation.to_string())
             .send()
             .await
             .map_err(|e| kms_err(&e, &wrapped.kek_id))?;
@@ -144,6 +148,7 @@ impl KeyProvider for KmsKeyProvider {
 mod tests {
     use aws_config::Region;
     use aws_sdk_kms::config::Credentials;
+    use knoggin_core::StoreId;
     use serde_json::{Value, json};
     use uuid::Uuid;
     use wiremock::matchers::{header, method};
@@ -197,7 +202,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generate_and_unwrap_send_the_store_as_encryption_context() {
+    async fn the_context_names_the_store_and_the_generation() {
         let (server, kms) = stub().await;
         Mock::given(header("x-amz-target", "TrentService.GenerateDataKey"))
             .respond_with(answer(
@@ -214,7 +219,11 @@ mod tests {
             .mount(&server)
             .await;
         let store = StoreId::from_uuid(Uuid::now_v7());
-        let (key, wrapped) = kms.generate(store).await.unwrap();
+        let scope = KeyScope {
+            store,
+            generation: 1_700_000_123,
+        };
+        let (key, wrapped) = kms.generate(scope).await.unwrap();
         assert_eq!(key.expose(), &[7; 32]);
         assert_eq!(
             wrapped,
@@ -223,12 +232,13 @@ mod tests {
                 blob: b"wrapped".to_vec()
             }
         );
-        let back = kms.unwrap(store, &wrapped).await.unwrap();
+        let back = kms.unwrap(scope, &wrapped).await.unwrap();
         assert_eq!(back.expose(), &[7; 32]);
 
         let calls = bodies(&server).await;
         assert_eq!(calls.len(), 2);
-        let context = json!({ "knoggin:store": store.to_string() });
+        let context =
+            json!({ "knoggin:store": store.to_string(), "knoggin:generation": "1700000123" });
         assert_eq!(
             calls[0].1,
             json!({ "KeyId": ARN, "KeySpec": "AES_256", "EncryptionContext": context })
@@ -242,7 +252,10 @@ mod tests {
     #[tokio::test]
     async fn kms_errors_map_to_key_errors_without_their_text() {
         let (server, kms) = stub().await;
-        let store = StoreId::from_uuid(Uuid::now_v7());
+        let store = KeyScope {
+            store: StoreId::from_uuid(Uuid::now_v7()),
+            generation: 0,
+        };
         let wrapped = WrappedKey {
             kek_id: ARN.into(),
             blob: vec![1, 2, 3],
@@ -342,7 +355,7 @@ mod tests {
         let kms = KmsKeyProvider::from_conf(conf, ARN);
         let started = tokio::time::Instant::now();
         assert!(matches!(
-            kms.generate(StoreId::from_uuid(Uuid::nil())).await,
+            kms.generate(KeyScope::STATE).await,
             Err(KeyError::Unavailable(_))
         ));
         assert!(started.elapsed() <= 2 * OPERATION_TIMEOUT);

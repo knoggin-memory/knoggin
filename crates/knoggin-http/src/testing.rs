@@ -92,7 +92,13 @@ impl TestHost {
         let users = Users::new(db, fields);
         let user = UserId::from_uuid(Uuid::now_v7());
         let store = StoreId::from_uuid(Uuid::now_v7());
-        let (_, wrapped) = keys.generate(store).await.unwrap();
+        let (_, wrapped) = keys
+            .generate(knoggin_crypto::KeyScope {
+                store,
+                generation: 0,
+            })
+            .await
+            .unwrap();
         users
             .create(
                 NewUser {
@@ -172,7 +178,14 @@ impl TestHost {
     /// Makes another store of the user, with its own data key.
     pub async fn new_store(&self, name: &str) -> StoreId {
         let id = StoreId::from_uuid(Uuid::now_v7());
-        let (_, wrapped) = self.keys.generate(id).await.unwrap();
+        let (_, wrapped) = self
+            .keys
+            .generate(knoggin_crypto::KeyScope {
+                store: id,
+                generation: 0,
+            })
+            .await
+            .unwrap();
         self.stores
             .create_app(
                 self.user,

@@ -131,6 +131,9 @@ impl Store {
         if req.dry_run {
             return Ok(answer);
         }
+        if !ids.is_empty() {
+            self.note_forget();
+        }
         for memory in ids {
             self.remove_memory(memory);
         }

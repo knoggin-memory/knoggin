@@ -89,6 +89,7 @@ struct MetaV1 {
     next_namespace_id: u32,
     content_changes: u64,
     bookkeeping_changes: u64,
+    forget_changes: u64,
     written_by: String,
 }
 
@@ -353,6 +354,7 @@ impl Store {
                 next_namespace_id: self.next_namespace_id,
                 content_changes: self.changes.content,
                 bookkeeping_changes: self.changes.bookkeeping,
+                forget_changes: self.changes.forgets,
                 written_by: written_by.to_owned(),
             },
         );
@@ -463,6 +465,7 @@ impl Store {
         store.changes = ChangeCounters {
             content: meta.content_changes,
             bookkeeping: meta.bookkeeping_changes,
+            forgets: meta.forget_changes,
         };
         store.rebuild_indexes();
         Ok(store)

@@ -175,7 +175,13 @@ impl super::backend::StoreBackend for LocalBackend {
         let wrapped = record.wrapped().map_err(|e| state_error(&e))?;
         let key = self
             .keys
-            .unwrap(store, &wrapped)
+            .unwrap(
+                knoggin_crypto::KeyScope {
+                    store,
+                    generation: 0,
+                },
+                &wrapped,
+            )
             .await
             .map_err(|e| match e {
                 KeyError::UnknownMasterKey { .. } | KeyError::Unwrap => {

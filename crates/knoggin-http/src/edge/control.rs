@@ -442,10 +442,18 @@ pub(crate) async fn create_store(
     q.finish()?;
     let name = checked_name("name", &body.name)?;
     let id = StoreId::from_uuid(Uuid::now_v7());
-    let (_, wrapped) = edge.inner().keys.generate(id).await.map_err(|_| {
-        tracing::error!(kind = "key", "could not make a data key");
-        ApiError::internal()
-    })?;
+    let (_, wrapped) = edge
+        .inner()
+        .keys
+        .generate(knoggin_crypto::KeyScope {
+            store: id,
+            generation: 0,
+        })
+        .await
+        .map_err(|_| {
+            tracing::error!(kind = "key", "could not make a data key");
+            ApiError::internal()
+        })?;
     let store = NewStore {
         id,
         name: Sensitive::new(name),

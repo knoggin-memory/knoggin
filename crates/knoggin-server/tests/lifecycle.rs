@@ -64,7 +64,10 @@ impl World {
         let user = UserId::from_uuid(Uuid::now_v7());
         let store = StoreId::from_uuid(Uuid::now_v7());
         let (_, wrapped) = knoggin_crypto::testing::test_provider()
-            .generate(store)
+            .generate(knoggin_crypto::KeyScope {
+                store,
+                generation: 0,
+            })
             .await
             .unwrap();
         self.users
@@ -92,7 +95,10 @@ impl World {
     async fn app(&self, user: UserId) -> StoreId {
         let store = StoreId::from_uuid(Uuid::now_v7());
         let (_, wrapped) = knoggin_crypto::testing::test_provider()
-            .generate(store)
+            .generate(knoggin_crypto::KeyScope {
+                store,
+                generation: 0,
+            })
             .await
             .unwrap();
         self.stores

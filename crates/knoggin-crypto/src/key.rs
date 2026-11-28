@@ -87,7 +87,8 @@ pub enum KeyError {
         /// The `kek_id` that was asked for.
         kek_id: String,
     },
-    /// The wrapped key did not open: wrong master key, wrong store, or damaged bytes.
+    /// The wrapped key did not open: wrong master key, wrong store or generation, or damaged
+    /// bytes.
     #[error("the data key does not unwrap")]
     Unwrap,
     /// A key set (key file or keychain item) is malformed.
@@ -104,13 +105,37 @@ pub enum KeyError {
     Unavailable(String),
 }
 
+/// What a wrapped data key is bound to: one store and one generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyScope {
+    /// The store the key belongs to.
+    pub store: StoreId,
+    /// The generation the key belongs to.
+    pub generation: u64,
+}
+
+impl KeyScope {
+    /// The field key and the local state file's key: the nil store, generation 0.
+    pub const STATE: KeyScope = KeyScope {
+        store: StoreId::from_bytes([0; 16]),
+        generation: 0,
+    };
+    /// The key that seals state-database items: store `00000000-0000-0000-0000-000000000001`,
+    /// generation 0.
+    pub const ITEMS: KeyScope = KeyScope {
+        store: StoreId::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+        generation: 0,
+    };
+}
+
 /// Where the master key lives. Used as `Arc<dyn KeyProvider>`.
 #[async_trait]
 pub trait KeyProvider: Send + Sync + fmt::Debug {
-    /// Makes a new data key for `store` and returns it with its wrapped form.
-    async fn generate(&self, store: StoreId) -> Result<(DataKey, WrappedKey), KeyError>;
-    /// Unwraps the data key of `store`. A key wrapped for another store does not unwrap.
-    async fn unwrap(&self, store: StoreId, wrapped: &WrappedKey) -> Result<DataKey, KeyError>;
+    /// Makes a new data key for `scope` and returns it with its wrapped form.
+    async fn generate(&self, scope: KeyScope) -> Result<(DataKey, WrappedKey), KeyError>;
+    /// Unwraps a data key wrapped for `scope`. A key wrapped for another store or another
+    /// generation does not unwrap.
+    async fn unwrap(&self, scope: KeyScope, wrapped: &WrappedKey) -> Result<DataKey, KeyError>;
 }
 
 pub(crate) fn fill_random(out: &mut [u8]) -> Result<(), KeyError> {
