@@ -30,8 +30,6 @@ pub(crate) struct Tool {
     pub(crate) name: &'static str,
     title: &'static str,
     description: &'static str,
-    /// The description on `/mcp/plugin`, where it differs.
-    plugin_description: Option<&'static str>,
     /// Needs `memory:write`; otherwise `memory:read`.
     pub(crate) write: bool,
     in_plugin: bool,
@@ -51,13 +49,12 @@ const RECORD_ACCESS: &str = "recordAccess";
 macro_rules! tool {
     (@out $output:ty) => { args::output::<$output> };
     (@out $output:ty, $inner:ty) => { args::output_of::<$output, $inner> };
-    ($name:literal, $title:literal, $desc:expr, $plugin_desc:expr, write: $w:literal, plugin: $p:literal,
+    ($name:literal, $title:literal, $desc:expr, write: $w:literal, plugin: $p:literal,
      ro: $ro:expr, d: $d:literal, i: $i:expr, always: $a:literal, $input:ty => $output:ty $(, of $inner:ty)?) => {
         Tool {
             name: $name,
             title: $title,
             description: $desc,
-            plugin_description: $plugin_desc,
             write: $w,
             in_plugin: $p,
             read_only: $ro,
@@ -74,77 +71,75 @@ macro_rules! tool {
 pub(crate) static TOOLS: [Tool; 18] = [
     tool!("get_context", "Get Memory Context",
         "Load the user's long-term memory context in one call: the default namespace, the list of namespaces, and the most relevant memories for an optional topic. Call this once at the start of a task when earlier context could matter.",
-        None, write: false, plugin: true, ro: (true, true), d: false, i: (true, true), always: true,
+        write: false, plugin: true, ro: (true, true), d: false, i: (true, true), always: true,
         args::GetContextArgs => Context),
     tool!("recall_memories", "Recall Memories",
         "Search the user's long-term memories by meaning. Call before answering questions about the user's projects, preferences or past decisions. Returns up to 25 memories unless you ask for another number; the best matches come with full text.",
-        None, write: false, plugin: true, ro: (false, true), d: false, i: (false, true), always: true,
+        write: false, plugin: true, ro: (false, true), d: false, i: (false, true), always: true,
         args::RecallArgs => RecallResponse),
     tool!("get_memory", "Get Memory",
         "Fetch one memory by ID, with its full text.",
-        None, write: false, plugin: true, ro: (false, true), d: false, i: (false, true), always: false,
+        write: false, plugin: true, ro: (false, true), d: false, i: (false, true), always: false,
         args::GetMemoryArgs => MemoryView),
     tool!("find_similar_memories", "Find Similar Memories",
         "Find memories close in meaning to a given memory. Useful for spotting duplicates before saving or for exploring a topic.",
-        None, write: false, plugin: true, ro: (false, true), d: false, i: (false, true), always: false,
+        write: false, plugin: true, ro: (false, true), d: false, i: (false, true), always: false,
         args::FindSimilarArgs => SimilarResult, of SimilarHit),
     tool!("list_memories", "List Memories",
         "Page through the memories of a namespace, newest first, optionally filtered by tag, phase or date. Does not search by meaning; use recall_memories for that.",
-        None, write: false, plugin: true, ro: (true, true), d: false, i: (true, true), always: false,
+        write: false, plugin: true, ro: (true, true), d: false, i: (true, true), always: false,
         args::ListMemoriesArgs => Page<MemoryView>, of MemoryView),
     tool!("list_namespaces", "List Namespaces",
         "List the namespaces in this memory store with their memory counts. Namespaces organize memories; they are not access controls.",
-        None, write: false, plugin: true, ro: (true, true), d: false, i: (true, true), always: false,
+        write: false, plugin: true, ro: (true, true), d: false, i: (true, true), always: false,
         args::NoArgs => Items<NamespaceView>, of NamespaceView),
     tool!("list_tags", "List Tags",
         "List the tags used in a namespace with how many memories carry each.",
-        None, write: false, plugin: false, ro: (true, true), d: false, i: (true, true), always: false,
+        write: false, plugin: false, ro: (true, true), d: false, i: (true, true), always: false,
         args::ListTagsArgs => Page<TagCount>, of TagCount),
     tool!("namespace_stats", "Namespace Statistics",
         "Counts and decay settings for one namespace.",
-        None, write: false, plugin: false, ro: (true, true), d: false, i: (true, true), always: false,
+        write: false, plugin: false, ro: (true, true), d: false, i: (true, true), always: false,
         args::NamespaceStatsArgs => NamespaceStatsResult),
     tool!("store_memory", "Store Memory",
         "Save one memory: a short summary and optional full text. Save what the user asked you to keep, or what your instructions tell you to keep, and tell the user what you saved. Never save passwords, keys or other secrets. This only adds; it never replaces an existing memory.",
-        Some("Save one memory: a short summary and optional full text. Before you call this, show the user the exact text and wait for a yes; then tell the user what you saved. Never save passwords, keys or other secrets. This only adds; it never replaces an existing memory."),
         write: true, plugin: true, ro: (false, false), d: false, i: (false, false), always: true,
         args::StoreMemoryArgs => StoredMemory),
     tool!("store_memories", "Store Memories (Batch)",
         "Save up to 100 memories in one call. The same rules as store_memory apply to each.",
-        None, write: true, plugin: false, ro: (false, false), d: false, i: (false, false), always: false,
+        write: true, plugin: false, ro: (false, false), d: false, i: (false, false), always: false,
         args::StoreMemoriesArgs => BatchResult<StoredMemory>, of StoredMemory),
     tool!("supersede_memory", "Supersede Memory",
         "Replace an existing memory with a corrected or newer version. The old memory is kept but no longer returned by recall.",
-        Some("Replace an existing memory with a corrected or newer version. Before you call this, show the user the exact text and wait for a yes; then tell the user what you saved. The old memory is kept but no longer returned by recall."),
         write: true, plugin: true, ro: (false, false), d: true, i: (false, false), always: false,
         args::SupersedeArgs => StoredMemory),
     tool!("reinforce_memory", "Reinforce Memory",
         "Tell the store that a memory was useful (quality 3 or 4) or not (1 or 2). Useful memories fade more slowly.",
-        None, write: true, plugin: true, ro: (false, false), d: false, i: (false, false), always: false,
+        write: true, plugin: true, ro: (false, false), d: false, i: (false, false), always: false,
         args::ReinforceArgs => Reinforced),
     tool!("move_memories", "Move Memories",
         "Move memories to another namespace. All of them move or none do.",
-        None, write: true, plugin: false, ro: (false, false), d: false, i: (true, true), always: false,
+        write: true, plugin: false, ro: (false, false), d: false, i: (true, true), always: false,
         args::MoveArgs => Moved),
     tool!("create_namespace", "Create Namespace",
         "Create a new namespace to keep a project's or a topic's memories apart.",
-        None, write: true, plugin: false, ro: (false, false), d: false, i: (false, false), always: false,
+        write: true, plugin: false, ro: (false, false), d: false, i: (false, false), always: false,
         args::CreateNamespaceArgs => NamespaceView),
     tool!("update_namespace_policy", "Update Namespace Policy",
         "Change how fast memories in a namespace fade. A faster setting can cause text to be dropped sooner; use dryRun first to see the effect.",
-        None, write: true, plugin: false, ro: (false, false), d: true, i: (true, true), always: false,
+        write: true, plugin: false, ro: (false, false), d: true, i: (true, true), always: false,
         args::UpdatePolicyArgs => NamespaceView),
     tool!("forget_memory", "Forget Memory",
         "Delete one memory. This cannot be undone. Older encrypted backups that still hold it expire by themselves. Only do this when the user asks.",
-        None, write: true, plugin: true, ro: (false, false), d: true, i: (true, true), always: false,
+        write: true, plugin: true, ro: (false, false), d: true, i: (true, true), always: false,
         args::ForgetArgs => Forgotten),
     tool!("forget_memories", "Forget Memories (Batch)",
         "Delete up to 100 memories. This cannot be undone. Older encrypted backups that still hold them expire by themselves. Use dryRun first. Only do this when the user asks.",
-        None, write: true, plugin: false, ro: (false, false), d: true, i: (true, true), always: false,
+        write: true, plugin: false, ro: (false, false), d: true, i: (true, true), always: false,
         args::ForgetManyArgs => ForgetManyResult),
     tool!("delete_namespace", "Delete Namespace",
         "Delete a namespace. With force it also deletes every memory in it. This cannot be undone. Use dryRun first. Only do this when the user asks.",
-        None, write: true, plugin: false, ro: (false, false), d: true, i: (false, false), always: false,
+        write: true, plugin: false, ro: (false, false), d: true, i: (false, false), always: false,
         args::DeleteNamespaceArgs => NamespaceDeleted),
 ];
 
@@ -156,15 +151,11 @@ impl Tool {
         if plugin && let Some(props) = input.get_mut("properties").and_then(Value::as_object_mut) {
             props.remove(RECORD_ACCESS);
         }
-        let description = match (plugin, self.plugin_description) {
-            (true, Some(d)) => d,
-            _ => self.description,
-        };
         let pick = |(full, plug): (bool, bool)| if plugin { plug } else { full };
         ToolInfo {
             name: self.name,
             title: self.title,
-            description: description.to_owned(),
+            description: self.description.to_owned(),
             input_schema: input,
             output_schema: output.then(|| (self.output)()),
             annotations: ToolAnnotations {
@@ -400,8 +391,6 @@ async fn run(
 mod tests {
     use super::*;
 
-    const PLUGIN_SAVE: &str = "Before you call this, show the user the exact text and wait for a yes; then tell the user what you saved.";
-
     fn walk(v: &Value, f: &mut impl FnMut(&serde_json::Map<String, Value>)) {
         match v {
             Value::Object(m) => {
@@ -444,11 +433,5 @@ mod tests {
             ]
         );
         assert_eq!(tools_of(ToolSet::Full).count(), 18);
-        assert!(PLUGIN_SAVE.len() > 10);
-        for t in &TOOLS {
-            if let Some(d) = t.plugin_description {
-                assert!(d.contains(PLUGIN_SAVE), "{}", t.name);
-            }
-        }
     }
 }

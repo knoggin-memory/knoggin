@@ -376,7 +376,7 @@ fn initialize(
         protocol_version: version.to_owned(),
         capabilities: server_capabilities(),
         server_info: server_info(),
-        instructions: state.instructions(set),
+        instructions: state.instructions(),
     };
     let mut r = rpc(
         StatusCode::OK,

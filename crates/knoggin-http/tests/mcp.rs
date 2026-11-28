@@ -528,30 +528,53 @@ async fn get_parse_errors_batches_and_methods() {
     assert_eq!(r.json["error"]["code"], "internal");
 }
 
+/// Both endpoints give the same server instructions, byte for byte, through
+/// `server/discover` and `initialize`.
 #[tokio::test]
-async fn instructions_per_endpoint() {
+async fn instructions_are_the_same_on_both_endpoints() {
     let env = Env::new(true).await;
-    for (path, needle) in [
-        (
-            "/mcp",
-            "Save something when the user asks you to remember it",
-        ),
-        (
-            "/mcp/plugin",
-            "Before saving anything, show the user the exact text",
-        ),
-    ] {
+    for path in ["/mcp", "/mcp/plugin"] {
         let c = Client::modern(&env, env.t.ctx(RW), path);
         let r = c.raw(&plain(1, "server/discover"), &[]).await;
-        let text = r.json["result"]["instructions"].as_str().unwrap();
-        assert!(text.contains(needle), "{text}");
-        assert!(text.contains("by running knoggin open."), "{text}");
-        assert!(
-            text.ends_with("Source code: https://github.com/knoggin-memory/knoggin."),
-            "{text}"
+        assert_eq!(
+            r.json["result"]["instructions"],
+            "Knoggin is this user's long-term memory. When a request depends on earlier context, call get_context or recall_memories. Save something when the user asks you to remember it, or when your own instructions tell you to keep it, and tell the user what you saved. Never save passwords, keys or other secrets. Namespaces organize memories; they are not access controls. The user can browse and manage memories by running knoggin open. Source code: https://github.com/knoggin-memory/knoggin.",
+            "{path}"
         );
+        let text = r.json["result"]["instructions"].clone();
         let r = c.raw(&initialize(1, "2025-06-18", "c"), &[]).await;
-        assert_eq!(r.json["result"]["instructions"], text);
+        assert_eq!(r.json["result"]["instructions"], text, "{path}");
+    }
+}
+
+/// No tool description and no instruction text asks the agent to show a memory and wait
+/// for the user's yes before saving.
+#[tokio::test]
+async fn no_text_asks_the_agent_to_wait_before_saving() {
+    let env = Env::new(true).await;
+    for path in ["/mcp", "/mcp/plugin"] {
+        let c = Client::modern(&env, env.t.ctx(RW), path);
+        let r = c.raw(&plain(1, "server/discover"), &[]).await;
+        let mut texts = vec![
+            r.json["result"]["instructions"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        ];
+        for tool in c.tools().await {
+            texts.push(tool["description"].as_str().unwrap().to_owned());
+        }
+        assert!(texts.len() > 10, "{path}");
+        for text in &texts {
+            let lower = text.to_lowercase();
+            for phrase in [
+                "wait for a yes",
+                "ask before",
+                "show the user the exact text",
+            ] {
+                assert!(!lower.contains(phrase), "{path}: {text}");
+            }
+        }
     }
 }
 
@@ -658,24 +681,31 @@ async fn tool_lists_and_hints() {
             assert!(!has("createdAt"), "{name}");
         }
     }
-    // The two plugin descriptions that differ.
-    let tools = Client::modern(&env, env.t.ctx(RW), "/mcp/plugin")
+    // The two saving tools have one description, the same on both tool sets.
+    let full = Client::modern(&env, env.t.ctx(RW), "/mcp").tools().await;
+    let plugin = Client::modern(&env, env.t.ctx(RW), "/mcp/plugin")
         .tools()
         .await;
-    let desc = |n: &str| {
+    let described = |tools: &[Value], n: &str| {
         tools.iter().find(|t| t["name"] == n).unwrap()["description"]
             .as_str()
             .unwrap()
             .to_owned()
     };
-    assert_eq!(
-        desc("store_memory"),
-        "Save one memory: a short summary and optional full text. Before you call this, show the user the exact text and wait for a yes; then tell the user what you saved. Never save passwords, keys or other secrets. This only adds; it never replaces an existing memory."
-    );
-    assert_eq!(
-        desc("supersede_memory"),
-        "Replace an existing memory with a corrected or newer version. Before you call this, show the user the exact text and wait for a yes; then tell the user what you saved. The old memory is kept but no longer returned by recall."
-    );
+    let desc = |n: &str| described(&plugin, n);
+    for (name, text) in [
+        (
+            "store_memory",
+            "Save one memory: a short summary and optional full text. Save what the user asked you to keep, or what your instructions tell you to keep, and tell the user what you saved. Never save passwords, keys or other secrets. This only adds; it never replaces an existing memory.",
+        ),
+        (
+            "supersede_memory",
+            "Replace an existing memory with a corrected or newer version. The old memory is kept but no longer returned by recall.",
+        ),
+    ] {
+        assert_eq!(described(&full, name), text);
+        assert_eq!(desc(name), text);
+    }
     assert_eq!(
         desc("get_memory"),
         "Fetch one memory by ID, with its full text."

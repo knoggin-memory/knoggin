@@ -45,30 +45,24 @@ pub(crate) struct McpState {
 }
 
 impl McpState {
-    /// The server instructions of `set`, with the deployment's addresses.
-    fn instructions(&self, set: ToolSet) -> String {
+    /// The server instructions, with the deployment's addresses.
+    fn instructions(&self) -> String {
         let config = self.host.config();
-        instructions(set, config.web_url.as_deref(), &config.mcp.source_url)
+        instructions(config.web_url.as_deref(), &config.mcp.source_url)
     }
 }
 
-/// The `instructions` of `initialize` and `server/discover`. Neither text tells an agent
-/// to save or recall on its own initiative; a test compares them byte for byte.
-pub(crate) fn instructions(set: ToolSet, web_url: Option<&str>, source_url: &str) -> String {
-    let saving = match set {
-        ToolSet::Full => {
-            "Save something when the user asks you to remember it, or when your own instructions tell you to keep it, and tell the user what you saved."
-        }
-        ToolSet::Plugin => {
-            "Before saving anything, show the user the exact text and wait for a yes; then save it with store_memory and confirm."
-        }
-    };
+/// The `instructions` of `initialize` and `server/discover`, the same on both tool sets. The
+/// text tells an agent to save what the user asks it to keep, or what its own instructions say
+/// to keep, and to say what it saved; it never asks the agent to wait for a yes. A test
+/// compares it byte for byte.
+pub(crate) fn instructions(web_url: Option<&str>, source_url: &str) -> String {
     let browse = match web_url {
         Some(url) => format!("The user can browse and manage memories at {url}."),
         None => "The user can browse and manage memories by running knoggin open.".to_owned(),
     };
     format!(
-        "Knoggin is this user's long-term memory. When a request depends on earlier context, call get_context or recall_memories. {saving} Never save passwords, keys or other secrets. Namespaces organize memories; they are not access controls. {browse} Source code: {source_url}."
+        "Knoggin is this user's long-term memory. When a request depends on earlier context, call get_context or recall_memories. Save something when the user asks you to remember it, or when your own instructions tell you to keep it, and tell the user what you saved. Never save passwords, keys or other secrets. Namespaces organize memories; they are not access controls. {browse} Source code: {source_url}."
     )
 }
 
@@ -94,27 +88,18 @@ pub(crate) fn routes(host: Arc<StoreHost>) -> Router {
 mod tests {
     use super::*;
 
-    /// The server instructions, byte for byte.
+    /// The server instructions, byte for byte, with and without a web address.
     #[test]
-    fn instructions_are_the_fixed_texts() {
+    fn instructions_are_the_fixed_text() {
         assert_eq!(
             instructions(
-                ToolSet::Full,
                 Some("https://memory.example.com"),
                 "https://github.com/knoggin/knoggin"
             ),
             "Knoggin is this user's long-term memory. When a request depends on earlier context, call get_context or recall_memories. Save something when the user asks you to remember it, or when your own instructions tell you to keep it, and tell the user what you saved. Never save passwords, keys or other secrets. Namespaces organize memories; they are not access controls. The user can browse and manage memories at https://memory.example.com. Source code: https://github.com/knoggin/knoggin."
         );
         assert_eq!(
-            instructions(
-                ToolSet::Plugin,
-                Some("https://memory.example.com"),
-                "https://github.com/knoggin/knoggin"
-            ),
-            "Knoggin is this user's long-term memory. When a request depends on earlier context, call get_context or recall_memories. Before saving anything, show the user the exact text and wait for a yes; then save it with store_memory and confirm. Never save passwords, keys or other secrets. Namespaces organize memories; they are not access controls. The user can browse and manage memories at https://memory.example.com. Source code: https://github.com/knoggin/knoggin."
-        );
-        assert_eq!(
-            instructions(ToolSet::Full, None, "https://x.example"),
+            instructions(None, "https://x.example"),
             "Knoggin is this user's long-term memory. When a request depends on earlier context, call get_context or recall_memories. Save something when the user asks you to remember it, or when your own instructions tell you to keep it, and tell the user what you saved. Never save passwords, keys or other secrets. Namespaces organize memories; they are not access controls. The user can browse and manage memories by running knoggin open. Source code: https://x.example."
         );
     }

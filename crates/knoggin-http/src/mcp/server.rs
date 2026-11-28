@@ -44,7 +44,7 @@ pub(crate) async fn dispatch(
             let result = DiscoverResult {
                 supported_versions: SUPPORTED_MODERN_VERSIONS,
                 capabilities: server_capabilities(),
-                instructions: state.instructions(call.set),
+                instructions: state.instructions(),
             };
             success(
                 id,
