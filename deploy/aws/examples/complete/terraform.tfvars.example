@@ -15,3 +15,8 @@ admin_subjects             = ["user_0000"]
 # user_compute         = "fargate"
 # max_containers       = 50
 # container_memory_mib = 2048
+
+# Days the bucket keeps a deleted snapshot as an old version, 0 to 30. Once above 0, an
+# apply with 0 fails and removes the rule that expires old versions; apply 1 or more at
+# once to put it back. Use 1, not 0, to shorten it:
+# undelete_days = 3

@@ -91,9 +91,10 @@ resource "aws_route_table_association" "private" {
 }
 
 # The S3 prefix list is what user containers may reach. The policy lets through only the
-# deployment's bucket, for requests signed by the router's or the lifecycle task's role
-# (a container's signed links carry the router's), and reads of the registry's layer
-# bucket, which the hosts and the Fargate tasks pull image layers from.
+# deployment's bucket, for requests signed by the router's role (a container's signed
+# links carry the router's) to list, read and upload, or by the lifecycle task's role to
+# list and delete, and reads of the registry's layer bucket, which the hosts and the
+# Fargate tasks pull image layers from.
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.this.id
   service_name      = "com.amazonaws.${var.region}.s3"
@@ -104,14 +105,20 @@ resource "aws_vpc_endpoint" "s3" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid       = "DeploymentBucket"
+        Sid       = "RouterBucket"
         Effect    = "Allow"
         Principal = "*"
-        Action    = ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource  = [aws_s3_bucket.snapshots.arn, "${aws_s3_bucket.snapshots.arn}/*"]
-        Condition = {
-          ArnEquals = { "aws:PrincipalArn" = [aws_iam_role.router.arn, aws_iam_role.lifecycle.arn] }
-        }
+        Action    = ["s3:ListBucket", "s3:GetObject", "s3:PutObject"]
+        Resource  = local.bucket_and_objects
+        Condition = { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn } }
+      },
+      {
+        Sid       = "LifecycleBucket"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["s3:ListBucket", "s3:DeleteObject"]
+        Resource  = local.bucket_and_objects
+        Condition = { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.lifecycle.arn } }
       },
       {
         Sid       = "RegistryLayers"

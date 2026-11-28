@@ -1,17 +1,134 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # AWS: the bucket, the state database and the master key.
 
-# Snapshots. Versioning stays off: a kept old version would keep an erased store readable.
+# Snapshots.
 resource "aws_s3_bucket" "snapshots" {
   bucket_prefix = "${var.name}-snapshots-"
 }
 
+# Versioning is off unless undelete_days is set: Knoggin's own 24-hour window is the undo,
+# and a kept old version would keep a forgotten memory readable for longer.
 resource "aws_s3_bucket_versioning" "snapshots" {
   bucket = aws_s3_bucket.snapshots.id
 
   versioning_configuration {
-    status = "Disabled"
+    status = var.undelete_days > 0 ? "Enabled" : "Disabled"
   }
+}
+
+# With undelete_days, a deleted snapshot stays as an old version that many days. No rule
+# here ever expires a current object by age: only the lifecycle task deletes snapshots.
+resource "aws_s3_bucket_lifecycle_configuration" "snapshots" {
+  count  = var.undelete_days > 0 ? 1 : 0
+  bucket = aws_s3_bucket.snapshots.id
+
+  rule {
+    id     = "noncurrent"
+    status = "Enabled"
+    filter {}
+
+    noncurrent_version_expiration {
+      # The variable refuses fractions; floor keeps a refused value from reaching the
+      # provider's whole-number field during the same plan.
+      noncurrent_days = floor(var.undelete_days)
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 1
+    }
+  }
+
+  rule {
+    id     = "markers"
+    status = "Enabled"
+    filter {}
+
+    expiration {
+      expired_object_delete_marker = true
+    }
+  }
+
+  depends_on = [aws_s3_bucket_versioning.snapshots]
+}
+
+# Denies only, so that no change to the roles' IAM policies can let the router destroy a
+# snapshot, or the lifecycle task reach old versions, or either change the bucket's rules.
+resource "aws_s3_bucket_policy" "snapshots" {
+  bucket = aws_s3_bucket.snapshots.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyRouterDestroy"
+        Effect    = "Deny"
+        Principal = "*"
+        Action = [
+          "s3:DeleteObject",
+          "s3:DeleteObjectVersion",
+          "s3:PutObjectRetention",
+          "s3:PutObjectLegalHold",
+          "s3:BypassGovernanceRetention",
+          "s3:PutObjectAcl",
+          "s3:PutObjectVersionAcl",
+          "s3:PutObjectTagging",
+          "s3:PutObjectVersionTagging",
+          "s3:GetObjectVersion",
+        ]
+        Resource  = local.bucket_and_objects
+        Condition = { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn } }
+      },
+      {
+        Sid       = "DenyRouterUnconditionalPut"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:PutObject"
+        Resource  = local.bucket_and_objects
+        Condition = {
+          ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn }
+          Null      = { "s3:if-none-match" = "true" }
+        }
+      },
+      {
+        Sid       = "DenyLifecyclePurge"
+        Effect    = "Deny"
+        Principal = "*"
+        Action = [
+          "s3:DeleteObjectVersion",
+          "s3:BypassGovernanceRetention",
+          "s3:PutObject",
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:PutObjectVersionTagging",
+        ]
+        Resource  = local.bucket_and_objects
+        Condition = { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.lifecycle.arn } }
+      },
+      {
+        Sid       = "DenyAppBucketConfig"
+        Effect    = "Deny"
+        Principal = "*"
+        Action = [
+          "s3:PutBucketVersioning",
+          "s3:PutLifecycleConfiguration",
+          "s3:PutBucketPolicy",
+          "s3:DeleteBucketPolicy",
+          "s3:PutBucketObjectLockConfiguration",
+          "s3:PutBucketAcl",
+          "s3:PutBucketOwnershipControls",
+          "s3:PutReplicationConfiguration",
+          "s3:PutBucketPublicAccessBlock",
+          "s3:PutEncryptionConfiguration",
+          "s3:PutBucketNotification",
+          "s3:PutIntelligentTieringConfiguration",
+          "s3:DeleteBucket",
+        ]
+        Resource  = local.bucket_and_objects
+        Condition = { ArnEquals = { "aws:PrincipalArn" = [aws_iam_role.router.arn, aws_iam_role.lifecycle.arn] } }
+      },
+    ]
+  })
+
+  depends_on = [aws_s3_bucket_public_access_block.snapshots]
 }
 
 resource "aws_s3_bucket_public_access_block" "snapshots" {
@@ -113,6 +230,8 @@ resource "aws_kms_key" "master" {
 }
 
 locals {
+  bucket_and_objects = [aws_s3_bucket.snapshots.arn, "${aws_s3_bucket.snapshots.arn}/*"]
+
   # ForAnyValue, not ForAllValues: ForAllValues passes a request with no context at all.
   kms_store_context = {
     "ForAnyValue:StringEquals" = { "kms:EncryptionContextKeys" = ["knoggin:store"] }

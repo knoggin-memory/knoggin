@@ -85,6 +85,14 @@ Do not skip a release whose notes say it changes the internal protocol.
 
 Nothing is deleted, so you can undo a restore by restoring the snapshot that was newest before. If the chosen snapshot cannot be read, the store is locked; run `admin restore --store <id> --cancel` and pick another.
 
+## Bring a deleted snapshot back from bucket versions
+
+Only on AWS with `undelete_days` above 0 ([Deploy on AWS](deploy-aws.md#restore)), and only for about that many days after the delete. Use operator credentials: the bucket policy keeps both Knoggin roles away from old versions.
+
+1. **Find the delete marker** of the snapshot: `aws s3api list-object-versions --bucket <bucket> --prefix stores/<store id>/snap/`. The snapshot's key has a `DeleteMarkers` entry with `IsLatest: true`.
+2. **Remove the marker:** `aws s3api delete-object --bucket <bucket> --key <key> --version-id <the marker's VersionId>`. The snapshot is the current object again.
+3. **Restore the store** from it, as in [Restoring a store](#restoring-a-store). The lifecycle task keeps a snapshot that a restore waits on, so do this right away. For a store that was erased, there is no store to restore: read the snapshot as in [Recovering a store from the bucket](#recovering-a-store-from-the-bucket).
+
 ## Rotating keys
 
 - **Master key, one host:** with the router stopped; [Deploy on one host](deploy-one-host.md#rotating-the-master-key) has the three commands.
