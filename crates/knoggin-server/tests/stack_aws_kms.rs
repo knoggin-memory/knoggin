@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `KmsKeyProvider` against KMS on a moto container: data keys made with the store and the
 //! generation as encryption context open for that store and generation only; a damaged blob,
-//! another store, another generation, another key and a missing key all fail; after KMS rotates the key's material, old blobs still open
-//! and nothing is re-wrapped. No AWS account: dummy credentials and moto's address are set
-//! here, on the client, and nowhere else.
+//! another store, another generation, another key and a missing key all fail; after KMS rotates
+//! the key's material, old blobs still open and nothing is re-wrapped. No AWS account: dummy
+//! credentials and moto's address are set here, on the client, and nowhere else.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
