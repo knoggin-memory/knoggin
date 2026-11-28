@@ -309,10 +309,21 @@ run "s3_endpoint" {
   }
   assert {
     condition = [
-      for s in jsondecode(aws_vpc_endpoint.s3.policy).Statement : s.Condition.ArnEquals["aws:PrincipalArn"]
+      for s in jsondecode(aws_vpc_endpoint.s3.policy).Statement : jsonencode([s.Effect, s.Action, s.Resource, s.Condition])
       if contains(flatten([s.Resource]), aws_s3_bucket.snapshots.arn)
-    ] == [[aws_iam_role.router.arn, aws_iam_role.lifecycle.arn]]
-    error_message = "Only requests signed by the router's or the lifecycle task's role reach the bucket."
+      ] == [
+      jsonencode(["Allow", ["s3:ListBucket", "s3:GetObject", "s3:PutObject"], [aws_s3_bucket.snapshots.arn, "${aws_s3_bucket.snapshots.arn}/*"],
+      { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn } }]),
+      jsonencode(["Allow", ["s3:ListBucket", "s3:DeleteObject"], [aws_s3_bucket.snapshots.arn, "${aws_s3_bucket.snapshots.arn}/*"],
+      { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.lifecycle.arn } }]),
+    ]
+    error_message = "Only the router's role (list, read, upload) and the lifecycle task's role (list, delete) reach the bucket."
+  }
+  assert {
+    condition = [
+      for s in jsondecode(aws_vpc_endpoint.s3.policy).Statement : s.Condition.ArnEquals["aws:PrincipalArn"] if contains(flatten([s.Action]), "s3:DeleteObject")
+    ] == [aws_iam_role.lifecycle.arn]
+    error_message = "Through the endpoint only the lifecycle task's role may delete."
   }
   assert {
     condition = (
@@ -898,4 +909,220 @@ run "user_compute_is_ec2_or_fargate" {
     container_memory_mib = 2048
   }
   expect_failures = [var.user_compute]
+}
+
+run "bucket_keeps_no_versions_by_default" {
+  assert {
+    condition = (
+      aws_s3_bucket_versioning.snapshots.versioning_configuration[0].status == "Disabled" &&
+      length(aws_s3_bucket_lifecycle_configuration.snapshots) == 0
+    )
+    error_message = "By default versioning is off and the bucket has no lifecycle configuration."
+  }
+}
+
+run "no_rule_expires_current_snapshots_by_age" {
+  assert {
+    condition = alltrue(flatten([
+      for c in aws_s3_bucket_lifecycle_configuration.snapshots : [
+        for r in c.rule : [for e in r.expiration : (e.days == null || e.days == 0) && e.date == null]
+      ]
+    ]))
+    error_message = "No lifecycle rule expires a current snapshot by age."
+  }
+}
+
+run "bucket_policy_denies_destroying_snapshots" {
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_s3_bucket_policy.snapshots.policy).Statement : s.Effect == "Deny"])
+    error_message = "The bucket policy has no Allow."
+  }
+  assert {
+    condition = { for s in jsondecode(aws_s3_bucket_policy.snapshots.policy).Statement : s.Sid => jsonencode([s.Principal, s.Action, s.Condition]) } == {
+      DenyRouterDestroy = jsonencode(["*", [
+        "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObjectRetention", "s3:PutObjectLegalHold", "s3:BypassGovernanceRetention",
+        "s3:PutObjectAcl", "s3:PutObjectVersionAcl", "s3:PutObjectTagging", "s3:GetObjectVersion",
+      ], { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn } }])
+      DenyRouterUnconditionalPut = jsonencode(["*", "s3:PutObject", {
+        ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn }
+        Null      = { "s3:if-none-match" = "true" }
+      }])
+      DenyLifecyclePurge = jsonencode(["*", [
+        "s3:DeleteObjectVersion", "s3:BypassGovernanceRetention", "s3:PutObject", "s3:GetObject", "s3:GetObjectVersion",
+      ], { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.lifecycle.arn } }])
+      DenyAppBucketConfig = jsonencode(["*", [
+        "s3:PutBucketVersioning", "s3:PutLifecycleConfiguration", "s3:PutBucketPolicy", "s3:DeleteBucketPolicy",
+        "s3:PutBucketObjectLockConfiguration", "s3:PutBucketAcl", "s3:PutBucketOwnershipControls",
+        "s3:PutReplicationConfiguration", "s3:DeleteBucket",
+      ], { ArnEquals = { "aws:PrincipalArn" = [aws_iam_role.router.arn, aws_iam_role.lifecycle.arn] } }])
+    }
+    error_message = "The bucket policy denies each listed action to the router's role, the lifecycle task's role or both, and nothing else."
+  }
+  assert {
+    condition = aws_s3_bucket_policy.snapshots.bucket == aws_s3_bucket.snapshots.id && alltrue([
+      for s in jsondecode(aws_s3_bucket_policy.snapshots.policy).Statement :
+      jsonencode(s.Resource) == jsonencode([aws_s3_bucket.snapshots.arn, "${aws_s3_bucket.snapshots.arn}/*"])
+    ])
+    error_message = "Every statement covers the snapshot bucket and its objects."
+  }
+  assert {
+    condition     = !contains(flatten([for st in jsondecode(aws_iam_role_policy.lifecycle.policy).Statement : st.Action if st.Effect == "Allow"]), "s3:DeleteObjectVersion")
+    error_message = "The lifecycle role may not delete old versions."
+  }
+}
+
+run "undelete_days_keeps_deleted_snapshots" {
+  variables {
+    undelete_days = 3
+  }
+  assert {
+    condition = (
+      aws_s3_bucket_versioning.snapshots.versioning_configuration[0].status == "Enabled" &&
+      length(aws_s3_bucket_lifecycle_configuration.snapshots) == 1 &&
+      toset([for r in aws_s3_bucket_lifecycle_configuration.snapshots[0].rule : r.id]) == toset(["noncurrent", "markers"]) &&
+      alltrue([for r in aws_s3_bucket_lifecycle_configuration.snapshots[0].rule : r.status == "Enabled"])
+    )
+    error_message = "With undelete_days, versioning is on with two lifecycle rules."
+  }
+  assert {
+    condition = [
+      for r in aws_s3_bucket_lifecycle_configuration.snapshots[0].rule :
+      [one(r.noncurrent_version_expiration).noncurrent_days, one(r.abort_incomplete_multipart_upload).days_after_initiation] if r.id == "noncurrent"
+    ] == [[3, 1]]
+    error_message = "Old versions expire after undelete_days; unfinished uploads are dropped after a day."
+  }
+  assert {
+    condition = [
+      for r in aws_s3_bucket_lifecycle_configuration.snapshots[0].rule : one(r.expiration).expired_object_delete_marker if r.id == "markers"
+    ] == [true]
+    error_message = "Delete markers with no versions left are removed."
+  }
+}
+
+run "no_rule_expires_current_snapshots_by_age_with_undelete_days" {
+  variables {
+    undelete_days = 3
+  }
+  assert {
+    condition = alltrue(flatten([
+      for c in aws_s3_bucket_lifecycle_configuration.snapshots : [
+        for r in c.rule : [for e in r.expiration : (e.days == null || e.days == 0) && e.date == null]
+      ]
+    ]))
+    error_message = "No lifecycle rule expires a current snapshot by age."
+  }
+}
+
+run "fargate_bucket_policy_denies_destroying_snapshots" {
+  variables {
+    user_compute         = "fargate"
+    max_containers       = 50
+    container_memory_mib = 2048
+  }
+  assert {
+    condition = (
+      aws_s3_bucket_versioning.snapshots.versioning_configuration[0].status == "Disabled" &&
+      length(aws_s3_bucket_lifecycle_configuration.snapshots) == 0
+    )
+    error_message = "By default versioning is off and the bucket has no lifecycle configuration."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_s3_bucket_policy.snapshots.policy).Statement : s.Effect == "Deny"])
+    error_message = "The bucket policy has no Allow."
+  }
+  assert {
+    condition = { for s in jsondecode(aws_s3_bucket_policy.snapshots.policy).Statement : s.Sid => jsonencode([s.Principal, s.Action, s.Condition]) } == {
+      DenyRouterDestroy = jsonencode(["*", [
+        "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObjectRetention", "s3:PutObjectLegalHold", "s3:BypassGovernanceRetention",
+        "s3:PutObjectAcl", "s3:PutObjectVersionAcl", "s3:PutObjectTagging", "s3:GetObjectVersion",
+      ], { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn } }])
+      DenyRouterUnconditionalPut = jsonencode(["*", "s3:PutObject", {
+        ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn }
+        Null      = { "s3:if-none-match" = "true" }
+      }])
+      DenyLifecyclePurge = jsonencode(["*", [
+        "s3:DeleteObjectVersion", "s3:BypassGovernanceRetention", "s3:PutObject", "s3:GetObject", "s3:GetObjectVersion",
+      ], { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.lifecycle.arn } }])
+      DenyAppBucketConfig = jsonencode(["*", [
+        "s3:PutBucketVersioning", "s3:PutLifecycleConfiguration", "s3:PutBucketPolicy", "s3:DeleteBucketPolicy",
+        "s3:PutBucketObjectLockConfiguration", "s3:PutBucketAcl", "s3:PutBucketOwnershipControls",
+        "s3:PutReplicationConfiguration", "s3:DeleteBucket",
+      ], { ArnEquals = { "aws:PrincipalArn" = [aws_iam_role.router.arn, aws_iam_role.lifecycle.arn] } }])
+    }
+    error_message = "The bucket policy denies each listed action to the router's role, the lifecycle task's role or both, and nothing else."
+  }
+  assert {
+    condition = aws_s3_bucket_policy.snapshots.bucket == aws_s3_bucket.snapshots.id && alltrue([
+      for s in jsondecode(aws_s3_bucket_policy.snapshots.policy).Statement :
+      jsonencode(s.Resource) == jsonencode([aws_s3_bucket.snapshots.arn, "${aws_s3_bucket.snapshots.arn}/*"])
+    ])
+    error_message = "Every statement covers the snapshot bucket and its objects."
+  }
+  assert {
+    condition     = !contains(flatten([for st in jsondecode(aws_iam_role_policy.lifecycle.policy).Statement : st.Action if st.Effect == "Allow"]), "s3:DeleteObjectVersion")
+    error_message = "The lifecycle role may not delete old versions."
+  }
+}
+
+run "fargate_undelete_days_keeps_deleted_snapshots" {
+  variables {
+    user_compute         = "fargate"
+    max_containers       = 50
+    container_memory_mib = 2048
+    undelete_days        = 3
+  }
+  assert {
+    condition = (
+      aws_s3_bucket_versioning.snapshots.versioning_configuration[0].status == "Enabled" &&
+      length(aws_s3_bucket_lifecycle_configuration.snapshots) == 1 &&
+      toset([for r in aws_s3_bucket_lifecycle_configuration.snapshots[0].rule : r.id]) == toset(["noncurrent", "markers"]) &&
+      alltrue([for r in aws_s3_bucket_lifecycle_configuration.snapshots[0].rule : r.status == "Enabled"])
+    )
+    error_message = "With undelete_days, versioning is on with two lifecycle rules."
+  }
+  assert {
+    condition = [
+      for r in aws_s3_bucket_lifecycle_configuration.snapshots[0].rule :
+      [one(r.noncurrent_version_expiration).noncurrent_days, one(r.abort_incomplete_multipart_upload).days_after_initiation] if r.id == "noncurrent"
+    ] == [[3, 1]]
+    error_message = "Old versions expire after undelete_days; unfinished uploads are dropped after a day."
+  }
+  assert {
+    condition = [
+      for r in aws_s3_bucket_lifecycle_configuration.snapshots[0].rule : one(r.expiration).expired_object_delete_marker if r.id == "markers"
+    ] == [true]
+    error_message = "Delete markers with no versions left are removed."
+  }
+  assert {
+    condition = alltrue(flatten([
+      for c in aws_s3_bucket_lifecycle_configuration.snapshots : [
+        for r in c.rule : [for e in r.expiration : (e.days == null || e.days == 0) && e.date == null]
+      ]
+    ]))
+    error_message = "No lifecycle rule expires a current snapshot by age."
+  }
+}
+
+run "undelete_days_is_at_most_30" {
+  command = plan
+  variables {
+    undelete_days = 31
+  }
+  expect_failures = [var.undelete_days]
+}
+
+run "undelete_days_is_not_negative" {
+  command = plan
+  variables {
+    undelete_days = -1
+  }
+  expect_failures = [var.undelete_days]
+}
+
+run "undelete_days_is_a_whole_number" {
+  command = plan
+  variables {
+    undelete_days = 1.5
+  }
+  expect_failures = [var.undelete_days]
 }

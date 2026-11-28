@@ -40,6 +40,7 @@ module "knoggin" {
   user_compute               = var.user_compute
   max_containers             = var.max_containers
   container_memory_mib       = var.container_memory_mib
+  undelete_days              = var.undelete_days
 }
 
 variable "name" {
@@ -104,6 +105,11 @@ variable "max_containers" {
 variable "container_memory_mib" {
   type    = number
   default = 1536
+}
+
+variable "undelete_days" {
+  type    = number
+  default = 0
 }
 
 output "load_balancer_dns_name" {

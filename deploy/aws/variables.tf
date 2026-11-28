@@ -160,6 +160,18 @@ variable "allowed_email_domains" {
   default     = []
 }
 
+variable "undelete_days" {
+  description = "Days the bucket itself keeps a deleted snapshot, on top of Knoggin's 24-hour undo window. 0 turns this off. Above 0, a forgotten memory and an erased store stay in the bucket that many more days (plus up to a day, because S3 expires on its own schedule), readable only with operator credentials. S3 cannot return a bucket to unversioned, so this cannot be set back to 0 once it was above 0; set it to 1 instead."
+  type        = number
+  default     = 0
+  nullable    = false
+
+  validation {
+    condition     = var.undelete_days >= 0 && var.undelete_days <= 30 && floor(var.undelete_days) == var.undelete_days
+    error_message = "undelete_days must be a whole number from 0 to 30."
+  }
+}
+
 variable "dns_allow" {
   description = "More host names the DNS firewall allows, such as the provider's key or token host when it differs from the issuer's."
   type        = list(string)

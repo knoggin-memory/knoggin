@@ -88,7 +88,7 @@ Required variables:
 | `auth_web_client_secret_arn`, `internal_secret_arn`, `internal_cert_arn`, `internal_key_arn` | The four ARNs from step 2 |
 | `admin_subjects` or `admin_emails` | At least one. Subjects are recommended |
 
-Optional, with defaults: `user_compute` (`ec2`; see [Hosts or Fargate](#hosts-or-fargate)), `instance_type` (`m8g.xlarge`), `min_hosts` (1), `max_hosts` (4), `container_memory_mib` (1536), `pool_target` (2), `retention_days` (7), `allowed_email_domains` (empty), `dns_allow` (empty), and `containers_per_host` (needed only for an instance type outside the module's table). On Fargate, also `user_task_cpu` (512) and `max_containers` (required). On EC2 hosts the account setting `awsvpcTrunking` is turned on for the region.
+Optional, with defaults: `user_compute` (`ec2`; see [Hosts or Fargate](#hosts-or-fargate)), `instance_type` (`m8g.xlarge`), `min_hosts` (1), `max_hosts` (4), `container_memory_mib` (1536), `pool_target` (2), `retention_days` (7), `allowed_email_domains` (empty), `dns_allow` (empty), `undelete_days` (0; see [Restore](#restore)), and `containers_per_host` (needed only for an instance type outside the module's table). On Fargate, also `user_task_cpu` (512) and `max_containers` (required). On EC2 hosts the account setting `awsvpcTrunking` is turned on for the region.
 
 When it is done, point your host name at the output `load_balancer_dns_name`, open `https://<your name>` and sign in. Agents connect to `https://<your name>/mcp` ([Connecting agents](connect-agents.md)).
 
@@ -156,7 +156,9 @@ Replace `["admin","selftest"]` with the command you need. The output is in the r
 
 **The state database:** DynamoDB point-in-time recovery is on, so AWS can restore the table as of a past moment, into a new table. Putting that table in place of the module's is a manual step the module does not automate. A restored table brings back what was true then: API keys revoked since then work again, ended sessions and removed users return. Revoke those keys and remove those users again afterwards.
 
-**The bucket** has versioning off on purpose: an erased store must stay erased. Snapshots are the backup.
+**The bucket** has versioning off by default: Knoggin's own 24-hour window is the undo, and an erased store must stay erased. Snapshots are the backup. A bucket policy of denies only keeps the router from deleting or overwriting a snapshot and keeps both Knoggin roles from changing the bucket's rules.
+
+For a second safety net, set `undelete_days` (1 to 30). The bucket then keeps a deleted snapshot as an old version for about that many days to one more (S3 expires on its own schedule), readable only with operator credentials; a forgotten memory or an erased store stays there that long too. [Operations](operations.md#bring-a-deleted-snapshot-back-from-bucket-versions) shows how to bring one back. S3 cannot return a bucket to unversioned, so once `undelete_days` was above 0, setting it to 0 fails at apply; set it to 1 instead.
 
 ## The source offer
 
