@@ -29,9 +29,9 @@ use futures_util::StreamExt;
 use futures_util::future::BoxFuture;
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use knoggin_core::Timestamp;
-use knoggin_core::UserId;
 use knoggin_core::ops::{ModelState, ModelStatus};
 use knoggin_http::ctx::headers;
+use knoggin_state::record::Slot;
 use knoggin_state::{Clock, Item, StateDb, StateError, Write};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, watch};
@@ -479,7 +479,7 @@ struct Stub {
     build: String,
     test_mode: bool,
     control: Arc<StubControl>,
-    claim: Arc<Mutex<Option<(UserId, u64)>>>,
+    claim: Arc<Mutex<Option<(Slot, u64)>>>,
     exit: watch::Sender<Option<Exit>>,
 }
 
@@ -541,7 +541,7 @@ async fn claim(State(s): State<Stub>, headers: HeaderMap, body: axum::body::Byte
             &serde_json::json!({"error": {"code": "conflict"}}),
         );
     }
-    *claim = Some((req.user_id, req.generation));
+    *claim = Some((req.slot, req.generation));
     json(StatusCode::OK, &serde_json::json!({}))
 }
 
@@ -602,7 +602,7 @@ async fn status(State(s): State<Stub>, headers: HeaderMap) -> Response {
             } else {
                 ContainerPhase::Ready
             },
-            user_id: claim.map(|c| c.0),
+            slot: claim.map(|c| c.0),
             generation: claim.map(|c| c.1),
             build: s.build.clone(),
             idle_seconds: 0,
@@ -621,12 +621,19 @@ async fn store_route(State(s): State<Stub>, request: Request) -> Response {
     if verify_router_call(&s.launch.router_token(), &headers).is_err() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let user = headers
-        .get(headers::USER_ID)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|t| t.parse::<Uuid>().ok())
-        .map(UserId::from_uuid);
-    if s.claim.lock().unwrap().map(|c| c.0) != user || user.is_none() {
+    // As a real container: only requests for the claimed slot.
+    let id_of = |name| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|t| t.parse::<Uuid>().ok())
+    };
+    let for_me = match s.claim.lock().unwrap().map(|c| c.0) {
+        Some(Slot::User(u)) => id_of(headers::USER_ID) == Some(u.uuid()),
+        Some(Slot::Store(store)) => id_of(headers::STORE_ID) == Some(store.uuid()),
+        None => false,
+    };
+    if !for_me {
         return json(
             StatusCode::INTERNAL_SERVER_ERROR,
             &serde_json::json!({"error": {"code": "internal"}}),

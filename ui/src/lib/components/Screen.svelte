@@ -10,7 +10,7 @@
   import WaitState from './WaitState.svelte';
   import { status, WHOLE_SCREEN } from '$lib/status.svelte';
   import { session } from '$lib/session.svelte';
-  import { lockSentence, modelCause, plural } from '$lib/sentences';
+  import { containersPerUser, lockSentence, modelCause, plural } from '$lib/sentences';
   import { count } from '$lib/format';
 
   let { title, loose = false, children }: { title: string; loose?: boolean; children: Snippet } = $props();
@@ -63,7 +63,12 @@
     <Banner title="Catching up: {count(ind.pending)} {plural(ind.pending, 'memory', 'memories')} left to index." />
   {/if}
   {#if limitedFor > 0}
-    <Banner warn title="Too many requests. Try again in {limitedFor} {plural(limitedFor, 'second', 'seconds')}." />
+    {#if status.rateLimitedReason === 'containers_per_user'}
+      <!-- Every store the UI lists is the reader's own, so the owner reads this. -->
+      <Banner warn title={containersPerUser(true)} />
+    {:else}
+      <Banner warn title="Too many requests. Try again in {limitedFor} {plural(limitedFor, 'second', 'seconds')}." />
+    {/if}
   {/if}
 
   {#if whole}

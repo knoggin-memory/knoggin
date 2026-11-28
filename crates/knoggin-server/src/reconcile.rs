@@ -11,9 +11,8 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use futures_util::stream;
-use knoggin_core::UserId;
 use knoggin_state::record::{
-    Container, ContainerState, Leader, Lease, LeaseState, ParkReason, StopReason,
+    Container, ContainerState, Leader, Lease, LeaseState, ParkReason, Slot, StopReason,
 };
 use knoggin_state::{Cond, StateError, Versioned};
 use tokio::task::JoinHandle;
@@ -47,7 +46,7 @@ pub(crate) struct Pass {
     /// Every container record.
     pub(crate) records: Vec<Versioned<Container>>,
     /// Every lease that is not parked.
-    pub(crate) active: Vec<(UserId, Versioned<Lease>)>,
+    pub(crate) active: Vec<(Slot, Versioned<Lease>)>,
 }
 
 impl Pass {
@@ -196,9 +195,9 @@ impl Fleet {
         let mut after = None;
         loop {
             let page = self.leases.list_active(100, after).await?;
-            for &user in &page {
-                if let Some(l) = self.leases.get(user).await? {
-                    active.push((user, l));
+            for &slot in &page {
+                if let Some(l) = self.leases.get(slot).await? {
+                    active.push((slot, l));
                 }
             }
             match page.last() {
@@ -381,18 +380,18 @@ impl Fleet {
             if c.value.state != ContainerState::Claimed {
                 continue;
             }
-            let Some(user) = c.value.user_id else {
+            let Some(slot) = c.value.slot else {
                 self.gone(c.value.id, Some(StopReason::Stray)).await;
                 continue;
             };
             let names_it = pass
                 .active
                 .iter()
-                .find(|(u, _)| *u == user)
+                .find(|(u, _)| *u == slot)
                 .is_some_and(|(_, l)| l.value.container_id == Some(c.value.id));
             if !names_it {
                 // The pass's lease list may be older than the record: read again.
-                let current = self.leases.get(user).await.ok().flatten();
+                let current = self.leases.get(slot).await.ok().flatten();
                 if current.is_some_and(|l| {
                     l.value.container_id == Some(c.value.id) && l.value.state != LeaseState::Parked
                 }) {
@@ -406,7 +405,7 @@ impl Fleet {
     /// Step 5: leases `claiming` for more than 60 seconds.
     async fn stuck_claims(&self, pass: &Pass) {
         let now = self.now();
-        for (user, lease) in &pass.active {
+        for (slot, lease) in &pass.active {
             let l = &lease.value;
             if l.state != LeaseState::Claiming || now - l.state_since_ms <= CLAIM_MS {
                 continue;
@@ -421,11 +420,11 @@ impl Fleet {
             };
             let claimed = answer.is_some_and(|a| {
                 a.state == ContainerPhase::Claimed
-                    && a.user_id == Some(*user)
+                    && a.slot == Some(*slot)
                     && a.generation == Some(l.generation)
             });
             if claimed && record.is_some_and(|c| c.value.stop_reason().is_none()) {
-                if let Err(e) = self.set_warm(*user, id, l.generation).await {
+                if let Err(e) = self.set_warm(*slot, id, l.generation).await {
                     tracing::warn!(kind = "stuck_claim", error = %e, "a stuck claim was not set warm");
                 }
             } else {
@@ -436,7 +435,7 @@ impl Fleet {
 
     /// Step 6: leases whose container record is `gone` or missing.
     async fn leases_without_container(&self, pass: &Pass) {
-        for (user, lease) in &pass.active {
+        for (slot, lease) in &pass.active {
             let missing = lease.value.container_id.is_none_or(|id| {
                 pass.record(id)
                     .is_none_or(|c| c.value.state == ContainerState::Gone)
@@ -446,7 +445,7 @@ impl Fleet {
             }
             let mut next = lease.value.clone();
             next.set_state(LeaseState::Parked, self.now());
-            match self.leases.put(*user, &next, lease.cond()).await {
+            match self.leases.put(*slot, &next, lease.cond()).await {
                 Ok(()) | Err(StateError::Conflict) => {}
                 Err(e) => {
                     tracing::warn!(kind = "lease", error = %e, "a lease without a container stays")
@@ -458,7 +457,7 @@ impl Fleet {
     /// Step 7: park requests, and the 2-hour limit after the router's own bucket check.
     async fn park_requests(&self, pass: &Pass, up: bool) {
         let now = self.now();
-        for (user, lease) in &pass.active {
+        for (slot, lease) in &pass.active {
             let l = &lease.value;
             let Some(reason) = l.park_requested() else {
                 continue;
@@ -469,7 +468,7 @@ impl Fleet {
             if l.park_requested_ms()
                 .is_some_and(|t| now - t >= PARK_REQUEST_MS)
             {
-                if up && self.bucket_answers(*user).await {
+                if up && self.bucket_answers(*slot).await {
                     tracing::warn!(kind = "park_timeout", container_id = %id, "a container that did not park in 2 hours is stopped");
                     self.gone(id, Some(StopReason::ParkTimeout)).await;
                 }
@@ -483,16 +482,22 @@ impl Fleet {
         }
     }
 
-    /// Whether the router itself reaches the bucket: a listing of one of the user's
-    /// stores' snapshot folder within 5 seconds.
-    async fn bucket_answers(&self, user: UserId) -> bool {
-        let Ok(stores) = self.stores.list(user).await else {
-            return false;
+    /// Whether the router itself reaches the bucket: a listing of the snapshot folder of
+    /// one of the slot's stores within 5 seconds.
+    async fn bucket_answers(&self, slot: Slot) -> bool {
+        let store = match slot {
+            Slot::Store(store) => store,
+            Slot::User(user) => {
+                let Ok(stores) = self.stores.list(user).await else {
+                    return false;
+                };
+                let Some(store) = stores.first() else {
+                    return true;
+                };
+                store.value.id
+            }
         };
-        let Some(store) = stores.first() else {
-            return true;
-        };
-        let prefix = names::snapshot_prefix(store.value.id);
+        let prefix = names::snapshot_prefix(store);
         matches!(
             tokio::time::timeout(STATUS_LIMIT, self.storage.list(&prefix)).await,
             Ok(Ok(_))
@@ -511,8 +516,8 @@ impl Fleet {
             let v = &c.value;
             match v.state {
                 ContainerState::Claimed if now > v.retire_at_ms => {
-                    if let Some(user) = v.user_id
-                        && let Err(e) = self.request_park(user, ParkReason::Lifetime).await
+                    if let Some(slot) = v.slot
+                        && let Err(e) = self.request_park(slot, ParkReason::Lifetime).await
                     {
                         step_failed("lifetime", &e);
                     }
@@ -555,13 +560,13 @@ impl Fleet {
             match c.value.state {
                 ContainerState::Ready => self.retire(c, StopReason::Drain).await,
                 ContainerState::Claimed if budget > 0 => {
-                    if let Some(user) = c.value.user_id {
+                    if let Some(slot) = c.value.slot {
                         let asked = pass
                             .active
                             .iter()
-                            .any(|(u, l)| *u == user && l.value.park_requested().is_some());
+                            .any(|(u, l)| *u == slot && l.value.park_requested().is_some());
                         if !asked {
-                            match self.request_park(user, ParkReason::Drain).await {
+                            match self.request_park(slot, ParkReason::Drain).await {
                                 Ok(()) => budget -= 1,
                                 Err(e) => step_failed("draining", &e),
                             }

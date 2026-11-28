@@ -131,7 +131,7 @@ async fn retire_before_sets_and_clears_the_time_and_counts_active_leases() {
         .unwrap();
     let a = rig.account().await;
     let c = rig.container(quick()).await;
-    rig.lease(a.user, &c, rig.generation()).await;
+    rig.lease(a.slot(), &c, rig.generation()).await;
     assert_eq!(admin.retire_before(RetireBefore::Now).await.unwrap(), 1);
     let record = meta.rollout().await.unwrap().unwrap().value;
     assert_eq!(record.retire_before_ms, Some(rig.clock.now()));
@@ -249,9 +249,9 @@ async fn a_restore_opens_the_chosen_snapshot_and_saves_it_before_any_write() {
     // c1 saves "first" and parks: the snapshot to restore.
     let mut c1 = rig.container(quick()).await;
     let g1 = rig.generation();
-    rig.lease(a.user, &c1, g1).await;
+    rig.lease(a.slot(), &c1, g1).await;
     assert_eq!(
-        c1.claim(a.user, g1, settings(600, GIB)).await,
+        c1.claim(a.slot(), g1, settings(600, GIB)).await,
         StatusCode::OK
     );
     assert_eq!(c1.save(a, "first").await, StatusCode::CREATED);
@@ -263,9 +263,9 @@ async fn a_restore_opens_the_chosen_snapshot_and_saves_it_before_any_write() {
     rig.clock.advance(5_000);
     let mut c2 = rig.container(quick()).await;
     let g2 = rig.generation();
-    rig.lease(a.user, &c2, g2).await;
+    rig.lease(a.slot(), &c2, g2).await;
     assert_eq!(
-        c2.claim(a.user, g2, settings(600, GIB)).await,
+        c2.claim(a.slot(), g2, settings(600, GIB)).await,
         StatusCode::OK
     );
     assert_eq!(c2.save(a, "second").await, StatusCode::CREATED);
@@ -285,7 +285,7 @@ async fn a_restore_opens_the_chosen_snapshot_and_saves_it_before_any_write() {
         .await
         .unwrap();
     assert_eq!(outcome, RestoreOutcome::Waiting);
-    let lease = rig.lease_of(a.user).await;
+    let lease = rig.lease_of(a.slot()).await;
     assert_eq!(lease.park_requested(), Some(ParkReason::Restore));
     let record = rig.stores.get_of(a.user, a.store).await.unwrap().unwrap();
     assert_eq!(record.value.restore_from, Some(chosen.to_string()));
@@ -293,7 +293,7 @@ async fn a_restore_opens_the_chosen_snapshot_and_saves_it_before_any_write() {
     // The reconcile loop would send `park`: c2's final snapshot does not cancel it.
     assert_eq!(c2.park(ParkReason::Restore).await, StatusCode::ACCEPTED);
     c2.end(SECONDS).await;
-    assert_eq!(rig.lease_of(a.user).await.state, LeaseState::Parked);
+    assert_eq!(rig.lease_of(a.slot()).await.state, LeaseState::Parked);
     let record = rig.stores.get_of(a.user, a.store).await.unwrap().unwrap();
     assert_eq!(record.value.restore_from, Some(chosen.to_string()));
     assert_eq!(
@@ -311,9 +311,9 @@ async fn a_restore_opens_the_chosen_snapshot_and_saves_it_before_any_write() {
     rig.clock.advance(5_000);
     let mut c3 = rig.container(quick()).await;
     let g3 = rig.generation();
-    rig.lease(a.user, &c3, g3).await;
+    rig.lease(a.slot(), &c3, g3).await;
     assert_eq!(
-        c3.claim(a.user, g3, settings(600, GIB)).await,
+        c3.claim(a.slot(), g3, settings(600, GIB)).await,
         StatusCode::OK
     );
     let (status, _, body) = c3
@@ -414,4 +414,66 @@ async fn the_admin_snapshot_list_labels_every_object() {
     assert_eq!(items[0]["keptBecause"], "newest");
     assert_eq!(items[0]["sizeBytes"], 9);
     assert_eq!(items[1]["keptBecause"], serde_json::Value::Null);
+}
+
+/// A warm lease of `slot` naming a container that is not there, as a claim would leave it.
+async fn warm(rig: &Rig, slot: knoggin_state::record::Slot) {
+    let mut lease = knoggin_state::record::Lease::default();
+    lease.generation = rig.generation();
+    lease.container_id = Some(uuid::Uuid::now_v7());
+    lease.set_state(LeaseState::Warm, rig.clock.now());
+    rig.leases
+        .put(slot, &lease, knoggin_state::Cond::Any)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_restore_parks_only_that_slot() {
+    use knoggin_state::record::Slot;
+    let rig = Rig::start(Options::default()).await;
+    let admin = admin_of(&rig);
+    let a = rig.account().await;
+    let x = rig.app(a.user, "isolated").await;
+    rig.set_slot_flags(x, true, false).await;
+    let g = rig.generation();
+    for store in [a.store, x] {
+        rig.storage.insert(
+            &names::snapshot_key(store, SnapshotName::new(g, 1).unwrap()),
+            bytes::Bytes::from_static(b"s"),
+            Timestamp::from_millis(rig.clock.now()),
+        );
+    }
+    warm(&rig, a.slot()).await;
+    warm(&rig, Slot::Store(x)).await;
+    let name = SnapshotName::new(g, 1).unwrap();
+    // The isolated app's container parks; the user's own keeps serving.
+    let outcome = admin
+        .restore(x, name, Duration::from_millis(10))
+        .await
+        .unwrap();
+    assert_eq!(outcome, RestoreOutcome::Waiting);
+    assert_eq!(
+        rig.lease_of(Slot::Store(x)).await.park_requested(),
+        Some(ParkReason::Restore)
+    );
+    assert_eq!(rig.lease_of(a.slot()).await.park_requested(), None);
+    // And the other way round.
+    admin.cancel_restore(x).await.unwrap();
+    let mut other = rig.lease_of(Slot::Store(x)).await;
+    other.set_state(LeaseState::Parked, rig.clock.now());
+    rig.leases
+        .put(Slot::Store(x), &other, knoggin_state::Cond::Any)
+        .await
+        .unwrap();
+    warm(&rig, Slot::Store(x)).await;
+    admin
+        .restore(a.store, name, Duration::from_millis(10))
+        .await
+        .unwrap();
+    assert_eq!(
+        rig.lease_of(a.slot()).await.park_requested(),
+        Some(ParkReason::Restore)
+    );
+    assert_eq!(rig.lease_of(Slot::Store(x)).await.park_requested(), None);
 }

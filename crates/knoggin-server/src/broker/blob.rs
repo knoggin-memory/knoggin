@@ -2,7 +2,7 @@
 //! The one-host blob route: `GET` and `PUT /internal/v1/blob/<object key>` of the
 //! broker. A user container has no road to the bucket; its signed links point here,
 //! and the router forwards each request to the deployment's own bucket, for an object of
-//! the caller's own stores only, with the signed query and the signed headers and nothing
+//! a store the caller holds only, with the signed query and the signed headers and nothing
 //! else. The bytes stream through; nothing is kept.
 
 use std::sync::Arc;
@@ -16,7 +16,7 @@ use knoggin_http::ctx::headers;
 use knoggin_http::error::Code;
 
 use super::api::paths;
-use super::{Broker, BrokerError, check, storage_failed, store_of};
+use super::{Broker, BrokerError, check, held_store, storage_failed};
 use crate::link::PeerAddr;
 use crate::link::idle_limited;
 use crate::storage::names;
@@ -73,6 +73,7 @@ fn checked_query(query: &str, method: &Method) -> Option<(String, Vec<String>)> 
 fn is_link_header(name: &str) -> bool {
     name == header::AUTHORIZATION.as_str()
         || name == headers::USER_ID.as_str()
+        || name == headers::SLOT.as_str()
         || name == headers::CONTAINER_ID.as_str()
         || name == headers::PROTOCOL.as_str()
         || name == header::HOST.as_str()
@@ -109,7 +110,6 @@ pub(super) async fn blob(
         return Err(BrokerError::api(Code::NotFound));
     }
     let checked = check(&broker, peer, req.headers()).await?;
-    let user = checked.caller.user_id;
     let refused = BrokerError::invalid;
     // The raw path, before any decoding: one pattern and nothing else.
     let key = req
@@ -119,7 +119,9 @@ pub(super) async fn blob(
         .ok_or_else(refused)?
         .to_owned();
     let (store, _) = names::parse_snapshot_key(&key).ok_or_else(refused)?;
-    store_of(&broker, user, &store.to_string()).await?;
+    let record = held_store(&broker, &checked, &store.to_string()).await?;
+    // The hourly download budget belongs to the store's owner.
+    let owner = record.value.user_id;
     let (query, signed_names) =
         checked_query(req.uri().query().unwrap_or(""), &method).ok_or_else(refused)?;
     let mut length = None;
@@ -137,7 +139,7 @@ pub(super) async fn blob(
             return Err(refused());
         }
         length = Some(len);
-    } else if !broker.downloads.has_room(user) {
+    } else if !broker.downloads.has_room(owner) {
         return Err(BrokerError::api(Code::RateLimited));
     }
     // The bucket's address comes from the router's own settings: a fresh signature of the
@@ -169,7 +171,7 @@ pub(super) async fn blob(
         .request(method.clone(), format!("{base}?{query}"));
     let headers = outbound_headers(&signed_names, req.headers(), length).ok_or_else(refused)?;
     outbound = outbound.headers(headers);
-    let slot = checked.slot;
+    let call = checked.call;
     if length.is_some() {
         let body = idle_limited(req.into_body().into_data_stream(), ());
         outbound = outbound.body(reqwest::Body::wrap_stream(body));
@@ -202,11 +204,11 @@ pub(super) async fn blob(
         if method == Method::GET
             && let Ok(bytes) = &chunk
         {
-            counted.downloads.add(user, bytes.len() as u64);
+            counted.downloads.add(owner, bytes.len() as u64);
         }
         chunk
     });
-    let mut response = Body::from_stream(idle_limited(stream, slot)).into_response();
+    let mut response = Body::from_stream(idle_limited(stream, call)).into_response();
     *response.status_mut() = status;
     if let Some(len) = content_length {
         response
@@ -272,5 +274,6 @@ mod tests {
         assert!(checked_query(&format!("{q}&flag"), &Method::PUT).is_none());
         assert!(checked_query("X-Amz-Signature=s", &Method::GET).is_none());
         assert!(is_link_header("authorization") && is_link_header("knoggin-user-id"));
+        assert!(is_link_header("knoggin-slot"));
     }
 }

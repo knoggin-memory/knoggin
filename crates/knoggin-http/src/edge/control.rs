@@ -15,7 +15,7 @@ use knoggin_core::time::Timestamp;
 use knoggin_core::{Sensitive, StoreId, UserId};
 use knoggin_crypto::token::new_api_key;
 use knoggin_state::record::{
-    DeletedBy, LeaseState, ParkReason, Permission, StoreKind, StoreRecord, User,
+    DeletedBy, LeaseState, ParkReason, Permission, Slot, StoreKind, StoreRecord, User,
 };
 use knoggin_state::users::LOCAL_IDENTITY;
 use knoggin_state::{NewApiKey, NewStore, StateError, Versioned};
@@ -184,6 +184,10 @@ impl EdgeState {
             })
             .await
             .map_err(state_error)?;
+        // The user's own container parks, and the container of every store this call
+        // marked that has one of its own. Nothing else: a shared app of someone else's
+        // that the user only used keeps its container.
+        let mut park = vec![Slot::User(user)];
         for store in inner.stores.list(user).await.map_err(state_error)? {
             if store.value.deleted_at_ms.is_none() {
                 inner
@@ -194,6 +198,9 @@ impl EdgeState {
                     })
                     .await
                     .map_err(state_error)?;
+                if let slot @ Slot::Store(_) = store.value.slot() {
+                    park.push(slot);
+                }
             }
             self.drop_open(store.value.id);
         }
@@ -202,16 +209,25 @@ impl EdgeState {
             .delete_all(user, keep)
             .await
             .map_err(state_error)?;
-        if let Some(lease) = inner.leases.get(user).await.map_err(state_error)?
+        for slot in park {
+            self.request_deleted_park(slot, now).await?;
+        }
+        Ok(at)
+    }
+
+    /// Records a park request `deleted` on a slot's lease that is not parked.
+    async fn request_deleted_park(&self, slot: Slot, now: i64) -> Result<(), ApiError> {
+        let leases = &self.inner().leases;
+        if let Some(lease) = leases.get(slot).await.map_err(state_error)?
             && lease.value.state != LeaseState::Parked
         {
             let mut value = lease.value.clone();
             if value.request_park(ParkReason::Deleted, now) {
                 // A conflict means the lease moved on; the reconcile loop parks it then.
-                let _ = inner.leases.put(user, &value, lease.cond()).await;
+                let _ = leases.put(slot, &value, lease.cond()).await;
             }
         }
-        Ok(at)
+        Ok(())
     }
 
     /// Clears the user's mark and brings back the stores deleted with it.
@@ -541,6 +557,11 @@ pub(crate) async fn delete_store(
         .await
         .map_err(state_error)?;
     edge.drop_open(store.value.id);
+    // ponytail: no "close one store" call to the container; add one if a deleted normal
+    // app's key must leave the shared container sooner than its next save or park.
+    if let slot @ Slot::Store(_) = after.value.slot() {
+        edge.request_deleted_park(slot, now).await?;
+    }
     ok(&edge.store_view(&after.value))
 }
 
@@ -841,7 +862,12 @@ impl EdgeState {
             .iter()
             .filter(|s| s.value.kind == StoreKind::App && s.value.deleted_at_ms.is_none())
             .count() as u64;
-        let container = match inner.leases.get(user.id).await.map_err(state_error)? {
+        let container = match inner
+            .leases
+            .get(Slot::User(user.id))
+            .await
+            .map_err(state_error)?
+        {
             Some(l) if l.value.state != LeaseState::Parked => ContainerView {
                 state: "active",
                 since: Some(Timestamp::from_millis(l.value.state_since_ms)),

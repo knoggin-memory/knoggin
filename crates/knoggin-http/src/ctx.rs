@@ -11,6 +11,7 @@ use http::{HeaderMap, HeaderName, HeaderValue};
 use knoggin_core::model::limits::validate_namespace_name;
 use knoggin_core::ops::WriteContext;
 use knoggin_core::{StoreId, UserId};
+use knoggin_state::record::Slot;
 use uuid::Uuid;
 
 use crate::error::ApiError;
@@ -29,8 +30,10 @@ pub mod headers {
     pub const IDEMPOTENCY_KEY: HeaderName = HeaderName::from_static("idempotency-key");
     /// `true` on a stored answer.
     pub const IDEMPOTENT_REPLAYED: HeaderName = HeaderName::from_static("idempotent-replayed");
-    /// Internal: the user.
+    /// Internal: the user, on a forwarded request.
     pub const USER_ID: HeaderName = HeaderName::from_static("knoggin-user-id");
+    /// Internal: the slot of the container that calls a router (`user:<id>` or `store:<id>`).
+    pub const SLOT: HeaderName = HeaderName::from_static("knoggin-slot");
     /// Internal: the store.
     pub const STORE_ID: HeaderName = HeaderName::from_static("knoggin-store-id");
     /// Internal: `memory:read` or `memory:read,memory:write`.
@@ -48,7 +51,7 @@ pub mod headers {
 }
 
 /// The protocol version of the internal link that this build speaks.
-pub const PROTOCOL_VERSION: &str = "1";
+pub const PROTOCOL_VERSION: &str = "2";
 
 /// What the credential may do with memories.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -319,28 +322,36 @@ pub fn link_bearer(map: &HeaderMap) -> Option<&str> {
     value.strip_prefix("Bearer ").filter(|t| !t.is_empty())
 }
 
-/// The identity headers of a container's call to a router: `Knoggin-User-Id` and
-/// `Knoggin-Container-Id`, each exactly once and a UUID.
-pub fn link_identity(map: &HeaderMap) -> Option<(UserId, Uuid)> {
-    let uuid = |name: &HeaderName| Uuid::parse_str(one(map, name).ok()?).ok();
-    Some((
-        UserId::from_uuid(uuid(&headers::USER_ID)?),
-        uuid(&headers::CONTAINER_ID)?,
-    ))
+/// The identity headers of a container's call to a router: `Knoggin-Slot` (a slot) and
+/// `Knoggin-Container-Id` (a UUID), each exactly once.
+pub fn link_identity(map: &HeaderMap) -> Option<(Slot, Uuid)> {
+    let slot = one(map, &headers::SLOT).ok()?.parse().ok()?;
+    let container = Uuid::parse_str(one(map, &headers::CONTAINER_ID).ok()?).ok()?;
+    Some((slot, container))
 }
 
-/// Writes a container's identity on a call to a router: its user, its ID, its token
+/// Writes a container's identity on a call to a router: its slot, its ID, its token
 /// (`bearer` is the whole `Authorization` value) and `Knoggin-Protocol`, replacing any
 /// that are there.
-pub fn write_link_identity(
-    map: &mut HeaderMap,
-    user: UserId,
-    container: Uuid,
-    bearer: HeaderValue,
-) {
+pub fn write_link_identity(map: &mut HeaderMap, slot: Slot, container: Uuid, bearer: HeaderValue) {
     write_link_bearer(map, bearer);
-    map.insert(headers::USER_ID, uuid_value(&user.uuid()));
+    #[expect(
+        clippy::expect_used,
+        reason = "a slot's text is ASCII letters, a colon and a hyphenated UUID"
+    )]
+    let value = HeaderValue::from_str(&slot.to_string()).expect("a slot is a valid header value");
+    map.insert(headers::SLOT, value);
     map.insert(headers::CONTAINER_ID, uuid_value(&container));
+}
+
+/// Where a store request is served, put in the request's extensions by the router's
+/// credential check from the store record: the record's slot and its owner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Serving {
+    /// `StoreRecord::slot()`.
+    pub slot: Slot,
+    /// The store's owner, whose container limit a container of its own counts toward.
+    pub owner: UserId,
 }
 
 /// Writes a router's token (`bearer` is the whole `Authorization` value) and
@@ -461,12 +472,12 @@ mod tests {
 
     #[test]
     fn link_headers() {
-        let user = UserId::from_uuid(Uuid::now_v7());
+        let user = Slot::User(UserId::from_uuid(Uuid::now_v7()));
         let container = Uuid::now_v7();
         let mut map = HeaderMap::new();
         assert!(!link_protocol_ok(&map));
         assert_eq!(link_bearer(&map), None);
-        map.append(headers::USER_ID, HeaderValue::from_static("client-sent"));
+        map.append(headers::SLOT, HeaderValue::from_static("client-sent"));
         write_link_identity(
             &mut map,
             user,
@@ -476,6 +487,25 @@ mod tests {
         assert!(link_protocol_ok(&map));
         assert_eq!(link_bearer(&map), Some("abc"));
         assert_eq!(link_identity(&map), Some((user, container)));
+        let store = Slot::Store(StoreId::from_uuid(Uuid::now_v7()));
+        let mut other = map.clone();
+        write_link_identity(
+            &mut other,
+            store,
+            container,
+            HeaderValue::from_static("Bearer abc"),
+        );
+        assert_eq!(link_identity(&other), Some((store, container)));
+        // A bare UUID, as protocol 1 sent in `Knoggin-User-Id`, is no slot.
+        let mut bare = map.clone();
+        bare.insert(
+            headers::SLOT,
+            HeaderValue::from_str(&Uuid::now_v7().to_string()).unwrap(),
+        );
+        assert_eq!(link_identity(&bare), None);
+        let mut twice_slot = map.clone();
+        twice_slot.append(headers::SLOT, HeaderValue::from_static("x"));
+        assert_eq!(link_identity(&twice_slot), None);
         let mut twice = map.clone();
         twice.append(headers::CONTAINER_ID, HeaderValue::from_static("x"));
         assert_eq!(link_identity(&twice), None);
@@ -489,8 +519,10 @@ mod tests {
             m.insert(http::header::AUTHORIZATION, HeaderValue::from_static(bad));
             assert_eq!(link_bearer(&m), None, "{bad}");
         }
-        map.insert(headers::PROTOCOL, HeaderValue::from_static("2"));
-        assert!(!link_protocol_ok(&map));
+        for other in ["1", "3"] {
+            map.insert(headers::PROTOCOL, HeaderValue::from_static(other));
+            assert!(!link_protocol_ok(&map), "{other}");
+        }
     }
 
     #[test]

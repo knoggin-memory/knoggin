@@ -58,7 +58,7 @@ async fn hello_claim_and_the_router_token() {
     let (first, cert) = c.hello(&nonce).await;
     let first = first.unwrap();
     assert!(first.test_mode);
-    assert_eq!(first.protocols, [1]);
+    assert_eq!(first.protocols, [2]);
     assert!(c.hello(&nonce).await.0.is_none(), "a replayed nonce");
     let other = Nonce::random().unwrap();
     assert!(!c.launch.check_proof(&other, &cert, &first.proof));
@@ -98,20 +98,23 @@ async fn hello_claim_and_the_router_token() {
     assert_eq!(c.status().await.state, ContainerPhase::Ready);
 
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    assert_eq!(c.claim(a.user, g, settings(600, GIB)).await, StatusCode::OK);
+    rig.lease(a.slot(), &c, g).await;
+    assert_eq!(
+        c.claim(a.slot(), g, settings(600, GIB)).await,
+        StatusCode::OK
+    );
     // A second claim, for another user or the same one, is refused.
     assert_eq!(
-        c.claim(b.user, g, settings(600, GIB)).await,
+        c.claim(b.slot(), g, settings(600, GIB)).await,
         StatusCode::CONFLICT
     );
     assert_eq!(
-        c.claim(a.user, g, settings(600, GIB)).await,
+        c.claim(a.slot(), g, settings(600, GIB)).await,
         StatusCode::CONFLICT
     );
     let status = c.status().await;
     assert_eq!(status.state, ContainerPhase::Claimed);
-    assert_eq!(status.user_id, Some(a.user));
+    assert_eq!(status.slot, Some(a.slot()));
     assert_eq!(status.generation, Some(g));
 
     // A request for another user is refused; the claimed user is served.
@@ -180,9 +183,9 @@ async fn a_store_is_saved_on_park_and_opened_by_the_next_container() {
     let app = rig.app(a.user, "notes").await;
     let mut c1 = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c1, g).await;
+    rig.lease(a.slot(), &c1, g).await;
     assert_eq!(
-        c1.claim(a.user, g, settings(600, GIB)).await,
+        c1.claim(a.slot(), g, settings(600, GIB)).await,
         StatusCode::OK
     );
     assert_eq!(c1.save(a, "first").await, StatusCode::CREATED);
@@ -228,9 +231,9 @@ async fn a_store_is_saved_on_park_and_opened_by_the_next_container() {
     rig.clock.advance(5_000);
     let c2 = rig.container(quick()).await;
     let g2 = rig.generation();
-    rig.lease(a.user, &c2, g2).await;
+    rig.lease(a.slot(), &c2, g2).await;
     assert_eq!(
-        c2.claim(a.user, g2, settings(600, GIB)).await,
+        c2.claim(a.slot(), g2, settings(600, GIB)).await,
         StatusCode::OK
     );
     let (status, _, body) = c2
@@ -254,8 +257,8 @@ async fn links_point_straight_at_the_bucket_without_one_host() {
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(c.save(a, "direct").await, StatusCode::CREATED);
     c.stop();
     let end = c.end(SECONDS).await;
@@ -276,8 +279,8 @@ async fn an_unreadable_newest_upload_falls_back_and_a_missing_newest_locks() {
     let a = rig.account().await;
     let mut c1 = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c1, g).await;
-    c1.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c1, g).await;
+    c1.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(c1.save(a, "kept").await, StatusCode::CREATED);
     c1.park(ParkReason::Drain).await;
     assert_eq!(c1.end(SECONDS).await.reason, EndReason::Parked);
@@ -291,8 +294,8 @@ async fn an_unreadable_newest_upload_falls_back_and_a_missing_newest_locks() {
     rig.clock.advance(5_000);
     let c2 = rig.container(quick()).await;
     let g2 = rig.generation();
-    rig.lease(a.user, &c2, g2).await;
-    c2.claim(a.user, g2, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c2, g2).await;
+    c2.claim(a.slot(), g2, settings(600, GIB)).await;
     let (status, _, body) = c2
         .forward(a.user, a.store, Method::GET, "/v1/memories", Body::empty())
         .await;
@@ -303,8 +306,8 @@ async fn an_unreadable_newest_upload_falls_back_and_a_missing_newest_locks() {
     // empty is served.
     let b = rig.account().await;
     let mut c3 = rig.container(quick()).await;
-    rig.lease(b.user, &c3, g2).await;
-    c3.claim(b.user, g2, settings(600, GIB)).await;
+    rig.lease(b.slot(), &c3, g2).await;
+    c3.claim(b.slot(), g2, settings(600, GIB)).await;
     assert_eq!(c3.save(b, "lost").await, StatusCode::CREATED);
     c3.stop();
     assert_eq!(c3.end(SECONDS).await.reason, EndReason::Parked);
@@ -319,8 +322,8 @@ async fn an_unreadable_newest_upload_falls_back_and_a_missing_newest_locks() {
     rig.clock.advance(5_000);
     let c4 = rig.container(quick()).await;
     let g4 = rig.generation();
-    rig.lease(b.user, &c4, g4).await;
-    c4.claim(b.user, g4, settings(600, GIB)).await;
+    rig.lease(b.slot(), &c4, g4).await;
+    c4.claim(b.slot(), g4, settings(600, GIB)).await;
     let (status, _, body) = c4
         .forward(b.user, b.store, Method::GET, "/v1/memories", Body::empty())
         .await;
@@ -335,8 +338,8 @@ async fn a_taken_name_moves_to_the_next_sequence() {
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(c.save(a, "one").await, StatusCode::CREATED);
     // Someone took (g, 1) after the open.
     let taken = names::snapshot_key(a.store, SnapshotName::new(g, 1).unwrap());
@@ -379,15 +382,15 @@ async fn over_the_upload_budget_writes_wait_and_upload_again_later() {
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(c.save(a, "before").await, StatusCode::CREATED);
     // The user's containers used the hour's budget.
     let body = serde_json::json!({"sequence": 99, "sizeBytes": 1 << 20}).to_string();
     let (status, _, _) = rig
         .broker_call(
             c.id,
-            a.user,
+            a.slot(),
             Method::POST,
             &knoggin_server::broker::api::paths::snapshots(a.store),
             body,
@@ -430,14 +433,14 @@ async fn a_lost_lease_stops_everything_before_any_further_broker_call() {
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(c.save(a, "unsaved").await, StatusCode::CREATED);
     // The lease moves on to another container.
-    let mut lease = rig.lease_of(a.user).await;
+    let mut lease = rig.lease_of(a.slot()).await;
     lease.container_id = Some(uuid::Uuid::now_v7());
     rig.leases
-        .put(a.user, &lease, knoggin_state::Cond::Any)
+        .put(a.slot(), &lease, knoggin_state::Cond::Any)
         .await
         .unwrap();
     let before = rig.broker_calls.lock().unwrap().len();
@@ -461,13 +464,13 @@ async fn a_lease_lost_answer_to_parked_ends_the_container_as_lease_lost() {
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     // Nothing to save; the lease moves on before the container reports.
-    let mut lease = rig.lease_of(a.user).await;
+    let mut lease = rig.lease_of(a.slot()).await;
     lease.container_id = Some(uuid::Uuid::now_v7());
     rig.leases
-        .put(a.user, &lease, knoggin_state::Cond::Any)
+        .put(a.slot(), &lease, knoggin_state::Cond::Any)
         .await
         .unwrap();
     c.park(ParkReason::Drain).await;
@@ -493,8 +496,8 @@ async fn a_deleted_store_is_dropped_and_the_container_still_parks() {
     };
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(c.save(a, "personal").await, StatusCode::CREATED);
     assert_eq!(c.save(in_app, "app").await, StatusCode::CREATED);
     let now = rig.clock.now();
@@ -514,8 +517,8 @@ async fn a_deleted_store_is_dropped_and_the_container_still_parks() {
     rig.clock.advance(5_000);
     let c2 = rig.container(quick()).await;
     let g2 = rig.generation();
-    rig.lease(a.user, &c2, g2).await;
-    c2.claim(a.user, g2, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c2, g2).await;
+    c2.claim(a.slot(), g2, settings(600, GIB)).await;
     let (status, _, body) = c2
         .forward(a.user, app, Method::GET, "/v1/memories", Body::empty())
         .await;
@@ -543,8 +546,8 @@ async fn erasing_a_store_that_a_container_still_holds_leaves_nothing() {
     };
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(
         c.save(in_app, "unsaved in the app").await,
         StatusCode::CREATED
@@ -613,8 +616,8 @@ async fn a_park_refuses_new_requests_ends_streams_and_cuts_what_outlives_the_wai
         })
         .await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(c.save(a, "open").await, StatusCode::CREATED);
 
     // An open event stream, and an import whose body stalls.
@@ -683,8 +686,8 @@ async fn a_write_during_a_park_is_saved_or_refused() {
     let a = rig.account().await;
     let c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(c.save(a, "before").await, StatusCode::CREATED);
     let c = std::sync::Arc::new(tokio::sync::Mutex::new(c));
     let writers: Vec<_> = (0..8)
@@ -746,8 +749,8 @@ async fn an_idle_container_parks_but_not_while_the_bucket_is_down() {
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(1, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(1, GIB)).await;
     // The store opens; then the bucket fails.
     assert_eq!(
         c.save(a, "kept through an outage").await,
@@ -770,8 +773,8 @@ async fn an_idle_container_parks_but_not_while_the_bucket_is_down() {
     // An idle container with nothing unsaved parks by itself.
     let b = rig.account().await;
     let mut idle = rig.container(quick()).await;
-    rig.lease(b.user, &idle, g).await;
-    idle.claim(b.user, g, settings(1, GIB)).await;
+    rig.lease(b.slot(), &idle, g).await;
+    idle.claim(b.slot(), g, settings(1, GIB)).await;
     assert_eq!(idle.end(SECONDS).await.reason, EndReason::Parked);
 }
 
@@ -784,8 +787,8 @@ async fn a_bucket_status_through_the_blob_route_is_only_an_outage() {
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(c.save(a, "acknowledged").await, StatusCode::CREATED);
     for code in [404, 410, 409] {
         rig.storage.set_fault(Fault::Answer(code)).await.unwrap();
@@ -815,8 +818,8 @@ async fn a_bucket_status_through_the_blob_route_is_only_an_outage() {
     rig.clock.advance(5_000);
     let c2 = rig.container(quick()).await;
     let g2 = rig.generation();
-    rig.lease(a.user, &c2, g2).await;
-    c2.claim(a.user, g2, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c2, g2).await;
+    c2.claim(a.slot(), g2, settings(600, GIB)).await;
     rig.storage.set_fault(Fault::Answer(404)).await.unwrap();
     let (status, _, body) = c2
         .forward(a.user, a.store, Method::GET, "/v1/memories", Body::empty())
@@ -830,7 +833,7 @@ async fn a_bucket_status_through_the_blob_route_is_only_an_outage() {
         status == StatusCode::OK && memories_of(&body) == ["acknowledged"]
     };
     assert!(eventually(SECONDS, loaded).await);
-    assert_eq!(rig.lease_of(a.user).await.container_id, Some(c2.id));
+    assert_eq!(rig.lease_of(a.slot()).await.container_id, Some(c2.id));
 }
 
 #[tokio::test]
@@ -845,8 +848,8 @@ async fn a_stop_signal_parks_a_claimed_container_and_ends_a_pool_one_at_once() {
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     // The bucket is down when the stop comes: the saves are tried until they work.
     assert_eq!(c.save(a, "saved late").await, StatusCode::CREATED);
     rig.storage.set_fault(Fault::Fail).await.unwrap();
@@ -865,9 +868,9 @@ async fn the_memory_budget_refuses_writes_and_locks_a_store_that_cannot_fit() {
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
+    rig.lease(a.slot(), &c, g).await;
     // A budget of 40,000 bytes.
-    c.claim(a.user, g, settings(600, MODEL + 100_000)).await;
+    c.claim(a.slot(), g, settings(600, MODEL + 100_000)).await;
     let mut refused = false;
     for i in 0..400 {
         let summary = format!("memory number {i} with some words to take room in the store");
@@ -900,8 +903,10 @@ async fn the_memory_budget_refuses_writes_and_locks_a_store_that_cannot_fit() {
     rig.clock.advance(5_000);
     let small = rig.container(quick()).await;
     let g2 = rig.generation();
-    rig.lease(a.user, &small, g2).await;
-    small.claim(a.user, g2, settings(600, MODEL + 5_000)).await;
+    rig.lease(a.slot(), &small, g2).await;
+    small
+        .claim(a.slot(), g2, settings(600, MODEL + 5_000))
+        .await;
     let (status, _, body) = small
         .forward(a.user, a.store, Method::GET, "/v1/memories", Body::empty())
         .await;
@@ -919,8 +924,8 @@ async fn request_bodies_in_flight_are_capped_at_64_mib() {
     let a = rig.account().await;
     let c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     let stalled =
         || Body::from_stream(futures_util::stream::pending::<Result<Bytes, std::io::Error>>());
     let batch = |len: u64| {
@@ -967,8 +972,8 @@ async fn an_import_larger_than_the_cap_is_streamed() {
     let a = rig.account().await;
     let c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     let header = serde_json::json!({
         "type": "header", "format": "knoggin-export", "version": 1,
     });
@@ -1002,8 +1007,8 @@ async fn a_failed_commit_is_tried_again_without_a_new_upload() {
     let a = rig.account().await;
     let mut c = rig.container(quick()).await;
     let g = rig.generation();
-    rig.lease(a.user, &c, g).await;
-    c.claim(a.user, g, settings(600, GIB)).await;
+    rig.lease(a.slot(), &c, g).await;
+    c.claim(a.slot(), g, settings(600, GIB)).await;
     assert_eq!(c.save(a, "committed late").await, StatusCode::CREATED);
     rig.fail_commits
         .store(1, std::sync::atomic::Ordering::SeqCst);
@@ -1033,4 +1038,61 @@ async fn a_failed_commit_is_tried_again_without_a_new_upload() {
         record.newest.map(|n| (n.generation, n.sequence)),
         Some((g, 2))
     );
+}
+
+/// An isolated app's own container serves requests for that app only, whoever sends them;
+/// a user's own container serves that user only.
+#[tokio::test]
+async fn a_forwarded_request_for_another_slot_is_refused() {
+    use knoggin_state::record::Slot;
+    let rig = Rig::start(Options::default()).await;
+    let (a, b) = (rig.account().await, rig.account().await);
+    let x = rig.app(a.user, "isolated").await;
+    rig.set_slot_flags(x, true, false).await;
+    let g = rig.generation();
+    let c = rig.container(quick()).await;
+    rig.lease(Slot::Store(x), &c, g).await;
+    assert_eq!(
+        c.claim(Slot::Store(x), g, settings(600, GIB)).await,
+        StatusCode::OK
+    );
+    assert_eq!(c.status().await.slot, Some(Slot::Store(x)));
+    // The owner's personal store and another person's store: refused.
+    for (user, store) in [(a.user, a.store), (b.user, b.store)] {
+        let (status, _, body) = c
+            .forward(user, store, Method::GET, "/v1/memories", Body::empty())
+            .await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["error"]["code"], "internal");
+    }
+    // The app itself: served, for its owner and for anyone the router sends.
+    let save = |user| {
+        let body = serde_json::json!({ "summary": "in x" }).to_string();
+        c.forward(user, x, Method::POST, "/v1/memories", body)
+    };
+    assert_eq!(save(a.user).await.0, StatusCode::CREATED);
+    assert_eq!(save(b.user).await.0, StatusCode::CREATED);
+    assert!(
+        rig.broker_calls
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|p| !p.contains(&a.store.to_string()) && !p.contains(&b.store.to_string())),
+        "no other store was asked of the broker"
+    );
+
+    // A user's own container: a request in another user's name is refused, whatever
+    // the store.
+    let u = rig.container(quick()).await;
+    rig.lease(a.slot(), &u, g).await;
+    assert_eq!(
+        u.claim(a.slot(), g, settings(600, GIB)).await,
+        StatusCode::OK
+    );
+    let (status, _, _) = u
+        .forward(b.user, a.store, Method::GET, "/v1/memories", Body::empty())
+        .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(u.save(a, "mine").await, StatusCode::CREATED);
 }

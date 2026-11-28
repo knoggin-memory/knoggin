@@ -249,6 +249,7 @@ fn containers(config: &Config) -> anyhow::Result<ContainerSettings> {
         idle_seconds: c.idle_seconds,
         max_lifetime_hours: c.max_lifetime_hours,
         claim_wait_ms: c.claim_wait_ms,
+        max_per_user: c.max_per_user,
     })
 }
 

@@ -19,27 +19,27 @@ use bytes::Bytes;
 use http::{Method, StatusCode};
 use http_body_util::BodyExt;
 use knoggin_core::snapshot::SnapshotName;
-use knoggin_core::{StoreId, Timestamp, UserId};
+use knoggin_core::{StoreId, Timestamp};
 use knoggin_crypto::WrappedKey;
 use knoggin_server::broker::api::{OpenAnswer, UploadLink, paths};
 use knoggin_server::link::write_container_call;
 use knoggin_server::storage::names;
-use knoggin_state::record::{Lease, LeaseState, ParkReason};
+use knoggin_state::record::{Lease, LeaseState, ParkReason, Slot};
 use knoggin_state::{Cond, StateError};
 use support::{Account, Options, Rig};
 use uuid::Uuid;
 
-/// A container identity with a warm lease of `user` at 127.0.0.1, the test's own address.
-async fn holder(rig: &Rig, user: UserId, generation: u64) -> Uuid {
+/// A container identity with a warm lease of `slot` at 127.0.0.1, the test's own address.
+async fn warm_lease(rig: &Rig, slot: Slot, generation: u64) -> Uuid {
     let id = Uuid::now_v7();
-    let old = rig.leases.get(user).await.unwrap();
+    let old = rig.leases.get(slot).await.unwrap();
     let mut lease = old.as_ref().map(|l| l.value.clone()).unwrap_or_default();
     lease.generation = generation;
     lease.container_id = Some(id);
     lease.address = Some("127.0.0.1:8443".into());
     lease.set_state(LeaseState::Warm, rig.clock.now());
     let cond = old.map_or(Cond::Absent, |l| l.cond());
-    rig.leases.put(user, &lease, cond).await.unwrap();
+    rig.leases.put(slot, &lease, cond).await.unwrap();
     id
 }
 
@@ -65,7 +65,7 @@ async fn open(rig: &Rig, id: Uuid, a: Account, body: &str) -> (StatusCode, Bytes
     let (status, _, bytes) = rig
         .broker_call(
             id,
-            a.user,
+            a.slot(),
             Method::POST,
             &paths::open(a.store),
             body.to_owned(),
@@ -79,12 +79,12 @@ async fn every_call_proves_its_container_and_its_lease() {
     let rig = Rig::start(Options::default()).await;
     let (a, b) = (rig.account().await, rig.account().await);
     let g = rig.generation();
-    let id_a = holder(&rig, a.user, g).await;
-    let id_b = holder(&rig, b.user, g).await;
+    let id_a = warm_lease(&rig, a.slot(), g).await;
+    let id_b = warm_lease(&rig, b.slot(), g).await;
     let (status, _) = open(&rig, id_a, a, "").await;
     assert_eq!(status, StatusCode::OK);
 
-    let send = |launch_of: Uuid, user: UserId, named: Uuid, path: String| {
+    let send = |launch_of: Uuid, slot: Slot, named: Uuid, path: String| {
         let rig = &rig;
         async move {
             let mut req = http::Request::post(format!("{}{path}", rig.router_url))
@@ -93,7 +93,7 @@ async fn every_call_proves_its_container_and_its_lease() {
             write_container_call(
                 req.headers_mut(),
                 &rig.secret.launch_secret(launch_of),
-                user,
+                slot,
                 named,
             );
             let answer = rig.broker_client().request(req).await.unwrap();
@@ -103,12 +103,12 @@ async fn every_call_proves_its_container_and_its_lease() {
         }
     };
     // A wrong token: B's launch secret naming A's container.
-    let (status, body) = send(id_b, a.user, id_a, paths::open(a.store)).await;
+    let (status, body) = send(id_b, a.slot(), id_a, paths::open(a.store)).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(code(&body).0, "lease_lost");
     // No container uses another's identity: A's user with B's whole valid identity; A's lease names
     // another container.
-    let (status, body) = send(id_b, a.user, id_b, paths::open(a.store)).await;
+    let (status, body) = send(id_b, a.slot(), id_b, paths::open(a.store)).await;
     assert_eq!(
         (status, code(&body).0.as_str()),
         (StatusCode::CONFLICT, "lease_lost")
@@ -123,7 +123,7 @@ async fn every_call_proves_its_container_and_its_lease() {
         let (status, _, body) = rig
             .broker_call(
                 id_b,
-                b.user,
+                b.slot(),
                 Method::POST,
                 &path,
                 r#"{"sequence":1,"sizeBytes":1}"#,
@@ -139,7 +139,7 @@ async fn every_call_proves_its_container_and_its_lease() {
     write_container_call(
         bare.headers_mut(),
         &rig.secret.launch_secret(id_a),
-        a.user,
+        a.slot(),
         id_a,
     );
     bare.headers_mut().remove("knoggin-protocol");
@@ -149,7 +149,7 @@ async fn every_call_proves_its_container_and_its_lease() {
     let bad = |path: String, body: &'static str| {
         let rig = &rig;
         async move {
-            rig.broker_call(id_a, a.user, Method::POST, &path, body)
+            rig.broker_call(id_a, a.slot(), Method::POST, &path, body)
                 .await
                 .0
         }
@@ -186,14 +186,14 @@ async fn every_call_proves_its_container_and_its_lease() {
     );
     // A public route on the internal listener.
     let (status, _, _) = rig
-        .broker_call(id_a, a.user, Method::GET, "/v1/memories", Body::empty())
+        .broker_call(id_a, a.slot(), Method::GET, "/v1/memories", Body::empty())
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     // The blob route is off without one host... and on here.
     assert_ne!(
         rig.broker_call(
             id_a,
-            a.user,
+            a.slot(),
             Method::GET,
             "/internal/v1/blob/x",
             Body::empty()
@@ -204,24 +204,24 @@ async fn every_call_proves_its_container_and_its_lease() {
     );
 
     // Once the lease names another container, the old one gets lease_lost.
-    let _new = holder(&rig, a.user, g + 1).await;
+    let _new = warm_lease(&rig, a.slot(), g + 1).await;
     let (status, body) = open(&rig, id_a, a, "").await;
     assert_eq!(
         (status, code(&body).0.as_str()),
         (StatusCode::CONFLICT, "lease_lost")
     );
     // And a parked lease names no one.
-    let mut lease: Lease = rig.lease_of(b.user).await;
+    let mut lease: Lease = rig.lease_of(b.slot()).await;
     lease.set_state(LeaseState::Parked, rig.clock.now());
-    rig.leases.put(b.user, &lease, Cond::Any).await.unwrap();
+    rig.leases.put(b.slot(), &lease, Cond::Any).await.unwrap();
     let b_open = rig
-        .broker_call(id_b, b.user, Method::POST, &paths::open(b.store), "")
+        .broker_call(id_b, b.slot(), Method::POST, &paths::open(b.store), "")
         .await;
     assert_eq!(b_open.0, StatusCode::CONFLICT);
 
     // A valid identity from another address than the lease's.
     if cfg!(target_os = "linux") {
-        let id_c = holder(&rig, b.user, g).await;
+        let id_c = warm_lease(&rig, b.slot(), g).await;
         let client = knoggin_server::link::router_client::<Body>(
             rig.router_pin,
             Some(std::net::IpAddr::from([127, 0, 0, 2])),
@@ -233,7 +233,7 @@ async fn every_call_proves_its_container_and_its_lease() {
         write_container_call(
             req.headers_mut(),
             &rig.secret.launch_secret(id_c),
-            b.user,
+            b.slot(),
             id_c,
         );
         let answer = client.request(req).await.unwrap();
@@ -248,7 +248,7 @@ async fn open_picks_the_snapshot_the_rules_name() {
     let rig = Rig::start(Options::default()).await;
     let a = rig.account().await;
     let g = rig.generation();
-    let id = holder(&rig, a.user, g).await;
+    let id = warm_lease(&rig, a.slot(), g).await;
     // A new store.
     let (status, body) = open(&rig, id, a, "").await;
     assert_eq!(status, StatusCode::OK);
@@ -341,27 +341,37 @@ async fn open_picks_the_snapshot_the_rules_name() {
     assert_eq!(code(&body).1.as_deref(), Some("snapshot_unreadable"));
 
     // A name above the lease's generation locks the store; once real time has passed it,
-    // the lease is asked to park for `lifetime`.
+    // the lease is asked to park for `lifetime` and the open waits for the next claim.
     let b = rig.account().await;
-    let id_b = holder(&rig, b.user, g).await;
+    let id_b = warm_lease(&rig, b.slot(), g).await;
     put(&rig, b.store, g + 5, 1, b"ahead");
     let (status, body) = open(&rig, id_b, b, "").await;
     assert_eq!(
         (status, code(&body).1.as_deref()),
         (StatusCode::LOCKED, Some("snapshot_unreadable"))
     );
-    assert_eq!(rig.lease_of(b.user).await.park_requested(), None);
+    assert_eq!(rig.lease_of(b.slot()).await.park_requested(), None);
     rig.clock.advance(6_000);
-    let (status, _) = open(&rig, id_b, b, "").await;
-    assert_eq!(status, StatusCode::LOCKED);
+    let (status, body) = open(&rig, id_b, b, "").await;
     assert_eq!(
-        rig.lease_of(b.user).await.park_requested(),
+        (status, code(&body).0.as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+    );
+    assert_eq!(
+        rig.lease_of(b.slot()).await.park_requested(),
         Some(ParkReason::Lifetime)
+    );
+    assert!(
+        rig.asked
+            .lock()
+            .unwrap()
+            .contains(&(b.slot(), ParkReason::Lifetime)),
+        "the container is asked at once"
     );
 
     // A data key the master key set cannot unwrap.
     let c = rig.account().await;
-    let id_c = holder(&rig, c.user, g).await;
+    let id_c = warm_lease(&rig, c.slot(), g).await;
     rig.stores
         .update(c.user, c.store, |r| {
             r.set_wrapped(&WrappedKey {
@@ -388,7 +398,7 @@ async fn upload_link(
 ) -> (StatusCode, Bytes) {
     let body = format!(r#"{{"sequence":{sequence},"sizeBytes":{len}}}"#);
     let (status, _, bytes) = rig
-        .broker_call(id, a.user, Method::POST, &paths::snapshots(a.store), body)
+        .broker_call(id, a.slot(), Method::POST, &paths::snapshots(a.store), body)
         .await;
     (status, bytes)
 }
@@ -397,7 +407,7 @@ async fn upload_link(
 async fn send_link(
     rig: &Rig,
     id: Uuid,
-    user: UserId,
+    slot: Slot,
     method: Method,
     url: &str,
     headers: &std::collections::BTreeMap<String, String>,
@@ -414,7 +424,7 @@ async fn send_link(
             v.parse().unwrap(),
         );
     }
-    write_container_call(req.headers_mut(), &rig.secret.launch_secret(id), user, id);
+    write_container_call(req.headers_mut(), &rig.secret.launch_secret(id), slot, id);
     let answer = rig.broker_client().request(req).await.unwrap();
     let status = answer.status();
     (
@@ -433,7 +443,13 @@ async fn uploads_are_create_only_commits_only_raise_newest_and_the_budget_holds(
     .await;
     let a = rig.account().await;
     let g = rig.generation();
-    let id = holder(&rig, a.user, g).await;
+    let id = warm_lease(&rig, a.slot(), g).await;
+    // Only the container that opened a store may save it.
+    assert_eq!(
+        upload_link(&rig, id, a, 2, 5).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(open(&rig, id, a, "").await.0, StatusCode::OK);
     let (status, body) = upload_link(&rig, id, a, 2, 5).await;
     assert_eq!(status, StatusCode::OK);
     let link: UploadLink = serde_json::from_slice(&body).unwrap();
@@ -445,7 +461,7 @@ async fn uploads_are_create_only_commits_only_raise_newest_and_the_budget_holds(
     let (status, _) = send_link(
         &rig,
         id,
-        a.user,
+        a.slot(),
         Method::PUT,
         &link.url,
         &link.headers,
@@ -459,7 +475,7 @@ async fn uploads_are_create_only_commits_only_raise_newest_and_the_budget_holds(
     let (status, _) = send_link(
         &rig,
         id,
-        a.user,
+        a.slot(),
         Method::PUT,
         &link.url,
         &link.headers,
@@ -483,7 +499,7 @@ async fn uploads_are_create_only_commits_only_raise_newest_and_the_budget_holds(
         async move {
             rig.broker_call(
                 id,
-                a.user,
+                a.slot(),
                 Method::POST,
                 &paths::commit(a.store, sequence),
                 body,
@@ -570,8 +586,8 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
     .await;
     let (a, b) = (rig.account().await, rig.account().await);
     let g = rig.generation();
-    let id_a = holder(&rig, a.user, g).await;
-    let id_b = holder(&rig, b.user, g).await;
+    let id_a = warm_lease(&rig, a.slot(), g).await;
+    let id_b = warm_lease(&rig, b.slot(), g).await;
     let key = put(&rig, a.store, g, 1, b"snapshot bytes");
     let (_, body) = open(&rig, id_a, a, "").await;
     let link = serde_json::from_slice::<OpenAnswer>(&body)
@@ -580,7 +596,8 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
         .unwrap();
     let mut extra = link.headers.clone();
     extra.insert("x-extra".into(), "1".into());
-    let (status, bytes) = send_link(&rig, id_a, a.user, Method::GET, &link.url, &extra, b"").await;
+    let (status, bytes) =
+        send_link(&rig, id_a, a.slot(), Method::GET, &link.url, &extra, b"").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(bytes, Bytes::from_static(b"snapshot bytes"));
     let seen = rig.storage.seen();
@@ -597,7 +614,7 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
     let (status, _) = send_link(
         &rig,
         id_b,
-        b.user,
+        b.slot(),
         Method::GET,
         &link.url,
         &link.headers,
@@ -636,7 +653,7 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
         ),
     ] {
         let (status, _) =
-            send_link(&rig, id_a, a.user, Method::GET, &bad, &link.headers, b"").await;
+            send_link(&rig, id_a, a.slot(), Method::GET, &bad, &link.headers, b"").await;
         assert!(
             status == StatusCode::BAD_REQUEST || status == StatusCode::NOT_FOUND,
             "{why}: {status}"
@@ -653,8 +670,16 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
     let up: UploadLink = serde_json::from_slice(&body).unwrap();
     let mut longer = up.headers.clone();
     longer.insert("content-length".into(), "6".into());
-    let (status, body) =
-        send_link(&rig, id_a, a.user, Method::PUT, &up.url, &longer, b"sixsix").await;
+    let (status, body) = send_link(
+        &rig,
+        id_a,
+        a.slot(),
+        Method::PUT,
+        &up.url,
+        &longer,
+        b"sixsix",
+    )
+    .await;
     assert_eq!(
         rig.storage.seen().last().unwrap().status,
         403,
@@ -674,7 +699,7 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
     write_container_call(
         chunked.headers_mut(),
         &rig.secret.launch_secret(id_a),
-        a.user,
+        a.slot(),
         id_a,
     );
     let answer = rig.broker_client().request(chunked).await.unwrap();
@@ -694,7 +719,7 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
     write_container_call(
         req.headers_mut(),
         &rig.secret.launch_secret(id_a),
-        a.user,
+        a.slot(),
         id_a,
     );
     let answer = rig.broker_client().request(req).await.unwrap();
@@ -711,17 +736,35 @@ async fn the_blob_route_forwards_only_the_callers_own_objects_and_signed_headers
         .unwrap()
         .snapshot
         .unwrap();
-    let (status, _) = send_link(&rig, id_a, a.user, Method::GET, &big.url, &big.headers, b"").await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _) = send_link(&rig, id_a, a.user, Method::GET, &big.url, &big.headers, b"").await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
-
-    // A replaced container with a link that is still valid.
-    let _next = holder(&rig, a.user, g + 1).await;
     let (status, _) = send_link(
         &rig,
         id_a,
-        a.user,
+        a.slot(),
+        Method::GET,
+        &big.url,
+        &big.headers,
+        b"",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = send_link(
+        &rig,
+        id_a,
+        a.slot(),
+        Method::GET,
+        &big.url,
+        &big.headers,
+        b"",
+    )
+    .await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+
+    // A replaced container with a link that is still valid.
+    let _next = warm_lease(&rig, a.slot(), g + 1).await;
+    let (status, _) = send_link(
+        &rig,
+        id_a,
+        a.slot(),
         Method::GET,
         &link.url,
         &link.headers,
@@ -739,8 +782,8 @@ async fn the_blob_route_refuses_another_users_objects_before_the_bucket() {
     let rig = Rig::start(Options::default()).await;
     let (a, b) = (rig.account().await, rig.account().await);
     let g = rig.generation();
-    let id_a = holder(&rig, a.user, g).await;
-    let id_b = holder(&rig, b.user, g).await;
+    let id_a = warm_lease(&rig, a.slot(), g).await;
+    let id_b = warm_lease(&rig, b.slot(), g).await;
     let key = put(&rig, a.store, g, 1, b"a's snapshot");
     let (_, body) = open(&rig, id_a, a, "").await;
     let get = serde_json::from_slice::<OpenAnswer>(&body)
@@ -756,7 +799,7 @@ async fn the_blob_route_refuses_another_users_objects_before_the_bucket() {
         (Method::PUT, &up.url, &up.headers, &b"b's"[..]),
     ] {
         let (status, body) =
-            send_link(&rig, id_b, b.user, method.clone(), url, headers, bytes).await;
+            send_link(&rig, id_b, b.slot(), method.clone(), url, headers, bytes).await;
         assert_eq!(
             (status, code(&body)),
             (StatusCode::NOT_FOUND, ("not_found".to_owned(), None)),
@@ -776,7 +819,7 @@ async fn the_blob_route_answers_a_bucket_refusal_as_unavailable() {
     let rig = Rig::start(Options::default()).await;
     let a = rig.account().await;
     let g = rig.generation();
-    let id = holder(&rig, a.user, g).await;
+    let id = warm_lease(&rig, a.slot(), g).await;
     put(&rig, a.store, g, 1, b"x");
     let (_, body) = open(&rig, id, a, "").await;
     let get = serde_json::from_slice::<OpenAnswer>(&body)
@@ -794,7 +837,7 @@ async fn the_blob_route_answers_a_bucket_refusal_as_unavailable() {
             (Method::GET, &get.url, &get.headers, &b""[..]),
             (Method::PUT, &up.url, &up.headers, &b"y"[..]),
         ] {
-            let (status, body) = send_link(&rig, id, a.user, method, url, headers, bytes).await;
+            let (status, body) = send_link(&rig, id, a.slot(), method, url, headers, bytes).await;
             assert_eq!(
                 (status, code(&body).0.as_str()),
                 (StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
@@ -813,7 +856,7 @@ async fn the_blob_route_answers_a_bucket_refusal_as_unavailable() {
     let (status, _) = send_link(
         &rig,
         id,
-        a.user,
+        a.slot(),
         Method::PUT,
         &taken.url,
         &taken.headers,
@@ -831,7 +874,7 @@ async fn without_one_host_there_is_no_blob_route() {
     })
     .await;
     let a = rig.account().await;
-    let id = holder(&rig, a.user, rig.generation()).await;
+    let id = warm_lease(&rig, a.slot(), rig.generation()).await;
     let key = put(&rig, a.store, rig.generation(), 1, b"x");
     let (_, body) = open(&rig, id, a, "").await;
     let link = serde_json::from_slice::<OpenAnswer>(&body)
@@ -842,7 +885,7 @@ async fn without_one_host_there_is_no_blob_route() {
     let (status, _, _) = rig
         .broker_call(
             id,
-            a.user,
+            a.slot(),
             Method::GET,
             &format!("{}{key}", paths::BLOB_PREFIX),
             Body::empty(),
@@ -857,17 +900,17 @@ async fn without_one_host_there_is_no_blob_route() {
 async fn calls_from_another_address_take_nothing_of_the_containers_limits() {
     let rig = Rig::start(Options::default()).await;
     let a = rig.account().await;
-    let id = holder(&rig, a.user, rig.generation()).await;
+    let id = warm_lease(&rig, a.slot(), rig.generation()).await;
     // The container lives at another address; the test, at 127.0.0.1, holds its secret.
-    let mut lease = rig.lease_of(a.user).await;
+    let mut lease = rig.lease_of(a.slot()).await;
     lease.address = Some("10.9.9.9:8443".into());
-    rig.leases.put(a.user, &lease, Cond::Any).await.unwrap();
+    rig.leases.put(a.slot(), &lease, Cond::Any).await.unwrap();
     for _ in 0..610 {
         assert_eq!(open(&rig, id, a, "").await.0, StatusCode::CONFLICT);
     }
     // The real container's call (its address now matches) is served, not 429.
     lease.address = Some("127.0.0.1:8443".into());
-    rig.leases.put(a.user, &lease, Cond::Any).await.unwrap();
+    rig.leases.put(a.slot(), &lease, Cond::Any).await.unwrap();
     assert_eq!(open(&rig, id, a, "").await.0, StatusCode::OK);
 }
 
@@ -875,13 +918,13 @@ async fn calls_from_another_address_take_nothing_of_the_containers_limits() {
 async fn parked_runs_mark_gone_and_ends_the_lease() {
     let rig = Rig::start(Options::default()).await;
     let a = rig.account().await;
-    let id = holder(&rig, a.user, rig.generation()).await;
+    let id = warm_lease(&rig, a.slot(), rig.generation()).await;
     let (status, _, _) = rig
-        .broker_call(id, a.user, Method::POST, paths::PARKED, Body::empty())
+        .broker_call(id, a.slot(), Method::POST, paths::PARKED, Body::empty())
         .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(*rig.parked.lock().unwrap(), [id]);
-    assert_eq!(rig.lease_of(a.user).await.state, LeaseState::Parked);
+    assert_eq!(rig.lease_of(a.slot()).await.state, LeaseState::Parked);
     // From then on nothing is signed for it.
     assert_eq!(upload_link(&rig, id, a, 1, 1).await.0, StatusCode::CONFLICT);
 }
@@ -890,7 +933,7 @@ async fn parked_runs_mark_gone_and_ends_the_lease() {
 async fn a_peer_with_bad_tokens_is_cut_off() {
     let rig = Rig::start(Options::default()).await;
     let a = rig.account().await;
-    let id = holder(&rig, a.user, rig.generation()).await;
+    let id = warm_lease(&rig, a.slot(), rig.generation()).await;
     let call = |as_id: Uuid| {
         // Each on a new connection, as a flood of handshakes would be.
         let client = knoggin_server::link::router_client::<Body>(rig.router_pin, None).unwrap();
@@ -900,7 +943,7 @@ async fn a_peer_with_bad_tokens_is_cut_off() {
         write_container_call(
             req.headers_mut(),
             &rig.secret.launch_secret(as_id),
-            a.user,
+            a.slot(),
             id,
         );
         async move { client.request(req).await.map(|r| r.status()) }
@@ -921,4 +964,361 @@ async fn a_peer_with_bad_tokens_is_cut_off() {
         (status, code(&body).0.as_str()),
         (StatusCode::TOO_MANY_REQUESTS, "rate_limited")
     );
+}
+
+/// `open` of `store` with `id`'s identity naming `slot`.
+async fn open_as(rig: &Rig, id: Uuid, slot: Slot, store: StoreId) -> (StatusCode, Bytes) {
+    let (status, _, bytes) = rig
+        .broker_call(id, slot, Method::POST, &paths::open(store), "")
+        .await;
+    (status, bytes)
+}
+
+/// A snapshot object put in the bucket, then its `commit` with `id`'s identity.
+async fn commit_as(
+    rig: &Rig,
+    id: Uuid,
+    slot: Slot,
+    store: StoreId,
+    name: (u64, u64),
+) -> (StatusCode, Bytes) {
+    put(rig, store, name.0, name.1, b"saved");
+    let body = r#"{"memoryCount":1,"namespaceCount":1,"sizeBytes":5}"#;
+    let (status, _, bytes) = rig
+        .broker_call(id, slot, Method::POST, &paths::commit(store, name.1), body)
+        .await;
+    (status, bytes)
+}
+
+fn opened(body: &Bytes) -> OpenAnswer {
+    serde_json::from_slice(body).unwrap()
+}
+
+#[tokio::test]
+async fn a_user_container_opens_normal_stores_only() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let normal = rig.app(a.user, "normal").await;
+    let isolated = rig.app(a.user, "isolated").await;
+    let shared = rig.app(a.user, "shared").await;
+    rig.set_slot_flags(isolated, true, false).await;
+    rig.set_slot_flags(shared, false, true).await;
+    let id = warm_lease(&rig, a.slot(), rig.generation()).await;
+    for store in [a.store, normal] {
+        assert_eq!(open_as(&rig, id, a.slot(), store).await.0, StatusCode::OK);
+    }
+    for store in [isolated, shared] {
+        let (status, body) = open_as(&rig, id, a.slot(), store).await;
+        assert_eq!(
+            (status, code(&body)),
+            (StatusCode::NOT_FOUND, ("not_found".to_owned(), None)),
+            "the same answer as an unknown store"
+        );
+    }
+    // Another user's container gets nothing of a's.
+    let b = rig.account().await;
+    let id_b = warm_lease(&rig, b.slot(), rig.generation()).await;
+    for store in [a.store, normal, isolated, shared] {
+        assert_eq!(
+            open_as(&rig, id_b, b.slot(), store).await.0,
+            StatusCode::NOT_FOUND
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_isolated_container_opens_only_its_app() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let normal = rig.app(a.user, "normal").await;
+    let x = rig.app(a.user, "x").await;
+    let y = rig.app(a.user, "y").await;
+    rig.set_slot_flags(x, true, false).await;
+    rig.set_slot_flags(y, true, false).await;
+    let slot = Slot::Store(x);
+    let id = warm_lease(&rig, slot, rig.generation()).await;
+    assert_eq!(open_as(&rig, id, slot, x).await.0, StatusCode::OK);
+    for store in [a.store, normal, y] {
+        let (status, body) = open_as(&rig, id, slot, store).await;
+        assert_eq!(
+            (status, code(&body).0.as_str()),
+            (StatusCode::NOT_FOUND, "not_found"),
+            "{store}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_shared_app_is_opened_only_by_its_own_container() {
+    let rig = Rig::start(Options::default()).await;
+    let (a, b) = (rig.account().await, rig.account().await);
+    let s = rig.app(a.user, "shared").await;
+    rig.set_slot_flags(s, false, true).await;
+    let other = rig.app(b.user, "another shared").await;
+    rig.set_slot_flags(other, false, true).await;
+    let g = rig.generation();
+    let id_a = warm_lease(&rig, a.slot(), g).await;
+    let id_b = warm_lease(&rig, b.slot(), g).await;
+    let id_s = warm_lease(&rig, Slot::Store(s), g).await;
+    let id_other = warm_lease(&rig, Slot::Store(other), g).await;
+    // Neither the owner's container nor a member's, nor another app's own.
+    assert_eq!(
+        open_as(&rig, id_a, a.slot(), s).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        open_as(&rig, id_b, b.slot(), s).await.0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        open_as(&rig, id_other, Slot::Store(other), s).await.0,
+        StatusCode::NOT_FOUND
+    );
+    // And its own container gets no member's personal store.
+    for store in [a.store, b.store] {
+        assert_eq!(
+            open_as(&rig, id_s, Slot::Store(s), store).await.0,
+            StatusCode::NOT_FOUND
+        );
+    }
+    assert_eq!(
+        open_as(&rig, id_s, Slot::Store(s), s).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_container_cannot_name_another_slot() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let x = rig.app(a.user, "x").await;
+    rig.set_slot_flags(x, true, false).await;
+    let g = rig.generation();
+    let id_user = warm_lease(&rig, a.slot(), g).await;
+    let id_x = warm_lease(&rig, Slot::Store(x), g).await;
+    // Each container's own token, naming the other's slot: that lease names another.
+    for (id, named, store) in [
+        (id_x, a.slot(), a.store),
+        (id_user, Slot::Store(x), x),
+        (id_x, Slot::Store(a.store), a.store),
+    ] {
+        let (status, body) = open_as(&rig, id, named, store).await;
+        assert_eq!(
+            (status, code(&body).0.as_str()),
+            (StatusCode::CONFLICT, "lease_lost"),
+            "{named}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn only_the_holder_saves_a_store() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let g = rig.generation();
+    let first = warm_lease(&rig, a.slot(), g).await;
+    put(&rig, a.store, g, 1, b"saved");
+    let (status, body) = open_as(&rig, first, a.slot(), a.store).await;
+    assert_eq!(status, StatusCode::OK);
+    let download = opened(&body).snapshot.unwrap();
+    let (_, body) = upload_link(&rig, first, a, 2, 3).await;
+    let upload: UploadLink = serde_json::from_slice(&body).unwrap();
+    let holder = rig.stores.get(a.store).await.unwrap().unwrap().value.holder;
+    assert_eq!(
+        holder,
+        Some(knoggin_state::record::Holder {
+            slot: a.slot(),
+            generation: g
+        })
+    );
+    // A new container of the same slot, before it opened the store, holds nothing.
+    let next = warm_lease(&rig, a.slot(), g + 1).await;
+    let seen = rig.storage.seen().len();
+    assert_eq!(
+        upload_link(&rig, next, a, 1, 3).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, body) = commit_as(&rig, next, a.slot(), a.store, (g + 1, 1)).await;
+    assert_eq!(
+        (status, code(&body).0.as_str()),
+        (StatusCode::NOT_FOUND, "not_found")
+    );
+    for (method, link, bytes) in [
+        (Method::GET, (&download.url, &download.headers), &b""[..]),
+        (Method::PUT, (&upload.url, &upload.headers), &b"abc"[..]),
+    ] {
+        let (status, _) =
+            send_link(&rig, next, a.slot(), method.clone(), link.0, link.1, bytes).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method}");
+    }
+    assert_eq!(rig.storage.seen().len(), seen, "nothing reached the bucket");
+    let newest = rig.stores.get(a.store).await.unwrap().unwrap().value.newest;
+    assert_eq!(newest, None, "the refused commit changed nothing");
+    // Once it opened the store, it saves.
+    assert_eq!(
+        open_as(&rig, next, a.slot(), a.store).await.0,
+        StatusCode::OK
+    );
+    assert_eq!(upload_link(&rig, next, a, 1, 3).await.0, StatusCode::OK);
+    assert_eq!(
+        commit_as(&rig, next, a.slot(), a.store, (g + 1, 1)).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn a_store_that_changes_slot_waits_for_its_old_container() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let app = rig.app(a.user, "app").await;
+    let g = rig.generation();
+    let old = warm_lease(&rig, a.slot(), g).await;
+    assert_eq!(open_as(&rig, old, a.slot(), app).await.0, StatusCode::OK);
+    assert_eq!(
+        commit_as(&rig, old, a.slot(), app, (g, 1)).await.0,
+        StatusCode::OK
+    );
+    // Isolation is turned on: the record first, then the holder is asked to park.
+    rig.set_slot_flags(app, true, false).await;
+    let own = Slot::Store(app);
+    let new = warm_lease(&rig, own, g).await;
+    let (status, headers, body) = rig
+        .broker_call(new, own, Method::POST, &paths::open(app), "")
+        .await;
+    assert_eq!(
+        (status, code(&body).0.as_str()),
+        (StatusCode::SERVICE_UNAVAILABLE, "unavailable")
+    );
+    assert_eq!(headers.get("retry-after").unwrap(), "2");
+    assert_eq!(*rig.asked.lock().unwrap(), [(a.slot(), ParkReason::Moved)]);
+    assert_eq!(
+        rig.lease_of(a.slot()).await.park_requested(),
+        Some(ParkReason::Moved)
+    );
+    // The old container saves the writes it holds while it parks.
+    assert_eq!(
+        commit_as(&rig, old, a.slot(), app, (g, 2)).await.0,
+        StatusCode::OK
+    );
+    let (status, _, _) = rig
+        .broker_call(old, a.slot(), Method::POST, paths::PARKED, Body::empty())
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    // Now the new container opens it, at the snapshot just committed.
+    let (status, body) = open_as(&rig, new, own, app).await;
+    assert_eq!(status, StatusCode::OK);
+    let link = opened(&body).snapshot.unwrap();
+    assert_eq!((link.generation, link.sequence), (g, 2));
+    // The user's next container no longer reaches the app: not to open it, not to save
+    // it. That drops this one store and nothing else.
+    let again = warm_lease(&rig, a.slot(), g + 1).await;
+    assert_eq!(
+        open_as(&rig, again, a.slot(), app).await.0,
+        StatusCode::NOT_FOUND
+    );
+    let (status, body) = commit_as(&rig, again, a.slot(), app, (g + 1, 1)).await;
+    assert_eq!(
+        (status, code(&body).0.as_str()),
+        (StatusCode::NOT_FOUND, "not_found")
+    );
+    // The old container itself is gone from the lease.
+    assert_eq!(
+        commit_as(&rig, old, a.slot(), app, (g, 3)).await.0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        open_as(&rig, again, a.slot(), a.store).await.0,
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn the_same_in_reverse() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let app = rig.app(a.user, "app").await;
+    rig.set_slot_flags(app, true, false).await;
+    let own = Slot::Store(app);
+    let g = rig.generation();
+    // The user's container was claimed long before the app's.
+    let user = warm_lease(&rig, a.slot(), g - 100).await;
+    let isolated = warm_lease(&rig, own, g).await;
+    assert_eq!(open_as(&rig, isolated, own, app).await.0, StatusCode::OK);
+    assert_eq!(
+        commit_as(&rig, isolated, own, app, (g, 1)).await.0,
+        StatusCode::OK
+    );
+    // Isolation is turned off: the app moves back into the user's container.
+    rig.set_slot_flags(app, false, false).await;
+    let (status, _) = open_as(&rig, user, a.slot(), app).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(*rig.asked.lock().unwrap(), [(own, ParkReason::Moved)]);
+    let (status, _, _) = rig
+        .broker_call(isolated, own, Method::POST, paths::PARKED, Body::empty())
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    // The user's container is older than the app's last snapshot: it waits for a new
+    // claim, not `store_locked`.
+    rig.clock.advance(2_000);
+    let (status, body) = open_as(&rig, user, a.slot(), app).await;
+    assert_eq!(
+        (status, code(&body)),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            ("unavailable".to_owned(), None)
+        )
+    );
+    assert_eq!(
+        rig.asked.lock().unwrap().last(),
+        Some(&(a.slot(), ParkReason::Lifetime))
+    );
+    // The next claim of the user's slot brings a higher generation and opens it.
+    let next = warm_lease(&rig, a.slot(), rig.generation()).await;
+    let (status, body) = open_as(&rig, next, a.slot(), app).await;
+    assert_eq!(status, StatusCode::OK);
+    let link = opened(&body).snapshot.unwrap();
+    assert_eq!((link.generation, link.sequence), (g, 1));
+}
+
+#[tokio::test]
+async fn a_dead_holder_does_not_block() {
+    let rig = Rig::start(Options::default()).await;
+    let a = rig.account().await;
+    let g = rig.generation();
+    let set_holder = |slot: Slot, generation: u64| {
+        let rig = &rig;
+        async move {
+            rig.stores
+                .update(a.user, a.store, |r| {
+                    r.holder = Some(knoggin_state::record::Holder { slot, generation });
+                    Ok::<(), StateError>(())
+                })
+                .await
+                .unwrap();
+        }
+    };
+    let id = warm_lease(&rig, a.slot(), g).await;
+    // A holder whose lease is gone (never written).
+    set_holder(Slot::Store(StoreId::from_uuid(Uuid::now_v7())), g).await;
+    assert_eq!(open_as(&rig, id, a.slot(), a.store).await.0, StatusCode::OK);
+    // A holder whose lease is parked.
+    let gone = rig.app(a.user, "elsewhere").await;
+    let parked = Slot::Store(gone);
+    warm_lease(&rig, parked, g).await;
+    let mut lease = rig.lease_of(parked).await;
+    lease.set_state(LeaseState::Parked, rig.clock.now());
+    rig.leases.put(parked, &lease, Cond::Any).await.unwrap();
+    set_holder(parked, g).await;
+    assert_eq!(open_as(&rig, id, a.slot(), a.store).await.0, StatusCode::OK);
+    // A holder whose lease has moved on to a newer generation: its container is gone.
+    let moved = Slot::Store(rig.app(a.user, "moved on").await);
+    warm_lease(&rig, moved, g + 1).await;
+    set_holder(moved, g).await;
+    assert_eq!(open_as(&rig, id, a.slot(), a.store).await.0, StatusCode::OK);
+    assert!(
+        rig.asked.lock().unwrap().is_empty(),
+        "no one was asked to park"
+    );
+    let holder = rig.stores.get(a.store).await.unwrap().unwrap().value.holder;
+    assert_eq!(holder.map(|h| h.slot), Some(a.slot()));
 }

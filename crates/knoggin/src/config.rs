@@ -520,6 +520,7 @@ pub(crate) struct Containers {
     pub(crate) idle_seconds: u64,
     pub(crate) max_lifetime_hours: u64,
     pub(crate) claim_wait_ms: u64,
+    pub(crate) max_per_user: u32,
 }
 
 impl Default for Containers {
@@ -532,6 +533,7 @@ impl Default for Containers {
             idle_seconds: 600,
             max_lifetime_hours: 24,
             claim_wait_ms: 20_000,
+            max_per_user: 6,
         }
     }
 }
@@ -645,6 +647,7 @@ const KEYS: &[(&str, Kind)] = {
         ("containers.idle_seconds", Int),
         ("containers.max_lifetime_hours", Int),
         ("containers.claim_wait_ms", Int),
+        ("containers.max_per_user", Int),
         ("internal.bind", Str),
         ("internal.router_url", Str),
         ("internal.secret_file", Str),

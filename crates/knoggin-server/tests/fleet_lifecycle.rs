@@ -26,7 +26,7 @@ use knoggin_server::reconcile::Reconciler;
 use knoggin_server::router::run_router;
 use knoggin_server::testing::{StubControl, serve_runner, stub_runner};
 use knoggin_state::Meta;
-use knoggin_state::record::{BuildSpec, ContainerState, LeaseState, ParkReason, StopReason};
+use knoggin_state::record::{BuildSpec, ContainerState, LeaseState, ParkReason, Slot, StopReason};
 use uuid::Uuid;
 
 const LIMIT: Duration = Duration::from_secs(20);
@@ -227,10 +227,13 @@ async fn a_stuck_claim_is_resolved_and_a_hung_container_counts_as_failed() {
     let (user, _) = local_user(&d).await;
     assert_eq!(summaries(&r, None).await.0, 200);
     // A router died after its claim call: the lease is still `claiming` a minute later.
-    let read = d.leases().get(user).await.unwrap().unwrap();
+    let read = d.leases().get(Slot::User(user)).await.unwrap().unwrap();
     let mut stuck = read.value.clone();
     stuck.set_state(LeaseState::Claiming, d.clock.as_ref()() - 61_000);
-    d.leases().put(user, &stuck, read.cond()).await.unwrap();
+    d.leases()
+        .put(Slot::User(user), &stuck, read.cond())
+        .await
+        .unwrap();
     let fleet = d
         .fleet("0.1.0", true, &format!("https://{}", r.internal))
         .await;
@@ -432,7 +435,7 @@ async fn a_stop_asks_hung_containers_at_once_and_leaves_no_task_behind() {
     let fleet = d.fleet("0.1.0", true, &format!("https://{internal}")).await;
     for _ in 0..3 {
         let user = UserId::from_uuid(Uuid::now_v7());
-        let lease = fleet.acquire(user, LIMIT).await.unwrap();
+        let lease = fleet.acquire(Slot::User(user), user, LIMIT).await.unwrap();
         assert_eq!(lease.value.state, LeaseState::Warm);
     }
     control.hang_park.store(true, Ordering::Relaxed);

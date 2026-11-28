@@ -173,7 +173,8 @@ pub fn guarded(app: Router) -> Router {
 /// The broker on the router's internal listener, over the fleet's leases, stores and
 /// per-address counts. `one_host` is the router's address as containers reach it, which
 /// turns the blob route on. A container's `parked` writes the records "Mark gone" writes
-/// once a container has ended, then stops it ([`Fleet::finish_parked`]).
+/// once a container has ended, then stops it ([`Fleet::finish_parked`]). The broker asks a
+/// container to park through [`Fleet::ask_park`].
 pub fn broker(
     fleet: &Arc<Fleet>,
     keys: Arc<dyn KeyProvider>,
@@ -203,6 +204,13 @@ pub fn broker(
         one_host,
         peers: fleet.limits().clone(),
         on_parked,
+        ask_park: {
+            let fleet = fleet.clone();
+            Arc::new(move |slot, reason| {
+                let fleet = fleet.clone();
+                Box::pin(async move { fleet.ask_park(slot, reason).await })
+            })
+        },
     })
 }
 
@@ -641,20 +649,20 @@ pub async fn run(
 /// once, then wait until their leases are parked, all before `deadline`.
 async fn park_everyone(fleet: &Arc<Fleet>, deadline: tokio::time::Instant) {
     let all = async {
-        let mut users = Vec::new();
+        let mut slots = Vec::new();
         let mut after = None;
         loop {
             let Ok(page) = fleet.leases.list_active(100, after).await else {
                 break;
             };
-            users.extend(page.iter().copied());
+            slots.extend(page.iter().copied());
             match page.last() {
                 Some(last) if page.len() == 100 => after = Some(*last),
                 _ => break,
             }
         }
-        futures_util::future::join_all(users.iter().map(|&user| async move {
-            let Ok(Some(lease)) = fleet.leases.get(user).await else {
+        futures_util::future::join_all(slots.iter().map(|&slot| async move {
+            let Ok(Some(lease)) = fleet.leases.get(slot).await else {
                 return;
             };
             if let (Some(id), Some(peer)) = (
@@ -664,15 +672,15 @@ async fn park_everyone(fleet: &Arc<Fleet>, deadline: tokio::time::Instant) {
                     lease.value.cert_sha256.as_deref(),
                 ),
             ) {
-                let _ = fleet.request_park(user, ParkReason::Shutdown).await;
+                let _ = fleet.request_park(slot, ParkReason::Shutdown).await;
                 fleet.park(id, peer, ParkReason::Shutdown).await;
             }
         }))
         .await;
         loop {
             let mut waiting = false;
-            for &user in &users {
-                if let Ok(Some(l)) = fleet.leases.get(user).await
+            for &slot in &slots {
+                if let Ok(Some(l)) = fleet.leases.get(slot).await
                     && l.value.state != LeaseState::Parked
                 {
                     waiting = true;

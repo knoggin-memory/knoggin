@@ -37,7 +37,7 @@ use knoggin_server::router::{guards, public_router};
 use knoggin_server::settings::{ContainerSettings, RouterSettings};
 use knoggin_server::storage::{MemoryStorage, names};
 use knoggin_server::testing::{FakeLauncher, StubControl, stub_runner};
-use knoggin_state::record::Permission;
+use knoggin_state::record::{Permission, Slot};
 use knoggin_state::testing::{TestClock, test_field_keys};
 use knoggin_state::{ApiKeys, LocalFileDb, NewApiKey, NewStore, NewUser, StateDb, Stores, Users};
 use tower::ServiceExt;
@@ -397,7 +397,7 @@ async fn the_store_status_does_not_wake_a_container_and_the_admin_status_counts(
     assert_eq!(a.launcher.handles().len(), 0);
     // Warm: the container's status says the store is not open, so it is parked.
     a.fleet
-        .acquire(a.user, Duration::from_secs(8))
+        .acquire(Slot::User(a.user), a.user, Duration::from_secs(8))
         .await
         .unwrap();
     let r = call(

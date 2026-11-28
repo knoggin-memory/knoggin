@@ -1626,3 +1626,110 @@ async fn the_mcp_endpoint_sits_behind_the_credential_check() {
         .await;
     assert_eq!(r.error(), Code::PermissionDenied);
 }
+
+/// A warm lease of `slot`, as a claim leaves it.
+async fn warm_lease(env: &EdgeEnv, slot: knoggin_state::record::Slot) {
+    let mut lease = knoggin_state::record::Lease::default();
+    lease.generation = 1;
+    lease.container_id = Some(Uuid::now_v7());
+    lease.set_state(knoggin_state::record::LeaseState::Warm, env.clock.now());
+    knoggin_state::Leases::new(env.db.clone())
+        .put(slot, &lease, knoggin_state::Cond::Any)
+        .await
+        .unwrap();
+}
+
+async fn park_request(
+    env: &EdgeEnv,
+    slot: knoggin_state::record::Slot,
+) -> Option<knoggin_state::record::ParkReason> {
+    knoggin_state::Leases::new(env.db.clone())
+        .get(slot)
+        .await
+        .unwrap()
+        .and_then(|l| l.value.park_requested())
+}
+
+async fn isolate(env: &EdgeEnv, store: StoreId) {
+    env.stores
+        .update(env.user, store, |s| {
+            s.isolated = true;
+            Ok::<_, knoggin_state::StateError>(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn deleting_an_isolated_app_parks_its_container() {
+    use knoggin_state::record::{ParkReason, Slot};
+    let env = EdgeEnv::new().await;
+    let x = env.app("Isolated").await;
+    let normal = env.app("Normal").await;
+    isolate(&env, x).await;
+    for slot in [Slot::User(env.user), Slot::Store(x)] {
+        warm_lease(&env, slot).await;
+    }
+    let r = env
+        .local(Method::DELETE, &format!("/v1/stores/{x}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(
+        park_request(&env, Slot::Store(x)).await,
+        Some(ParkReason::Deleted)
+    );
+    assert_eq!(
+        park_request(&env, Slot::User(env.user)).await,
+        None,
+        "the user's own container keeps serving"
+    );
+    // A normal app lives in the user's container, which is not parked for it.
+    let r = env
+        .local(Method::DELETE, &format!("/v1/stores/{normal}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(park_request(&env, Slot::User(env.user)).await, None);
+}
+
+#[tokio::test]
+async fn deleting_the_account_parks_its_own_containers_only() {
+    use knoggin_state::record::{ParkReason, Slot};
+    let env = EdgeEnv::new().await;
+    let x = env.app("Isolated").await;
+    let gone = env.app("Deleted earlier").await;
+    isolate(&env, x).await;
+    isolate(&env, gone).await;
+    let r = env
+        .local(Method::DELETE, &format!("/v1/stores/{gone}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    // Someone else's app that this user may use, served by its own container.
+    let elsewhere = Slot::Store(StoreId::from_uuid(Uuid::now_v7()));
+    for slot in [
+        Slot::User(env.user),
+        Slot::Store(x),
+        Slot::Store(gone),
+        elsewhere,
+    ] {
+        warm_lease(&env, slot).await;
+    }
+    let r = env
+        .local(
+            Method::DELETE,
+            "/v1/account",
+            Some(json!({ "confirm": "delete my data" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    for slot in [Slot::User(env.user), Slot::Store(x)] {
+        assert_eq!(
+            park_request(&env, slot).await,
+            Some(ParkReason::Deleted),
+            "{slot}"
+        );
+    }
+    // Not marked deleted in this call: these stay warm.
+    for slot in [Slot::Store(gone), elsewhere] {
+        assert_eq!(park_request(&env, slot).await, None, "{slot}");
+    }
+}

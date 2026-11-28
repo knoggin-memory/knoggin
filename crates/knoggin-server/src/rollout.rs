@@ -97,14 +97,14 @@ impl Fleet {
                 })
                 .collect();
             let mut budget = batch(old.len());
-            for (user, lease) in old {
+            for (slot, lease) in old {
                 if budget == 0 {
                     break;
                 }
                 if lease.value.park_requested().is_some() {
                     continue;
                 }
-                match self.request_park(*user, ParkReason::Upgrade).await {
+                match self.request_park(*slot, ParkReason::Upgrade).await {
                     Ok(()) => budget -= 1,
                     Err(e) => crate::reconcile::step_failed("rollout", &e),
                 }

@@ -5,8 +5,8 @@
 //! and written by `knoggin_http::ctx`.
 
 use http::HeaderMap;
-use knoggin_core::UserId;
 use knoggin_http::ctx;
+use knoggin_state::record::Slot;
 use uuid::Uuid;
 
 use super::{InternalSecret, LaunchSecret, Token};
@@ -26,12 +26,12 @@ pub enum CallRefused {
     Token,
 }
 
-/// The identity a container's call proved: the user its lease should name, and itself.
-/// The broker still checks the lease, its state and the caller's address.
+/// The identity a container's call proved: the slot whose lease should name it, and
+/// itself. The broker still checks the lease, its state and the caller's address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ContainerCaller {
-    /// `Knoggin-User-Id`.
-    pub user_id: UserId,
+    /// `Knoggin-Slot`.
+    pub slot: Slot,
     /// `Knoggin-Container-Id`.
     pub container_id: Uuid,
 }
@@ -45,7 +45,7 @@ pub fn verify_container_call(
     if !ctx::link_protocol_ok(headers) {
         return Err(CallRefused::Protocol);
     }
-    let (user_id, container_id) = ctx::link_identity(headers).ok_or(CallRefused::Identity)?;
+    let (slot, container_id) = ctx::link_identity(headers).ok_or(CallRefused::Identity)?;
     let presented = ctx::link_bearer(headers).ok_or(CallRefused::Token)?;
     if !secret
         .launch_secret(container_id)
@@ -54,10 +54,7 @@ pub fn verify_container_call(
     {
         return Err(CallRefused::Token);
     }
-    Ok(ContainerCaller {
-        user_id,
-        container_id,
-    })
+    Ok(ContainerCaller { slot, container_id })
 }
 
 /// The container's check of a router's call (every route but `hello`): the protocol and
@@ -76,12 +73,12 @@ pub fn verify_router_call(router_token: &Token, headers: &HeaderMap) -> Result<(
 pub fn write_container_call(
     headers: &mut HeaderMap,
     launch: &LaunchSecret,
-    user_id: UserId,
+    slot: Slot,
     container_id: Uuid,
 ) {
     ctx::write_link_identity(
         headers,
-        user_id,
+        slot,
         container_id,
         launch.container_token().bearer(),
     );
@@ -102,13 +99,13 @@ mod tests {
     fn a_container_proves_itself_with_its_own_token_only() {
         let secret = InternalSecret::from_bytes([3u8; 32]);
         let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
-        let user = UserId::from_uuid(Uuid::now_v7());
+        let user = Slot::User(knoggin_core::UserId::from_uuid(Uuid::now_v7()));
         let mut headers = HeaderMap::new();
         write_container_call(&mut headers, &secret.launch_secret(a), user, a);
         assert_eq!(
             verify_container_call(&secret, &headers),
             Ok(ContainerCaller {
-                user_id: user,
+                slot: user,
                 container_id: a
             })
         );
@@ -135,7 +132,7 @@ mod tests {
             Err(CallRefused::Protocol)
         );
         let mut no_user = headers.clone();
-        no_user.remove(ctx::headers::USER_ID);
+        no_user.remove(ctx::headers::SLOT);
         assert_eq!(
             verify_container_call(&secret, &no_user),
             Err(CallRefused::Identity)

@@ -52,6 +52,14 @@ export function modelCause(reason: string | null): string {
   }
 }
 
+/** `rate_limited` for `containers_per_user`: the owner of the store's apps has too many of
+ *  their isolated and shared apps open. `owner` is whether that is the person reading. */
+export function containersPerUser(owner: boolean): string {
+  return owner
+    ? 'Too many of your isolated and shared apps are open at once. Try again in a few minutes.'
+    : 'Too many of this app owner’s apps are open at once. Try again in a few minutes.';
+}
+
 /** A failed sign-in (`/signin?error=<code>`). "server" becomes "install" on a local install. */
 export function signInError(code: string, server: boolean): string {
   const where = server ? 'server' : 'install';

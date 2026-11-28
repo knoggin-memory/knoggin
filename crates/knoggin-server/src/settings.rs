@@ -262,6 +262,9 @@ pub struct ContainerSettings {
     pub max_lifetime_hours: u64,
     /// `containers.claim_wait_ms` (20,000).
     pub claim_wait_ms: u64,
+    /// `containers.max_per_user` (6; 0 means no bound): the most containers one user may
+    /// have at once, their own included. The rest serve their isolated and shared apps.
+    pub max_per_user: u32,
 }
 
 impl ContainerSettings {
@@ -281,6 +284,7 @@ impl Default for ContainerSettings {
             idle_seconds: 600,
             max_lifetime_hours: 24,
             claim_wait_ms: 20_000,
+            max_per_user: 6,
         }
     }
 }

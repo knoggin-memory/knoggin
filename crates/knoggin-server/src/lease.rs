@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! Leases and the containers they name: [`Fleet`] is what one router knows of the fleet, shared by
-//! the request path, the pool and the reconcile loop. It claims a container for a user (with the
-//! generation rule and the cap on new containers), waits for a container within the request's
-//! deadline, finishes a claim as an owned task, and runs "Mark gone".
+//! the request path, the pool and the reconcile loop. It claims a container for a slot (with the
+//! generation rule, the cap on new containers and the cap per user), waits for a container
+//! within the request's deadline, finishes a claim as an owned task, and runs "Mark gone".
+//!
+//! A slot is what one container serves: a user's own container (`Slot::User`), or the
+//! container of one isolated or shared app (`Slot::Store`), which counts toward its owner's
+//! `containers.max_per_user`.
 //!
 //! A claim runs in four steps: (1) pick a ready container of the claim build; (2) write the
 //! lease `claiming` and the container `claimed` in one write; (3) send the container its
@@ -26,8 +30,8 @@ use knoggin_core::{StoreId, UserId};
 use knoggin_http::ApiError;
 use knoggin_http::Code;
 use knoggin_state::record::{
-    BuildSpec, Container, ContainerState, EndKind, Lease, LeaseState, ParkReason, StopReason,
-    cond_of,
+    BuildSpec, Container, ContainerState, EndKind, LEASE_WINDOW_MS, Lease, LeaseState, ParkReason,
+    Slot, StopReason, cond_of,
 };
 use knoggin_state::{
     Clock, Containers, FieldKeys, Leases, Meta, StateDb, StateError, Stores, Versioned,
@@ -47,6 +51,9 @@ use crate::link::{
 use crate::pool::LaunchGate;
 use crate::settings::ContainerSettings;
 use crate::storage::ObjectStorage;
+
+/// The reason of a claim refused for the bounds per user on app containers.
+pub const CONTAINERS_PER_USER: &str = "containers_per_user";
 
 /// How long a request waits between two looks at a lease that is not ready.
 pub const POLL: Duration = Duration::from_millis(250);
@@ -335,24 +342,26 @@ impl Fleet {
         Ok((claim, retire))
     }
 
-    /// How many leases of one user may become warm in 10 minutes.
+    /// How many times one lease may become warm in 10 minutes.
     fn claim_cap(&self) -> usize {
         let by_idle = 1200 / self.config.containers.idle_seconds.max(1);
         usize::try_from(by_idle).unwrap_or(usize::MAX).max(6)
     }
 
-    /// Waits until the user's lease is `warm`, claiming a container if it is parked, for
-    /// at most `wait`. The answer when time runs out is `upgrading` while the lease asks
-    /// for an upgrade, else `unavailable`, both with `Retry-After: 2`.
+    /// Waits until the slot's lease is `warm`, claiming a container if it is parked, for
+    /// at most `wait`. `owner` is the user the container is charged to: the owner of the
+    /// store the request is for. The answer when time runs out is `upgrading` while the
+    /// lease asks for an upgrade, else `unavailable`, both with `Retry-After: 2`.
     pub async fn acquire(
         self: &Arc<Self>,
-        user: UserId,
+        slot: Slot,
+        owner: UserId,
         wait: Duration,
     ) -> Result<Versioned<Lease>, ApiError> {
         let deadline = Instant::now() + wait;
         let mut upgrading;
         loop {
-            let read = self.leases.get(user).await.map_err(db_error)?;
+            let read = self.leases.get(slot).await.map_err(db_error)?;
             let lease = read.as_ref().map(|r| r.value.clone()).unwrap_or_default();
             let now = self.now();
             if let Some(e) = paused(&lease, now) {
@@ -361,7 +370,7 @@ impl Fleet {
             upgrading = lease.park_requested() == Some(ParkReason::Upgrade);
             let step = match (lease.state, read) {
                 (LeaseState::Warm, Some(read)) => return Ok(read),
-                (LeaseState::Parked, read) => self.try_claim(user, read.as_ref()).await?,
+                (LeaseState::Parked, read) => self.try_claim(slot, owner, read.as_ref()).await?,
                 _ => Step::Wait,
             };
             let pause = if step == Step::Wait {
@@ -390,7 +399,8 @@ impl Fleet {
     /// task of the router's own.
     async fn try_claim(
         self: &Arc<Self>,
-        user: UserId,
+        slot: Slot,
+        owner: UserId,
         read: Option<&Versioned<Lease>>,
     ) -> Result<Step, ApiError> {
         let now = self.now();
@@ -401,6 +411,9 @@ impl Fleet {
         }
         let (build, retire_before) = self.claim_build().await.map_err(db_error)?;
         let records = self.claim_records().await.map_err(db_error)?;
+        if let Slot::Store(_) = slot {
+            self.user_bounds(owner, &records, now)?;
+        }
         let candidate = records.iter().find(|c| {
             c.value.state == ContainerState::Ready
                 && c.value.build == build.build
@@ -442,8 +455,10 @@ impl Fleet {
         next.claimed_by = Some(self.config.router_id.to_string());
         let mut container = found.value.clone();
         container.state = ContainerState::Claimed;
-        container.user_id = Some(user);
-        let mut writes = Leases::writes(user, &next, cond_of(read)).map_err(db_error)?;
+        container.slot = Some(slot);
+        container.charged_to = Some(owner);
+        container.claimed_ms = Some(now);
+        let mut writes = Leases::writes(slot, &next, cond_of(read)).map_err(db_error)?;
         writes.push(Containers::write(&container, found.cond()).map_err(db_error)?);
         let started = Instant::now();
         let written = self.db.write(writes).await;
@@ -452,7 +467,7 @@ impl Fleet {
             Ok(()) => {
                 let fleet = self.clone();
                 self.spawn(async move {
-                    fleet.finish_claim(user, container, generation).await;
+                    fleet.finish_claim(slot, container, generation).await;
                     metrics::histogram!("knoggin_claim_seconds")
                         .record(started.elapsed().as_secs_f64());
                 });
@@ -462,6 +477,58 @@ impl Fleet {
             Err(StateError::Conflict) => Ok(Step::Again),
             Err(e) => Err(db_error(e)),
         }
+    }
+
+    /// The bounds per user on the containers of their isolated and shared apps (a claim
+    /// for a user's own slot is never refused by them): at most `max_per_user - 1` claimed
+    /// at once, and at most `max(6, 3 * (max_per_user - 1))` claims in 10 minutes, counted
+    /// from container records (ended ones are kept for an hour). Off when `max_per_user`
+    /// is 0.
+    fn user_bounds(
+        &self,
+        owner: UserId,
+        records: &[Versioned<Container>],
+        now: i64,
+    ) -> Result<(), ApiError> {
+        let max = self.config.containers.max_per_user;
+        if max == 0 {
+            return Ok(());
+        }
+        // ponytail: a soft cap; routers racing can pass it by one each. A per-user counter
+        // record if an exact bound is ever needed.
+        let apps = u64::from(max - 1);
+        let charged = || {
+            records.iter().filter(|c| {
+                matches!(c.value.slot, Some(Slot::Store(_))) && c.value.charged_to == Some(owner)
+            })
+        };
+        let refused = |retry_after: u32| {
+            ApiError::new(
+                Code::RateLimited,
+                "Too many of this owner's isolated and shared apps are open at once; try again in a few minutes",
+            )
+            .with_reason(CONTAINERS_PER_USER)
+            .with_retry_after(retry_after)
+        };
+        let open = charged()
+            .filter(|c| c.value.state == ContainerState::Claimed)
+            .count() as u64;
+        if open >= apps {
+            metrics::counter!("knoggin_claims_total", "outcome" => "user_cap").increment(1);
+            return Err(refused(30));
+        }
+        let recent = charged()
+            .filter(|c| {
+                c.value
+                    .claimed_ms
+                    .is_some_and(|t| t > now - LEASE_WINDOW_MS)
+            })
+            .count() as u64;
+        if recent >= apps.saturating_mul(3).max(6) {
+            metrics::counter!("knoggin_claims_total", "outcome" => "user_churn").increment(1);
+            return Err(refused(60));
+        }
+        Ok(())
     }
 
     /// The container records for claims: one read serves every request of this router for
@@ -496,12 +563,12 @@ impl Fleet {
     /// Claim steps 3 and 4.
     pub(crate) async fn finish_claim(
         self: Arc<Self>,
-        user: UserId,
+        slot: Slot,
         container: Container,
         generation: u64,
     ) {
         let body = ClaimRequest {
-            user_id: user,
+            slot,
             generation,
             settings: self.config.claim.clone(),
         };
@@ -536,7 +603,7 @@ impl Fleet {
             return;
         }
         metrics::counter!("knoggin_claims_total", "outcome" => "ok").increment(1);
-        if let Err(e) = self.set_warm(user, container.id, generation).await {
+        if let Err(e) = self.set_warm(slot, container.id, generation).await {
             tracing::warn!(kind = "claim", error = %e, "a claimed lease was not set warm");
         }
     }
@@ -545,12 +612,12 @@ impl Fleet {
     /// records the claim, if it is still `claiming` with this generation and this container.
     pub(crate) async fn set_warm(
         &self,
-        user: UserId,
+        slot: Slot,
         container: Uuid,
         generation: u64,
     ) -> Result<bool, StateError> {
         for _ in 0..5 {
-            let Some(read) = self.leases.get(user).await? else {
+            let Some(read) = self.leases.get(slot).await? else {
                 return Ok(false);
             };
             let l = &read.value;
@@ -564,7 +631,7 @@ impl Fleet {
             let mut next = l.clone();
             next.set_state(LeaseState::Warm, now);
             next.add_claim(now);
-            match self.leases.put(user, &next, read.cond()).await {
+            match self.leases.put(slot, &next, read.cond()).await {
                 Ok(()) => return Ok(true),
                 Err(StateError::Conflict) => {}
                 Err(e) => return Err(e),
@@ -573,10 +640,10 @@ impl Fleet {
         Err(StateError::Unavailable("the lease kept changing".into()))
     }
 
-    /// Records a park request on the user's lease (it keeps one that is already there).
-    pub async fn request_park(&self, user: UserId, reason: ParkReason) -> Result<(), StateError> {
+    /// Records a park request on the slot's lease (it keeps one that is already there).
+    pub async fn request_park(&self, slot: Slot, reason: ParkReason) -> Result<(), StateError> {
         for _ in 0..5 {
-            let Some(read) = self.leases.get(user).await? else {
+            let Some(read) = self.leases.get(slot).await? else {
                 return Ok(());
             };
             if read.value.state == LeaseState::Parked {
@@ -586,13 +653,41 @@ impl Fleet {
             if !next.request_park(reason, self.now()) {
                 return Ok(());
             }
-            match self.leases.put(user, &next, read.cond()).await {
+            match self.leases.put(slot, &next, read.cond()).await {
                 Ok(()) => return Ok(()),
                 Err(StateError::Conflict) => {}
                 Err(e) => return Err(e),
             }
         }
         Err(StateError::Unavailable("the lease kept changing".into()))
+    }
+
+    /// The broker's way to ask a slot's container to park: records the request on the
+    /// lease, then sends `park` to the container at once as one of the router's own tasks
+    /// (a recorded request alone reaches it only at the reconcile loop's next pass).
+    pub async fn ask_park(self: &Arc<Self>, slot: Slot, reason: ParkReason) {
+        if let Err(e) = self.request_park(slot, reason).await {
+            tracing::warn!(kind = "lease", slot = %slot, error = %e, "a park request was not recorded");
+            return;
+        }
+        let Ok(Some(lease)) = self.leases.get(slot).await else {
+            return;
+        };
+        let l = &lease.value;
+        if l.state == LeaseState::Parked {
+            return;
+        }
+        if let (Some(id), Some(peer)) = (
+            l.container_id,
+            peer_of(l.address.as_deref(), l.cert_sha256.as_deref()),
+        ) {
+            let fleet = self.clone();
+            self.spawn(async move {
+                if !fleet.park(id, peer, reason).await {
+                    tracing::debug!(kind = "park", container_id = %id, "a park was left to the reconcile loop");
+                }
+            });
+        }
     }
 
     /// "Mark gone" for a container. `reason` is written and the container stopped if it
@@ -739,8 +834,8 @@ impl Fleet {
             c.state = ContainerState::Gone;
             c.gone_ms = Some(now);
             let mut writes = vec![Containers::write(&c, rec.cond())?];
-            if let Some(user) = c.user_id
-                && let Some(l) = self.leases.get(user).await?
+            if let Some(slot) = c.slot
+                && let Some(l) = self.leases.get(slot).await?
                 && l.value.container_id == Some(id)
                 && l.value.state != LeaseState::Parked
             {
@@ -751,7 +846,7 @@ impl Fleet {
                     next.add_abnormal_end(now, kind);
                 }
                 next.set_state(LeaseState::Parked, now);
-                writes.extend(Leases::writes(user, &next, l.cond())?);
+                writes.extend(Leases::writes(slot, &next, l.cond())?);
             }
             match self.db.write(writes).await {
                 Ok(()) => {
@@ -889,7 +984,7 @@ pub(crate) fn runs(info: &ContainerInfo) -> bool {
     !matches!(info.state, crate::launcher::RunState::Ended)
 }
 
-/// The back-off for abnormal ends: while three lie within the last 10 minutes, the user's
+/// The back-off for abnormal ends: while three lie within the last 10 minutes, the slot's
 /// requests answer `unavailable` with `Retry-After: 60`.
 fn paused(lease: &Lease, now: i64) -> Option<ApiError> {
     let ends = lease.abnormal_ends(now);

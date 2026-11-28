@@ -92,7 +92,8 @@ async fn store_status(
     Path(id): Path<String>,
 ) -> Answer {
     let id = store_id(&id)?;
-    s.stores
+    let record = s
+        .stores
         .get_of(c.user.value.id, id)
         .await
         .map_err(db_error)?
@@ -100,7 +101,7 @@ async fn store_status(
     let lease = s
         .fleet
         .leases
-        .get(c.user.value.id)
+        .get(record.value.slot())
         .await
         .map_err(db_error)?;
     let parked = json!({ "state": "parked", "lockedReason": null, "full": false, "model": null, "embedding": null });

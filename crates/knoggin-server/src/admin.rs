@@ -160,6 +160,8 @@ impl Admin {
             )));
         }
         let user = record.user_id;
+        // Only the container that serves the store parks.
+        let slot = record.slot();
         let name = snapshot.to_string();
         self.stores
             .update(user, store, |r| {
@@ -169,7 +171,7 @@ impl Admin {
             .await?;
         let leases = Leases::new(self.db.clone());
         for _ in 0..5 {
-            let Some(read) = leases.get(user).await? else {
+            let Some(read) = leases.get(slot).await? else {
                 break;
             };
             if read.value.state == LeaseState::Parked {
@@ -179,7 +181,7 @@ impl Admin {
             if !next.request_park(ParkReason::Restore, self.now()) {
                 break;
             }
-            match leases.put(user, &next, read.cond()).await {
+            match leases.put(slot, &next, read.cond()).await {
                 Ok(()) => break,
                 Err(StateError::Conflict) => {}
                 Err(e) => return Err(e.into()),
@@ -188,7 +190,7 @@ impl Admin {
         let deadline = tokio::time::Instant::now() + wait;
         loop {
             let parked = leases
-                .get(user)
+                .get(slot)
                 .await?
                 .is_none_or(|l| l.value.state == LeaseState::Parked);
             if parked {

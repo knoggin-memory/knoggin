@@ -36,8 +36,9 @@ pub(crate) fn session(hash: &str) -> String {
 pub(crate) fn user_sessions(user: impl Display) -> String {
     format!("user-sessions#{user}")
 }
-pub(crate) fn lease(user: impl Display) -> String {
-    format!("lease#{user}")
+/// `lease#user:<id>` or `lease#store:<id>`.
+pub(crate) fn lease(slot: crate::record::Slot) -> String {
+    format!("lease#{slot}")
 }
 pub(crate) const ACTIVE_LEASES: &str = "active-leases";
 pub(crate) const CONTAINERS: &str = "containers";

@@ -28,6 +28,7 @@ use knoggin_http::host::{EmbedWaits, Embedder, HostConfig, SnapshotTiming, Store
 use knoggin_http::mcp::McpConfig;
 use knoggin_http::settings::{IMPORT_LINE_BYTES, StoreLimits};
 use knoggin_http::store_api::store_layer;
+use knoggin_state::record::Slot;
 use serde::Deserialize;
 use tower::ServiceExt;
 use uuid::Uuid;
@@ -168,7 +169,7 @@ async fn claim(State(s): S, body: Body) -> Response {
             source_url: settings.source_url.clone(),
         },
     };
-    let backend = Arc::new(RouterBackend::new(s.link.clone(), request.user_id));
+    let backend = Arc::new(RouterBackend::new(s.link.clone(), request.slot));
     let embedder = Embedder::new(
         s.model.state.clone(),
         s.model.providers.clone(),
@@ -176,7 +177,7 @@ async fn claim(State(s): S, body: Body) -> Response {
     );
     let host = StoreHost::new(config, backend, embedder);
     let claim = Arc::new(Claim {
-        user: request.user_id,
+        slot: request.slot,
         generation: request.generation,
         store: store_layer(host.clone()),
         host,
@@ -192,7 +193,7 @@ async fn claim(State(s): S, body: Body) -> Response {
     s.wake.notify_one();
     tracing::info!(
         container_id = %s.env.container_id,
-        user_id = %request.user_id,
+        slot = %request.slot,
         generation = request.generation,
         "claimed"
     );
@@ -246,7 +247,7 @@ async fn status(State(s): S, Query(query): Query<StatusQuery>) -> Response {
             Phase::Claimed => ContainerPhase::Claimed,
             Phase::Parking => ContainerPhase::Parking,
         },
-        user_id: claim.map(|c| c.user),
+        slot: claim.map(|c| c.slot),
         generation: claim.map(|c| c.generation),
         build: s.build.version.clone(),
         idle_seconds: s.idle_seconds(),
@@ -332,8 +333,13 @@ async fn forward(State(s): S, req: Request) -> Response {
         Ok(ctx) => ctx,
         Err(e) => return e.into_response(),
     };
-    if ctx.user_id != claim.user {
-        tracing::warn!(container_id = %s.env.container_id, "a request for another user was refused");
+    // Only requests for the claimed slot: its user's, or its one store's.
+    let for_me = match claim.slot {
+        Slot::User(u) => ctx.user_id == u,
+        Slot::Store(store) => ctx.store_id == store,
+    };
+    if !for_me {
+        tracing::warn!(kind = "wrong_slot", container_id = %s.env.container_id, "a request for another slot was refused");
         return ApiError::internal()
             .with_request_id(ctx.request_id)
             .into_response();

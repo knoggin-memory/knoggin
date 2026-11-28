@@ -3,10 +3,17 @@
 //! Open a store, begin and commit a snapshot, report a park,
 //! and on one host the blob route that forwards snapshot bytes to the bucket.
 //!
-//! Every call proves the container token of the container it names, and must come from
-//! the address of the lease that names that container, while the lease is `claiming` or
-//! `warm`. Anything else is 409 `lease_lost`. The router mounts [`broker_router`] on its
-//! internal listener and admits connections with [`PeerLimits::admit`].
+//! Every call proves the container token of the container it names and names a slot
+//! (`Knoggin-Slot`) whose lease names that container, is `claiming` or `warm`, and has the
+//! caller's address. Anything else is 409 `lease_lost`. The router mounts
+//! [`broker_router`] on its internal listener and admits connections with
+//! [`PeerLimits::admit`].
+//!
+//! A container gets the key of a store only when the store belongs to its slot: `open`
+//! answers 404 `not_found` for any other store, the same as for an unknown one. Only the
+//! holder, the lease whose container last opened a store, may save it (snapshots, commit
+//! and the blob route); a store that changes slot waits in `open` until its old holder
+//! has parked.
 
 pub mod api;
 mod blob;
@@ -26,10 +33,10 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{any, post};
 use knoggin_core::snapshot::SnapshotName;
-use knoggin_core::{StoreId, Timestamp, UserId};
+use knoggin_core::{StoreId, Timestamp};
 use knoggin_crypto::{KeyError, KeyProvider};
 use knoggin_http::error::{Code, LockReason};
-use knoggin_state::record::{Lease, LeaseState, Newest, ParkReason, StoreRecord};
+use knoggin_state::record::{Holder, Lease, LeaseState, Newest, ParkReason, Slot, StoreRecord};
 use knoggin_state::{Clock, Leases, StateError, Stores, Versioned};
 use serde::Serialize;
 use uuid::Uuid;
@@ -64,6 +71,12 @@ pub type OnParked = Arc<
         + Sync,
 >;
 
+/// What the broker runs to ask a slot's container to park: record the request on its lease
+/// and send `park` to the container at once. It belongs to the router's lease code and
+/// reports its failures itself.
+pub type AskPark =
+    Arc<dyn Fn(Slot, ParkReason) -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>;
+
 /// What the broker is built with.
 pub struct BrokerConfig {
     /// `internal.secret`: every container token is recomputed from it.
@@ -91,6 +104,8 @@ pub struct BrokerConfig {
     pub peers: Arc<PeerLimits>,
     /// What `parked` runs.
     pub on_parked: OnParked,
+    /// How the broker asks a container to park (`moved`, `lifetime`).
+    pub ask_park: AskPark,
 }
 
 impl std::fmt::Debug for BrokerConfig {
@@ -274,16 +289,26 @@ pub fn broker_router(config: BrokerConfig) -> Result<Router, LinkError> {
         .with_state(broker))
 }
 
-/// A checked caller: its identity, its lease, and its call slot.
+/// A checked caller: its identity, its lease, and its place among the container's calls.
 struct Checked {
     caller: ContainerCaller,
     lease: Versioned<Lease>,
-    slot: CallSlot,
+    call: CallSlot,
 }
 
-/// The checks of every call: the peer address is not refused, protocol, container token, the lease (it names this
-/// container, is `claiming` or `warm`, and has the caller's IP), then the per-container
-/// limits.
+impl Checked {
+    /// The caller as a store's holder: its slot and its lease's generation.
+    fn me(&self) -> Holder {
+        Holder {
+            slot: self.caller.slot,
+            generation: self.lease.value.generation,
+        }
+    }
+}
+
+/// The checks of every call: the peer address is not refused, protocol, container token,
+/// the lease of the slot the call names (it names this container, is `claiming` or `warm`,
+/// and has the caller's IP), then the per-container limits.
 async fn check(
     broker: &Broker,
     peer: PeerAddr,
@@ -304,7 +329,7 @@ async fn check(
     let lease = broker
         .config
         .leases
-        .get(caller.user_id)
+        .get(caller.slot)
         .await
         .map_err(state_failed)?
         .ok_or_else(BrokerError::lease_lost)?;
@@ -322,34 +347,44 @@ async fn check(
     }
     // Only after the lease and the address: a leaked secret used from elsewhere cannot
     // use up the calls of the container it names.
-    let slot = broker
+    let call = broker
         .calls
         .enter(caller.container_id)
         .ok_or_else(|| BrokerError::api(Code::RateLimited))?;
     Ok(Checked {
         caller,
         lease,
-        slot,
+        call,
     })
 }
 
-/// The checks of a route that names a store: a UUID, owned by the lease's user, not
-/// marked deleted.
-async fn store_of(
-    broker: &Broker,
-    user: UserId,
-    store: &str,
-) -> Result<Versioned<StoreRecord>, BrokerError> {
+/// The store a route names: a UUID, a store that exists, not marked deleted.
+async fn named_store(broker: &Broker, store: &str) -> Result<Versioned<StoreRecord>, BrokerError> {
     let id = Uuid::parse_str(store).map_err(|_| BrokerError::invalid())?;
     let record = broker
         .config
         .stores
-        .get_of(user, StoreId::from_uuid(id))
+        .get(StoreId::from_uuid(id))
         .await
         .map_err(state_failed)?
         .ok_or_else(|| BrokerError::api(Code::NotFound))?;
     if record.value.deleted_at_ms.is_some() {
         return Err(BrokerError::api(Code::StoreDeleting));
+    }
+    Ok(record)
+}
+
+/// The store of a route that saves (snapshots, the blob route): only its holder may.
+/// Slot membership is not asked on purpose: a container whose store has just moved away
+/// must still be able to save it once while it parks.
+async fn held_store(
+    broker: &Broker,
+    checked: &Checked,
+    store: &str,
+) -> Result<Versioned<StoreRecord>, BrokerError> {
+    let record = named_store(broker, store).await?;
+    if record.value.holder != Some(checked.me()) {
+        return Err(BrokerError::api(Code::NotFound));
     }
     Ok(record)
 }
@@ -375,8 +410,22 @@ async fn open(
 ) -> Result<Response, BrokerError> {
     let (parts, request_body) = req.into_parts();
     let checked = check(&broker, peer, &parts.headers).await?;
-    let user = checked.caller.user_id;
-    let record = store_of(&broker, user, &store).await?;
+    let record = named_store(&broker, &store).await?;
+    // Only a store of the caller's own slot; a container that lost a race with a slot
+    // change drops that one store and keeps its others.
+    if record.value.slot() != checked.caller.slot {
+        return Err(BrokerError::api(Code::NotFound));
+    }
+    let me = checked.me();
+    if let Some(holder) = record.value.holder
+        && holder != me
+        && holds_unsaved(&broker, holder).await?
+    {
+        // ponytail: that one app waits up to 2 hours behind a hung container; give
+        // "moved" a shorter limit if it is ever seen
+        (broker.config.ask_park)(holder.slot, ParkReason::Moved).await;
+        return Err(BrokerError::unavailable());
+    }
     let request: OpenRequest = body(request_body).await?;
     let after = match request.after {
         Some(a) => {
@@ -406,7 +455,10 @@ async fn open(
     {
         let now_secs = u64::try_from((broker.config.clock)().div_euclid(1000)).unwrap_or(0);
         if now_secs > ahead.generation() {
-            request_lifetime_park(&broker, user, checked.lease).await;
+            // The next claim brings a generation above it. A store moved into a container
+            // older than its last snapshots gets here too: it waits for that claim.
+            (broker.config.ask_park)(checked.caller.slot, ParkReason::Lifetime).await;
+            return Err(BrokerError::unavailable());
         }
         return Err(unreadable());
     }
@@ -467,6 +519,26 @@ async fn open(
         .map(|(n, _)| n.sequence())
         .max()
         .map_or(1, |s| s + 1);
+    // One conditional record update: the caller becomes the holder. A record that changed
+    // since it was read (another container took it, or it changed slot) is a conflict.
+    if record.value.holder != Some(me) {
+        let read = record.value.clone();
+        broker
+            .config
+            .stores
+            .update(read.user_id, read.id, |r| {
+                if *r != read {
+                    return Err(OpenError::Changed);
+                }
+                r.holder = Some(me);
+                Ok(())
+            })
+            .await
+            .map_err(|e| match e {
+                OpenError::Changed => BrokerError::unavailable(),
+                OpenError::State(e) => state_failed(e),
+            })?;
+    }
     let snapshot = match chosen {
         None => None,
         Some((name, size)) => {
@@ -498,16 +570,28 @@ async fn open(
     }))
 }
 
-/// Real time has passed a name above the lease's generation: the next claim must bring a
-/// generation above it, so the container is asked to park for `lifetime`. A lost race is
-/// harmless: the next open asks again.
-async fn request_lifetime_park(broker: &Broker, user: UserId, lease: Versioned<Lease>) {
-    let cond = lease.cond();
-    let mut value = lease.value;
-    if value.request_park(ParkReason::Lifetime, (broker.config.clock)())
-        && broker.config.leases.put(user, &value, cond).await.is_err()
-    {
-        tracing::debug!(user_id = %user, "a lifetime park request lost a race");
+/// Whether a store's holder may still have unsaved writes: its lease is not parked and
+/// still has the holder's generation. A lease that is gone, parked or newer does not.
+async fn holds_unsaved(broker: &Broker, holder: Holder) -> Result<bool, BrokerError> {
+    let lease = broker
+        .config
+        .leases
+        .get(holder.slot)
+        .await
+        .map_err(state_failed)?;
+    Ok(lease.is_some_and(|l| {
+        l.value.state != LeaseState::Parked && l.value.generation == holder.generation
+    }))
+}
+
+enum OpenError {
+    Changed,
+    State(StateError),
+}
+
+impl From<StateError> for OpenError {
+    fn from(e: StateError) -> Self {
+        Self::State(e)
     }
 }
 
@@ -519,15 +603,18 @@ async fn snapshots(
 ) -> Result<Response, BrokerError> {
     let (parts, request_body) = req.into_parts();
     let checked = check(&broker, peer, &parts.headers).await?;
-    let user = checked.caller.user_id;
-    let record = store_of(&broker, user, &store).await?;
+    let record = held_store(&broker, &checked, &store).await?;
     let request: SnapshotsRequest = body(request_body).await?;
     if request.size_bytes > broker.size_bound() {
         return Err(BrokerError::invalid());
     }
     let name = SnapshotName::new(checked.lease.value.generation, request.sequence)
         .map_err(|_| BrokerError::invalid())?;
-    if !broker.uploads.take(user, request.size_bytes) {
+    // The hourly budget belongs to the store's owner, whichever container saves.
+    if !broker
+        .uploads
+        .take(record.value.user_id, request.size_bytes)
+    {
         return Err(BrokerError {
             code: BrokerCode::Api(Code::RateLimited),
             reason: Some(UPLOAD_BUDGET),
@@ -566,8 +653,9 @@ async fn commit(
 ) -> Result<Response, BrokerError> {
     let (parts, request_body) = req.into_parts();
     let checked = check(&broker, peer, &parts.headers).await?;
-    let user = checked.caller.user_id;
-    let record = store_of(&broker, user, &store).await?;
+    // Checked here before the body, and again inside the record update below.
+    let record = held_store(&broker, &checked, &store).await?;
+    let me = checked.me();
     let request: CommitRequest = body(request_body).await?;
     let name = SnapshotName::new(checked.lease.value.generation, sequence)
         .map_err(|_| BrokerError::invalid())?;
@@ -591,9 +679,12 @@ async fn commit(
     broker
         .config
         .stores
-        .update(user, record.value.id, |r| {
+        .update(record.value.user_id, record.value.id, |r| {
             if r.deleted_at_ms.is_some() {
                 return Err(CommitError::Deleted);
+            }
+            if r.holder != Some(me) {
+                return Err(CommitError::NotHolder);
             }
             // Only ever raise `newest`; a lower name is answered as done.
             if r.newest.and_then(name_of).is_some_and(|n| n >= name) {
@@ -620,6 +711,7 @@ async fn commit(
         .await
         .map_err(|e| match e {
             CommitError::Deleted => BrokerError::api(Code::StoreDeleting),
+            CommitError::NotHolder => BrokerError::api(Code::NotFound),
             CommitError::State(e) => state_failed(e),
         })?;
     Ok(StatusCode::OK.into_response())
@@ -627,6 +719,7 @@ async fn commit(
 
 enum CommitError {
     Deleted,
+    NotHolder,
     State(StateError),
 }
 
