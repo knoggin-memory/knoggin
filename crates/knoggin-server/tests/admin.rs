@@ -173,7 +173,8 @@ async fn a_refusal_other_than_access_denied_fails_the_delete_check() {
         (
             BucketStep::NoDelete,
             "the bucket refused the delete with NotImplemented, not AccessDenied, so the check \
-             cannot tell whether the router's bucket key may delete objects"
+             cannot tell whether the router's bucket key may delete objects; if this bucket cannot \
+                 separate the rights, set storage.router_may_delete = true"
         )
     );
 }

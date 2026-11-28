@@ -515,7 +515,8 @@ pub async fn bucket_selftest(
             BucketStep::NoDelete,
             format!(
                 "the bucket refused the delete with {code}, not AccessDenied, so the check \
-                 cannot tell whether the router's bucket key may delete objects"
+                 cannot tell whether the router's bucket key may delete objects; if this bucket cannot \
+                 separate the rights, set storage.router_may_delete = true"
             ),
         )),
         Ok(()) => Err(fail(
