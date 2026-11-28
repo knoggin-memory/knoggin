@@ -98,9 +98,10 @@ The numbers that set Knoggin's defaults, and the checks that still need an accou
 | Engine latency | Engine latency on a 4-core arm64 machine with the fake model | One machine | Done 2026-11-25: every budget met (below) |
 | macOS keychain after an upgrade | macOS: keychain read after an upgrade replaced the binary | A Mac and two builds | Not yet run |
 | ECS and no-new-privileges | ECS: start a task with `no-new-privileges` | AWS account | Not yet run |
+| Isolation tests on AWS | `crates/knoggin-server/tests/stack_isolation.rs` against a deployed AWS stack (`KNOGGIN_STACK_URL`), including whether busybox `wget` in the probe task completes TLS with S3 | AWS account | Not yet run. Only the variable selection, the request signing (against AWS's published example) and the probe script's exit codes are tested locally |
 | ONNX Runtime for Intel Macs | Whether ONNX Runtime 1.31.1 has a library for Intel Macs | A look-up | Done 2026-11-25: no. Intel Macs stay unsupported |
 | AuthKit check | One pass against a real AuthKit environment | WorkOS account | Not yet run |
-| Directory submission | Submit the plugin to the Claude and OpenAI directories | Accounts with both directories | Not yet run |
+| Directory submission | Submit the plugin to the Claude and OpenAI directories | Accounts with both directories | Not yet run. The plugin needs an icon first: `claude plugin validate --profile directory --strict` fails only on `ICON_MISSING`, which wants a square PNG of 512 to 2048 px, and the repository holds the logos as SVG only |
 | Server instructions in claude.ai | Whether claude.ai and Claude Desktop show MCP server instructions | A claude.ai account | Not yet run |
 | Embedding time on x86_64 Linux | Embedding time on an x86_64 Linux CI runner | A GitHub-hosted x86_64 runner | Not yet run |
 
