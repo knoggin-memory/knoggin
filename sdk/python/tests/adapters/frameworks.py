@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import errno
 import socket
 import subprocess
 import sys
@@ -27,7 +28,12 @@ def check_group(extra: str, module: str) -> None:
     )
 
 
-def check_no_network() -> None:
-    """The guard of `conftest.py` refuses an outside address before anything is sent."""
+def check_no_network(refused: list[str]) -> None:
+    """The guard of `conftest.py` refuses an outside address, blocking or not, and records both attempts."""
     with pytest.raises(ConnectionRefusedError, match="reach no network"):
         socket.create_connection(("192.0.2.1", 443), timeout=1)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setblocking(False)
+        assert sock.connect_ex(("192.0.2.1", 443)) == errno.ECONNREFUSED
+    assert refused == [repr(("192.0.2.1", 443))] * 2
+    refused.clear()  # expected: the test does not fail at teardown
