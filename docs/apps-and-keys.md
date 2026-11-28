@@ -30,7 +30,7 @@ knoggin keys revoke <key id> --app research
 Without `--app`, these commands act on your personal store. On a server, make keys in the web UI's API keys page.
 
 - **A key reaches one store**, with the permissions it was made with: read, or read and write. There is no write-only key.
-- **A read-only key** can recall and list, but never save, change or forget. A recall with it is not recorded either. Give one to any agent that runs tools without asking you first.
+- **A read-only key** can recall and list, but never save, change or forget. A recall with it is not recorded either. It is how you stop an agent from saving: an agent with a read-write key saves without asking you.
 - **Every key expires**, after 30, 90, 180 or 365 days; 90 by default. From 14 days before, every answer carries the header `Knoggin-Key-Expires`, and the Python SDK warns once.
 - **Rotating** a key, in the web UI, makes a new key with the same name and permissions and revokes the old one at once. The new key lives 90 days unless you choose another lifetime.
 - **Revoking** stops a key on its next request. An open event stream, export or import that uses it ends within a minute.

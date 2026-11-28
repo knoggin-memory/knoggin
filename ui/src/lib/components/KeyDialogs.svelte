@@ -108,7 +108,7 @@
     <div class="field" role="group" aria-labelledby="key-perms">
       <span class="label" id="key-perms">Permissions</span>
       <label class="check" for="key-read"><input id="key-read" type="checkbox" checked disabled /><span class="t"><span>Read</span><span class="hint">Recall and search memories. Every key can read.</span></span></label>
-      <label class="check" for="key-write"><input id="key-write" type="checkbox" bind:checked={write} /><span class="t"><span>Write</span><span class="hint">Store, reinforce and forget. Leave off for bots that should only recall.</span></span></label>
+      <label class="check" for="key-write"><input id="key-write" type="checkbox" bind:checked={write} /><span class="t"><span>Write</span><span class="hint">Store, reinforce and forget, without asking you. Leave off for agents that should only recall.</span></span></label>
     </div>
     <div class="field">
       <label for="key-exp">Expires</label>
