@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import errno
+import os
 import socket
 import subprocess
 import sys
@@ -11,6 +12,7 @@ from importlib.metadata import requires, version
 
 import pytest
 from packaging.requirements import Requirement
+from packaging.version import Version
 
 
 def check_group(extra: str, module: str) -> None:
@@ -21,6 +23,13 @@ def check_group(extra: str, module: str) -> None:
     assert wanted, f"the package has no extra {extra!r}"
     for r in wanted:
         assert r.specifier.contains(version(r.name), prereleases=True), f"{r.name} {version(r.name)} is not {r}"
+    floor = os.environ.get("KNOGGIN_ADAPTER_FLOOR")
+    if floor:  # CI's floor run pins exactly the lowest version the extra allows
+        pin = Requirement(floor)
+        (r,) = [r for r in wanted if r.name == pin.name]
+        assert [Version(s.version) for s in r.specifier if s.operator == ">="] == [
+            Version(s.version) for s in pin.specifier
+        ], f"CI's floor run pins {pin}, the extra asks for {r}"
     __import__(module)
     probe = f"import sys, knoggin; sys.exit({module!r} in sys.modules)"
     assert subprocess.run([sys.executable, "-c", probe], check=False).returncode == 0, (

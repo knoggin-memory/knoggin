@@ -1421,20 +1421,19 @@ dev = [
     { name = "ruff" },
 ]
 google-adk = [
-    { name = "google-adk" },
+    { name = "knoggin", extra = ["google-adk"], marker = "extra == 'group-7-knoggin-google-adk' or extra == 'group-7-knoggin-langchain' and (extra == 'group-7-knoggin-litellm' or extra == 'group-7-knoggin-openai-agents' or extra == 'group-7-knoggin-pydantic-ai') or extra == 'group-7-knoggin-litellm' and (extra == 'group-7-knoggin-openai-agents' or extra == 'group-7-knoggin-pydantic-ai') or extra == 'group-7-knoggin-openai-agents' and extra == 'group-7-knoggin-pydantic-ai'" },
 ]
 langchain = [
-    { name = "langchain" },
+    { name = "knoggin", extra = ["langchain"], marker = "extra == 'group-7-knoggin-langchain' or extra == 'group-7-knoggin-google-adk' and (extra == 'group-7-knoggin-litellm' or extra == 'group-7-knoggin-openai-agents' or extra == 'group-7-knoggin-pydantic-ai') or extra == 'group-7-knoggin-litellm' and (extra == 'group-7-knoggin-openai-agents' or extra == 'group-7-knoggin-pydantic-ai') or extra == 'group-7-knoggin-openai-agents' and extra == 'group-7-knoggin-pydantic-ai'" },
 ]
 litellm = [
-    { name = "litellm" },
+    { name = "knoggin", extra = ["litellm"], marker = "extra == 'group-7-knoggin-litellm' or extra == 'group-7-knoggin-google-adk' and (extra == 'group-7-knoggin-langchain' or extra == 'group-7-knoggin-openai-agents' or extra == 'group-7-knoggin-pydantic-ai') or extra == 'group-7-knoggin-langchain' and (extra == 'group-7-knoggin-openai-agents' or extra == 'group-7-knoggin-pydantic-ai') or extra == 'group-7-knoggin-openai-agents' and extra == 'group-7-knoggin-pydantic-ai'" },
 ]
 openai-agents = [
-    { name = "mcp" },
-    { name = "openai-agents" },
+    { name = "knoggin", extra = ["openai-agents"], marker = "extra == 'group-7-knoggin-openai-agents' or extra == 'group-7-knoggin-google-adk' and (extra == 'group-7-knoggin-langchain' or extra == 'group-7-knoggin-litellm' or extra == 'group-7-knoggin-pydantic-ai') or extra == 'group-7-knoggin-langchain' and (extra == 'group-7-knoggin-litellm' or extra == 'group-7-knoggin-pydantic-ai') or extra == 'group-7-knoggin-litellm' and extra == 'group-7-knoggin-pydantic-ai'" },
 ]
 pydantic-ai = [
-    { name = "pydantic-ai-slim" },
+    { name = "knoggin", extra = ["pydantic-ai"], marker = "extra == 'group-7-knoggin-pydantic-ai' or extra == 'group-7-knoggin-google-adk' and (extra == 'group-7-knoggin-langchain' or extra == 'group-7-knoggin-litellm' or extra == 'group-7-knoggin-openai-agents') or extra == 'group-7-knoggin-langchain' and (extra == 'group-7-knoggin-litellm' or extra == 'group-7-knoggin-openai-agents') or extra == 'group-7-knoggin-litellm' and extra == 'group-7-knoggin-openai-agents'" },
 ]
 
 [package.metadata]
@@ -1458,14 +1457,11 @@ dev = [
     { name = "respx" },
     { name = "ruff" },
 ]
-google-adk = [{ name = "google-adk", specifier = ">=2.15" }]
-langchain = [{ name = "langchain", specifier = ">=1.5" }]
-litellm = [{ name = "litellm", specifier = ">=1.110" }]
-openai-agents = [
-    { name = "mcp", specifier = ">=1,<3" },
-    { name = "openai-agents", specifier = ">=0.25" },
-]
-pydantic-ai = [{ name = "pydantic-ai-slim", specifier = ">=2.71" }]
+google-adk = [{ name = "knoggin", extras = ["google-adk"] }]
+langchain = [{ name = "knoggin", extras = ["langchain"] }]
+litellm = [{ name = "knoggin", extras = ["litellm"] }]
+openai-agents = [{ name = "knoggin", extras = ["openai-agents"] }]
+pydantic-ai = [{ name = "knoggin", extras = ["pydantic-ai"] }]
 
 [[package]]
 name = "langchain"

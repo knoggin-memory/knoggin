@@ -404,8 +404,10 @@ jobs:
         working-directory: .
       - run: rustup toolchain install
         working-directory: .
+      # The sdk job and the two adapter jobs that start a daemon share one cache of this build.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          shared-key: knoggin-debug
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build -p knoggin --locked
         working-directory: .
@@ -440,7 +442,8 @@ jobs:
     env:
       UV_PYTHON_DOWNLOADS: manual
       UV_PYTHON: ${{ matrix.python }}
-      WITH: ${{ matrix.with }}
+      # The floor run pins the framework; a test checks the pin against the extra.
+      KNOGGIN_ADAPTER_FLOOR: ${{ matrix.with }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -454,7 +457,7 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/uv"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: uv python install "$UV_PYTHON"
-      - run: uv run --locked --group litellm ${WITH:+--with "$WITH"} pytest tests/adapters/litellm
+      - run: uv run --locked --group litellm ${KNOGGIN_ADAPTER_FLOOR:+--with "$KNOGGIN_ADAPTER_FLOOR"} pytest tests/adapters/litellm
       - if: matrix.versions == 'newest'
         run: uv run --locked --group litellm pyright -p pyright-adapters.json tests/adapters/*.py tests/adapters/litellm
       - if: matrix.versions == 'newest'
@@ -481,7 +484,8 @@ jobs:
       UV_PYTHON_DOWNLOADS: manual
       KNOGGIN_BIN: ${{ github.workspace }}/target/debug/knoggin
       UV_PYTHON: ${{ matrix.python }}
-      WITH: ${{ matrix.with }}
+      # The floor run pins the framework; a test checks the pin against the extra.
+      KNOGGIN_ADAPTER_FLOOR: ${{ matrix.with }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -498,12 +502,14 @@ jobs:
       # The adapter's contract tests start a daemon built from this commit.
       - run: rustup toolchain install
         working-directory: .
+      # The sdk job and the two adapter jobs that start a daemon share one cache of this build.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          shared-key: knoggin-debug
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build -p knoggin --locked
         working-directory: .
-      - run: uv run --locked --group pydantic-ai ${WITH:+--with "$WITH"} pytest tests/adapters/pydantic_ai
+      - run: uv run --locked --group pydantic-ai ${KNOGGIN_ADAPTER_FLOOR:+--with "$KNOGGIN_ADAPTER_FLOOR"} pytest tests/adapters/pydantic_ai
       - if: matrix.versions == 'newest'
         run: uv run --locked --group pydantic-ai pyright -p pyright-adapters.json src/knoggin/pydantic_ai.py tests/adapters/*.py tests/adapters/pydantic_ai
       - if: matrix.versions == 'newest'
@@ -530,7 +536,8 @@ jobs:
       UV_PYTHON_DOWNLOADS: manual
       KNOGGIN_BIN: ${{ github.workspace }}/target/debug/knoggin
       UV_PYTHON: ${{ matrix.python }}
-      WITH: ${{ matrix.with }}
+      # The floor run pins the framework; a test checks the pin against the extra.
+      KNOGGIN_ADAPTER_FLOOR: ${{ matrix.with }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -547,12 +554,14 @@ jobs:
       # The adapter's contract tests start a daemon built from this commit.
       - run: rustup toolchain install
         working-directory: .
+      # The sdk job and the two adapter jobs that start a daemon share one cache of this build.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          shared-key: knoggin-debug
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build -p knoggin --locked
         working-directory: .
-      - run: uv run --locked --group openai-agents ${WITH:+--with "$WITH"} pytest tests/adapters/openai_agents
+      - run: uv run --locked --group openai-agents ${KNOGGIN_ADAPTER_FLOOR:+--with "$KNOGGIN_ADAPTER_FLOOR"} pytest tests/adapters/openai_agents
       - if: matrix.versions == 'newest'
         run: uv run --locked --group openai-agents pyright -p pyright-adapters.json src/knoggin/openai_agents.py tests/adapters/*.py tests/adapters/openai_agents
       - if: matrix.versions == 'newest'
@@ -578,7 +587,8 @@ jobs:
     env:
       UV_PYTHON_DOWNLOADS: manual
       UV_PYTHON: ${{ matrix.python }}
-      WITH: ${{ matrix.with }}
+      # The floor run pins the framework; a test checks the pin against the extra.
+      KNOGGIN_ADAPTER_FLOOR: ${{ matrix.with }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -592,7 +602,7 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/uv"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: uv python install "$UV_PYTHON"
-      - run: uv run --locked --group langchain ${WITH:+--with "$WITH"} pytest tests/adapters/langchain
+      - run: uv run --locked --group langchain ${KNOGGIN_ADAPTER_FLOOR:+--with "$KNOGGIN_ADAPTER_FLOOR"} pytest tests/adapters/langchain
       - if: matrix.versions == 'newest'
         run: uv run --locked --group langchain pyright -p pyright-adapters.json tests/adapters/*.py tests/adapters/langchain
       - if: matrix.versions == 'newest'
@@ -618,7 +628,8 @@ jobs:
     env:
       UV_PYTHON_DOWNLOADS: manual
       UV_PYTHON: ${{ matrix.python }}
-      WITH: ${{ matrix.with }}
+      # The floor run pins the framework; a test checks the pin against the extra.
+      KNOGGIN_ADAPTER_FLOOR: ${{ matrix.with }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -632,7 +643,7 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/uv"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: uv python install "$UV_PYTHON"
-      - run: uv run --locked --group google-adk ${WITH:+--with "$WITH"} pytest tests/adapters/google_adk
+      - run: uv run --locked --group google-adk ${KNOGGIN_ADAPTER_FLOOR:+--with "$KNOGGIN_ADAPTER_FLOOR"} pytest tests/adapters/google_adk
       - if: matrix.versions == 'newest'
         run: uv run --locked --group google-adk pyright -p pyright-adapters.json tests/adapters/*.py tests/adapters/google_adk
       - if: matrix.versions == 'newest'
