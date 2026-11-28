@@ -447,7 +447,13 @@ async fn open(
     let key = broker
         .config
         .keys
-        .unwrap(store_id, &wrapped)
+        .unwrap(
+            knoggin_crypto::KeyScope {
+                store: store_id,
+                generation: 0,
+            },
+            &wrapped,
+        )
         .await
         .map_err(|e| match e {
             KeyError::UnknownMasterKey { .. } | KeyError::Unwrap => {

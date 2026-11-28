@@ -264,7 +264,13 @@ async fn open_picks_the_snapshot_the_rules_name() {
         .value;
     let key = rig
         .keys
-        .unwrap(a.store, &record.wrapped().unwrap())
+        .unwrap(
+            knoggin_crypto::KeyScope {
+                store: a.store,
+                generation: 0,
+            },
+            &record.wrapped().unwrap(),
+        )
         .await
         .unwrap();
     assert_eq!(*answer.data_key.0, *key.to_base64url());

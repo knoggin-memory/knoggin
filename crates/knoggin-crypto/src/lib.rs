@@ -11,5 +11,5 @@ pub mod source;
 pub mod testing;
 pub mod token;
 
-pub use key::{DataKey, KeyError, KeyProvider, WrappedKey};
+pub use key::{DataKey, KeyError, KeyProvider, KeyScope, WrappedKey};
 pub use local::{LocalKeyProvider, MasterKeySet};

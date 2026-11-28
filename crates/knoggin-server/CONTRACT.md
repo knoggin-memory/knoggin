@@ -184,7 +184,7 @@ the per-address and per-user rates are read from `RouterLimits` by `run_router` 
 
 | Module | Offers |
 | --- | --- |
-| `kms` | `KmsKeyProvider::new(&SdkConfig, key_arn)` implements `KeyProvider` (`GenerateDataKey`/`Decrypt` with the context `knoggin:store`); `with_timeouts(builder)` + `from_conf` for a test client |
+| `kms` | `KmsKeyProvider::new(&SdkConfig, key_arn)` implements `KeyProvider` (`GenerateDataKey`/`Decrypt` with the context `knoggin:store` and `knoggin:generation`); `with_timeouts(builder)` + `from_conf` for a test client |
 | `launcher::ecs` | `EcsLauncher::new(&SdkConfig, EcsSettings)` implements `Launcher` (`RunTask`, `DescribeTasks` with tags, `ListTasks` running and stopped, `DescribeContainerInstances` for draining, `StopTask`); `with_timeouts` + `from_conf` for a test client |
 | `aws` | `SdkConfig` re-exported, so the binary names it without `aws-config` |
 

@@ -233,9 +233,14 @@ impl Store {
         &self.fts
     }
 
-    /// The content and bookkeeping change counters.
+    /// The content, bookkeeping and forget change counters.
     pub fn changes(&self) -> ChangeCounters {
         self.changes
+    }
+
+    /// Raises the forget counter to `n` if it is lower. Touches nothing else.
+    pub fn raise_forgets(&mut self, n: u64) {
+        self.changes.forgets = self.changes.forgets.max(n);
     }
 
     /// Roughly how many bytes the store uses in memory; kept up to date by every change.

@@ -267,7 +267,13 @@ pub(crate) async fn snapshot_export(
         .with_context(|| format!("reading {}", file.display()))?;
     let (header, n) = container::read_header(&bytes)?;
     let key = provider
-        .unwrap(header.store_id, &header.wrapped_key())
+        .unwrap(
+            knoggin_crypto::KeyScope {
+                store: header.store_id,
+                generation: 0,
+            },
+            &header.wrapped_key(),
+        )
         .await?;
     let rest = bytes
         .get(n..)

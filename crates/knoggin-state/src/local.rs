@@ -18,7 +18,7 @@ use async_trait::async_trait;
 use knoggin_core::StoreId;
 use knoggin_core::snapshot::SnapshotName;
 use knoggin_crypto::container::{self, ContainerError, Header};
-use knoggin_crypto::{DataKey, KeyProvider, LocalKeyProvider, WrappedKey};
+use knoggin_crypto::{DataKey, KeyProvider, KeyScope, LocalKeyProvider, WrappedKey};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -113,7 +113,7 @@ impl LocalFileDb {
         if !existing.files.is_empty() {
             return Err(StateError::Invalid("a state file exists already"));
         }
-        let (key, wrapped) = provider.generate(StoreId::default()).await?;
+        let (key, wrapped) = provider.generate(KeyScope::STATE).await?;
         let file = StateFile {
             dir: dir.to_owned(),
             key,
@@ -175,7 +175,7 @@ impl LocalFileDb {
     pub async fn rewrap(&self, provider: &LocalKeyProvider) -> Result<(), StateError> {
         let mut inner = self.inner.lock().await;
         let wrapped = match &inner.file {
-            Some(file) => provider.wrap(StoreId::default(), &file.key)?,
+            Some(file) => provider.wrap(KeyScope::STATE, &file.key)?,
             None => return Ok(()),
         };
         let table = inner.table.clone();
@@ -330,7 +330,7 @@ async fn read_state_file(
         .expect(StoreId::default(), name)
         .map_err(container_error)?;
     let key = provider
-        .unwrap(StoreId::default(), &header.wrapped_key())
+        .unwrap(KeyScope::STATE, &header.wrapped_key())
         .await?;
     let (h, k) = (header.clone(), key.clone());
     let table = blocking(move || {

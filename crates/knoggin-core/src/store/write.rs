@@ -70,6 +70,11 @@ impl Store {
         self.last_write_client.clone_from(&ctx.client);
     }
 
+    /// Counts one client operation that removed at least one memory.
+    pub(crate) fn note_forget(&mut self) {
+        self.changes.forgets = self.changes.forgets.saturating_add(1);
+    }
+
     /// Saves one memory. `vector` is the document
     /// embedding when the host already has it. One that is not valid for the store's
     /// model counts as a failed embedding: the memory is saved `Pending` with one
@@ -383,6 +388,7 @@ impl Store {
         let deleted = found && self.remove_memory(req.id).is_some();
         if deleted {
             self.note_client_write(ctx, now);
+            self.note_forget();
         }
         Ok(crate::ops::Forgotten {
             id: req.id,
@@ -418,6 +424,7 @@ impl Store {
         }
         if deleted_count > 0 && !req.dry_run {
             self.note_client_write(ctx, now);
+            self.note_forget();
         }
         Ok(ForgetManyResult {
             results,
@@ -517,7 +524,7 @@ pub(crate) mod tests {
     use crate::embed::EmbeddingProvider;
     use crate::id::{NamespaceId, StoreId};
     use crate::model::EdgeKey;
-    use crate::ops::CreateNamespace;
+    use crate::ops::{CreateNamespace, DeleteNamespace};
     use crate::testing::FakeProvider;
     use serde_json::json;
 
@@ -976,6 +983,106 @@ pub(crate) mod tests {
         );
         assert!(s.store_memories(body, vec![mid(9)], &ctx(), t(T0)).is_err());
         assert_matches_rebuild(&mut s);
+    }
+
+    #[test]
+    fn the_forget_counter_rises_only_when_a_client_operation_removed_memories() {
+        let mut s = store();
+        for n in 1..=6 {
+            save(&mut s, n, "alpha");
+        }
+        namespace(&mut s, "work");
+        namespace(&mut s, "empty");
+        for n in [7, 8] {
+            let r = req(json!({ "summary": "beta", "namespace": "work" }));
+            s.store_memory(r, mid(n), None, &ctx(), t(T0)).unwrap();
+        }
+        let forgets = |s: &Store| s.changes().forgets;
+        assert_eq!(forgets(&s), 0, "saves and namespace writes do not count");
+        let one = |id, namespace: Option<&str>| ForgetMemory {
+            id,
+            namespace: namespace.map(Into::into),
+        };
+        let many = |ids: Vec<MemoryId>, dry_run| ForgetMemories { ids, dry_run };
+
+        // One memory: an unknown ID and a namespace mismatch leave it alone.
+        s.forget_memory(one(mid(99), None), &ctx(), t(T0)).unwrap();
+        s.forget_memory(one(mid(1), Some("work")), &ctx(), t(T0))
+            .unwrap();
+        assert_eq!(forgets(&s), 0);
+        s.forget_memory(one(mid(1), None), &ctx(), t(T0)).unwrap();
+        assert_eq!(forgets(&s), 1);
+        s.forget_memory(one(mid(1), None), &ctx(), t(T0)).unwrap();
+        assert_eq!(forgets(&s), 1, "already gone");
+
+        // A batch: once for the whole batch; a dry run or only unknown IDs leave it alone.
+        s.forget_memories(many(vec![mid(2), mid(3)], true), &ctx(), t(T0))
+            .unwrap();
+        s.forget_memories(many(vec![mid(1), mid(98)], false), &ctx(), t(T0))
+            .unwrap();
+        assert_eq!(forgets(&s), 1);
+        s.forget_memories(many(vec![mid(2), mid(3), mid(98)], false), &ctx(), t(T0))
+            .unwrap();
+        assert_eq!(forgets(&s), 2);
+
+        // A namespace: only when it held memories; a dry run or a refusal leave it alone.
+        let delete = |name: &str, force, dry_run| DeleteNamespace {
+            name: name.into(),
+            force,
+            dry_run,
+        };
+        assert!(
+            s.delete_namespace(delete("work", false, false), &ctx(), t(T0))
+                .is_err()
+        );
+        assert!(
+            s.delete_namespace(delete("default", true, false), &ctx(), t(T0))
+                .is_err()
+        );
+        s.delete_namespace(delete("work", true, true), &ctx(), t(T0))
+            .unwrap();
+        s.delete_namespace(delete("empty", true, false), &ctx(), t(T0))
+            .unwrap();
+        assert_eq!(forgets(&s), 2);
+        s.delete_namespace(delete("work", true, false), &ctx(), t(T0))
+            .unwrap();
+        assert_eq!(forgets(&s), 3);
+
+        // Decay removes memories without counting as a forget.
+        let late = t(T0 + 7_000 * DAY);
+        for _ in 0..3 {
+            s.sweep(late);
+        }
+        assert!(s.memory(mid(4)).is_none(), "the sweep removed it");
+        assert_eq!(forgets(&s), 3);
+    }
+
+    #[test]
+    fn raising_the_forget_counter_never_lowers_it_and_touches_nothing_else() {
+        let mut s = store();
+        save(&mut s, 1, "alpha");
+        s.forget_memory(
+            ForgetMemory {
+                id: mid(1),
+                namespace: None,
+            },
+            &ctx(),
+            t(T0),
+        )
+        .unwrap();
+        let (before, summary) = (s.changes(), s.summary());
+        assert_eq!(before.forgets, 1);
+        s.raise_forgets(7);
+        assert_eq!(
+            s.changes(),
+            crate::ops::ChangeCounters {
+                forgets: 7,
+                ..before
+            }
+        );
+        s.raise_forgets(3);
+        assert_eq!(s.changes().forgets, 7);
+        assert!(s.summary() == summary, "no write is recorded");
     }
 
     fn reinforce(s: &mut Store, n: u16, quality: u8, now: i64) -> Result<Reinforced, EngineError> {

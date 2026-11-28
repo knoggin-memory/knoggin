@@ -558,10 +558,17 @@ impl EdgeState {
     ) -> Result<Versioned<User>, ApiError> {
         let inner = self.inner();
         let store = StoreId::from_uuid(Uuid::now_v7());
-        let (_, wrapped) = inner.keys.generate(store).await.map_err(|_| {
-            tracing::error!(kind = "key", "could not make a data key");
-            ApiError::internal()
-        })?;
+        let (_, wrapped) = inner
+            .keys
+            .generate(knoggin_crypto::KeyScope {
+                store,
+                generation: 0,
+            })
+            .await
+            .map_err(|_| {
+                tracing::error!(kind = "key", "could not make a data key");
+                ApiError::internal()
+            })?;
         let (user, _) = inner
             .users
             .create(
@@ -623,10 +630,17 @@ impl EdgeState {
             return Ok(user);
         }
         let id = StoreId::from_uuid(Uuid::now_v7());
-        let (_, wrapped) = inner.keys.generate(id).await.map_err(|_| {
-            tracing::error!(kind = "key", "could not make a data key");
-            ApiError::internal()
-        })?;
+        let (_, wrapped) = inner
+            .keys
+            .generate(knoggin_crypto::KeyScope {
+                store: id,
+                generation: 0,
+            })
+            .await
+            .map_err(|_| {
+                tracing::error!(kind = "key", "could not make a data key");
+                ApiError::internal()
+            })?;
         let store = NewStore {
             id,
             name: Sensitive::new("Personal".into()),

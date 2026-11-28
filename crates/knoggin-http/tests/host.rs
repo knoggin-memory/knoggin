@@ -542,7 +542,18 @@ async fn a_snapshot_of_a_newer_format_locks_the_store_and_changes_nothing() {
     // A newer snapshot, sealed under the store's own key, in a format this build lacks.
     let record = env.t.stores.get(env.t.store).await.unwrap().unwrap().value;
     let wrapped = record.wrapped().unwrap();
-    let key = env.t.keys.unwrap(env.t.store, &wrapped).await.unwrap();
+    let key = env
+        .t
+        .keys
+        .unwrap(
+            knoggin_crypto::KeyScope {
+                store: env.t.store,
+                generation: 0,
+            },
+            &wrapped,
+        )
+        .await
+        .unwrap();
     let name = knoggin_core::snapshot::SnapshotName::new(9, 1).unwrap();
     let header = knoggin_crypto::container::Header::new(
         env.t.store,

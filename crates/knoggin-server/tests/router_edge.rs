@@ -549,7 +549,10 @@ async fn in_mode_none_the_router_refuses_a_state_database_with_another_user() {
     edge.auth_mode = AuthMode::None;
     assert!(guard::router_users(&edge, &users).await.is_ok());
     let (_, wrapped) = test_provider()
-        .generate(StoreId::from_uuid(Uuid::now_v7()))
+        .generate(knoggin_crypto::KeyScope {
+            store: StoreId::from_uuid(Uuid::now_v7()),
+            generation: 0,
+        })
         .await
         .unwrap();
     users

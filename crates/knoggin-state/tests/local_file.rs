@@ -316,7 +316,11 @@ async fn use_previous_sets_the_newest_file_aside() {
     let keys = Arc::new(test_field_keys());
     let users = Users::new(db.clone(), keys);
     let store = StoreId::from_uuid(uuid::Uuid::now_v7());
-    let (_, wrapped) = knoggin_crypto::KeyProvider::generate(&test_provider(), store)
+    let scope = knoggin_crypto::KeyScope {
+        store,
+        generation: 0,
+    };
+    let (_, wrapped) = knoggin_crypto::KeyProvider::generate(&test_provider(), scope)
         .await
         .unwrap();
     let new = NewUser {
@@ -421,7 +425,11 @@ async fn no_personal_field_is_readable_in_the_decrypted_state_file() {
     let keys = Arc::new(test_field_keys());
     let now = clock.now();
     let store = StoreId::from_uuid(uuid::Uuid::now_v7());
-    let (_, wrapped) = knoggin_crypto::KeyProvider::generate(&test_provider(), store)
+    let scope = knoggin_crypto::KeyScope {
+        store,
+        generation: 0,
+    };
+    let (_, wrapped) = knoggin_crypto::KeyProvider::generate(&test_provider(), scope)
         .await
         .unwrap();
     let new = NewUser {

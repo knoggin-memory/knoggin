@@ -190,7 +190,13 @@ mod tests {
         let none = server(AuthMode::None, "https://m.example", false);
         router_users(&none, &users).await.unwrap();
         let store = StoreId::from_uuid(Uuid::now_v7());
-        let (_, wrapped) = keys.generate(store).await.unwrap();
+        let (_, wrapped) = keys
+            .generate(knoggin_crypto::KeyScope {
+                store,
+                generation: 0,
+            })
+            .await
+            .unwrap();
         users
             .create(
                 NewUser {

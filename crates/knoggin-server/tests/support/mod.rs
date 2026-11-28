@@ -213,7 +213,14 @@ impl Rig {
     pub async fn account(&self) -> Account {
         let user = UserId::from_uuid(Uuid::now_v7());
         let store = StoreId::from_uuid(Uuid::now_v7());
-        let (_, wrapped) = self.keys.generate(store).await.unwrap();
+        let (_, wrapped) = self
+            .keys
+            .generate(knoggin_crypto::KeyScope {
+                store,
+                generation: 0,
+            })
+            .await
+            .unwrap();
         self.users
             .create(
                 NewUser {
@@ -239,7 +246,14 @@ impl Rig {
     /// Another store (an app) of the user.
     pub async fn app(&self, user: UserId, name: &str) -> StoreId {
         let store = StoreId::from_uuid(Uuid::now_v7());
-        let (_, wrapped) = self.keys.generate(store).await.unwrap();
+        let (_, wrapped) = self
+            .keys
+            .generate(knoggin_crypto::KeyScope {
+                store,
+                generation: 0,
+            })
+            .await
+            .unwrap();
         self.stores
             .create_app(
                 user,

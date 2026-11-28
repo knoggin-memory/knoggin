@@ -42,6 +42,12 @@ fn populated() -> Store {
         Ok((save(s, 3, "maya again"), vec![mid(1)]))
     })
     .unwrap();
+    save(&mut s, 4, "forgotten soon");
+    let forget = crate::ops::ForgetMemory {
+        id: mid(4),
+        namespace: None,
+    };
+    s.forget_memory(forget, &ctx(), t(T0 + DAY)).unwrap();
     s
 }
 
@@ -104,6 +110,7 @@ fn round_trip_is_byte_exact_and_rebuilds_every_index() {
     );
     assert_eq!(back.created_at(), s.created_at());
     assert_eq!(back.changes(), s.changes());
+    assert_eq!(back.changes().forgets, 1, "the forget counter is saved");
     assert_eq!(back.estimated_bytes(), s.estimated_bytes());
     let ns = back.namespace_by_name("default").unwrap().id;
     let hits = back.fts().search(ns, "window", 10).unwrap();

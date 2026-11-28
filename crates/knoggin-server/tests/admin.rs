@@ -175,7 +175,11 @@ async fn rotating_the_master_key_rewraps_every_key_and_keeps_the_old_one() {
     let stores = Stores::new(db.clone(), fields);
     let user = UserId::from_uuid(uuid::Uuid::now_v7());
     let store = StoreId::from_uuid(uuid::Uuid::now_v7());
-    let (old_key, wrapped) = provider.generate(store).await.unwrap();
+    let scope = knoggin_crypto::KeyScope {
+        store,
+        generation: 0,
+    };
+    let (old_key, wrapped) = provider.generate(scope).await.unwrap();
     users
         .create(
             NewUser {
@@ -210,12 +214,12 @@ async fn rotating_the_master_key_rewraps_every_key_and_keeps_the_old_one() {
     assert_eq!(after.value.kek_id, kek);
     let new_provider = knoggin_crypto::LocalKeyProvider::new(rotated);
     let same = new_provider
-        .unwrap(store, &after.value.wrapped().unwrap())
+        .unwrap(scope, &after.value.wrapped().unwrap())
         .await
         .unwrap();
     assert_eq!(same.expose(), old_key.expose(), "the data key itself stays");
     // The old key is still in the set: an old snapshot header still opens.
-    assert!(new_provider.unwrap(store, &wrapped).await.is_ok());
+    assert!(new_provider.unwrap(scope, &wrapped).await.is_ok());
     // The field key opens under the new set, and the records still read.
     let fields = Arc::new(
         Meta::new(db.clone())

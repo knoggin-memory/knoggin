@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use knoggin_core::{StoreId, UserId};
-use knoggin_crypto::{KeyProvider, LocalKeyProvider, WrappedKey};
+use knoggin_core::UserId;
+use knoggin_crypto::{KeyProvider, KeyScope, LocalKeyProvider, WrappedKey};
 
 use crate::db::{Cond, StateDb, StateError};
 use crate::keys;
@@ -67,19 +67,19 @@ impl Meta {
     }
 
     /// Unwraps the field key. On an empty deployment (no user yet) it first makes one with
-    /// `KeyProvider::generate` under the nil store ID and writes it with `Absent`; if users
+    /// `KeyProvider::generate` under `KeyScope::STATE` and writes it with `Absent`; if users
     /// exist without it, `FieldKeyMissing`.
     pub async fn field_keys(&self, provider: &dyn KeyProvider) -> Result<FieldKeys, StateError> {
         for _ in 0..2 {
             if let Some(r) = self.field_key_record().await? {
                 let wrapped = field_wrapped(&r.value)?;
-                let key = provider.unwrap(StoreId::default(), &wrapped).await?;
+                let key = provider.unwrap(KeyScope::STATE, &wrapped).await?;
                 return Ok(FieldKeys::new(&key));
             }
             if !self.db.query(keys::USERS, "", 1, None).await?.is_empty() {
                 return Err(StateError::FieldKeyMissing);
             }
-            let (key, wrapped) = provider.generate(StoreId::default()).await?;
+            let (key, wrapped) = provider.generate(KeyScope::STATE).await?;
             match self
                 .db
                 .write(vec![field_write(&wrapped, Cond::Absent)?])
@@ -180,9 +180,9 @@ pub async fn rewrap_master_key(
         .await?
         .ok_or(StateError::FieldKeyMissing)?;
     let field = provider
-        .unwrap(StoreId::default(), &field_wrapped(&record.value)?)
+        .unwrap(KeyScope::STATE, &field_wrapped(&record.value)?)
         .await?;
-    let wrapped = provider.wrap(StoreId::default(), &field)?;
+    let wrapped = provider.wrap(KeyScope::STATE, &field)?;
     db.write(vec![field_write(&wrapped, record.cond())?])
         .await?;
 
@@ -207,8 +207,12 @@ pub async fn rewrap_master_key(
             }
             for store in stores.list(user).await? {
                 let id = store.value.id;
-                let data_key = provider.unwrap(id, &store.value.wrapped()?).await?;
-                let wrapped = provider.wrap(id, &data_key)?;
+                let scope = KeyScope {
+                    store: id,
+                    generation: 0,
+                };
+                let data_key = provider.unwrap(scope, &store.value.wrapped()?).await?;
+                let wrapped = provider.wrap(scope, &data_key)?;
                 stores
                     .update(user, id, |s| {
                         s.set_wrapped(&wrapped);
@@ -253,8 +257,12 @@ mod tests {
         for chunk in dangling.chunks(25) {
             db.write(chunk.to_vec()).await.unwrap();
         }
-        let store = StoreId::from_uuid(Uuid::now_v7());
-        let (_, wrapped) = provider.generate(store).await.unwrap();
+        let store = knoggin_core::StoreId::from_uuid(Uuid::now_v7());
+        let scope = KeyScope {
+            store,
+            generation: 0,
+        };
+        let (_, wrapped) = provider.generate(scope).await.unwrap();
         Users::new(db.clone(), keys.clone())
             .create(
                 NewUser {

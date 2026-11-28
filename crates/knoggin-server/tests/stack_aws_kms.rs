@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! `KmsKeyProvider` against KMS on a moto container: data keys made with the store as
-//! encryption context open for that store only; a damaged blob, another store, another key
-//! and a missing key all fail; after KMS rotates the key's material, old blobs still open
-//! and nothing is re-wrapped. No AWS account: dummy credentials and moto's address are set
-//! here, on the client, and nowhere else.
+//! `KmsKeyProvider` against KMS on a moto container: data keys made with the store and the
+//! generation as encryption context open for that store and generation only; a damaged blob,
+//! another store, another generation, another key and a missing key all fail; after KMS rotates
+//! the key's material, old blobs still open and nothing is re-wrapped. No AWS account: dummy
+//! credentials and moto's address are set here, on the client, and nowhere else.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use aws_config::Region;
 use aws_sdk_kms::config::Credentials;
 use knoggin_core::StoreId;
-use knoggin_crypto::{KeyError, KeyProvider, WrappedKey};
+use knoggin_crypto::{KeyError, KeyProvider, KeyScope, WrappedKey};
 use knoggin_server::kms::KmsKeyProvider;
 use testcontainers::GenericImage;
 use testcontainers::core::{IntoContainerPort, WaitFor};
@@ -43,8 +43,11 @@ fn moto_config(endpoint: &str) -> aws_sdk_kms::Config {
     .build()
 }
 
-fn store() -> StoreId {
-    StoreId::from_uuid(Uuid::now_v7())
+fn store() -> KeyScope {
+    KeyScope {
+        store: StoreId::from_uuid(Uuid::now_v7()),
+        generation: 7,
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -103,14 +106,25 @@ async fn kms_key_provider_on_moto() {
         key.expose()
     );
 
-    // The admin self-test's round trip under the nil UUID.
-    let nil = StoreId::from_uuid(Uuid::nil());
-    let (k, w) = kms.generate(nil).await.unwrap();
-    assert_eq!(kms.unwrap(nil, &w).await.unwrap().expose(), k.expose());
+    // The admin self-test's round trip under the nil UUID, generation 0.
+    let (k, w) = kms.generate(KeyScope::STATE).await.unwrap();
+    assert_eq!(
+        kms.unwrap(KeyScope::STATE, &w).await.unwrap().expose(),
+        k.expose()
+    );
 
-    // Another store's context does not open it, nor does a damaged blob.
+    // Another store's or another generation's context does not open it, nor does a damaged
+    // blob.
     assert!(matches!(
         kms.unwrap(store(), &wrapped).await,
+        Err(KeyError::Unwrap)
+    ));
+    let next = KeyScope {
+        generation: a.generation + 1,
+        ..a
+    };
+    assert!(matches!(
+        kms.unwrap(next, &wrapped).await,
         Err(KeyError::Unwrap)
     ));
     let mut damaged = wrapped.clone();

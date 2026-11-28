@@ -368,7 +368,12 @@ pub async fn ensure_local_user(
         return Ok(u.value.id);
     }
     let store = StoreId::from_uuid(Uuid::now_v7());
-    let (_, wrapped) = keys.generate(store).await?;
+    let (_, wrapped) = keys
+        .generate(knoggin_crypto::KeyScope {
+            store,
+            generation: 0,
+        })
+        .await?;
     let (user, _) = users
         .create(
             NewUser {
