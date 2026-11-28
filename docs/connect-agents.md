@@ -92,7 +92,7 @@ Whether claude.ai and Claude Desktop show Knoggin's server instructions to the m
 
 ## Other agents
 
-Snippets and steps for Open WebUI, LibreChat, n8n, Antigravity CLI, Home Assistant, the GitHub Copilot coding agent, Goose, Cline, Kiro, Windsurf and Grok are in their folders under [`integrations/connectors/`](../integrations/connectors). Several of these run tools without asking you first, so they save whenever they decide to. To stop one from saving, give it a **read-only key**, so it can recall but never save, change or forget.
+Snippets and steps for Open WebUI, LibreChat, n8n, Antigravity CLI, Home Assistant, the GitHub Copilot coding agent, Goose, Cline, Kiro, Windsurf and Grok are in their folders under [`integrations/connectors/`](../integrations/connectors). Several of these run tools without asking you first, so they save whenever they decide to. To stop one from saving, give it a **read-only key**, so it can recall but never save, change or forget (Home Assistant has no place for one).
 
 ## Your own code
 
