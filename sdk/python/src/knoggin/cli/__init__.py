@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """The `knoggin` command of the Python package.
 
 `knoggin init` (and `init --uninstall`) is handled here. Every other argument goes straight to the

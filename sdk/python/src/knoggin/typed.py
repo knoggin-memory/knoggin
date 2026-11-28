@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Typed memories: save a Pydantic object as a memory, and recall memories as objects of a class.
 
 Used as `client.memories.store_model(obj)` and `client.memories.recall_models(query, as_=Cls)`.

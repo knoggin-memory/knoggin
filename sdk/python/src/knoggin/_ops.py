@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """One function per API call: each builds the request and says how to read the answer.
 
 `Client` and `AsyncClient` expose these as their methods, so the two have the same signatures.

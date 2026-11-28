@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Settings: constructor arguments win over environment variables. And the two rules checked before anything is sent."""
 
 from __future__ import annotations

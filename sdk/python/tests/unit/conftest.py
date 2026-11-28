@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Shared fixtures of the unit tests: answers in the REST shapes, a respx router, and no real waiting."""
 
 from __future__ import annotations

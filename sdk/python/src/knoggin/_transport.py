@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """What `Client` and `AsyncClient` share: one request description, the retry rule, and the error mapping."""
 
 from __future__ import annotations

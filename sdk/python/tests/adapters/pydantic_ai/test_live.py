@@ -1,16 +1,13 @@
-# SPDX-License-Identifier: AGPL-3.0-only
-"""The two framework adapters against a live Knoggin. No model is called: Pydantic AI's `TestModel` stands in."""
+# SPDX-License-Identifier: Apache-2.0
+"""The Pydantic AI adapter against a live Knoggin. No model is called: Pydantic AI's `TestModel` stands in."""
 
 from __future__ import annotations
-
-import asyncio
-import uuid
 
 import pytest
 
 from knoggin import AsyncClient, Client
 
-from .conftest import Live
+from ...contract.conftest import Live
 
 
 def test_pydantic_ai_memory_recalls_and_waits_for_approval_to_save(live: Live, client: Client, via: str) -> None:
@@ -46,15 +43,3 @@ def test_pydantic_ai_memory_recalls_and_waits_for_approval_to_save(live: Live, c
     approved = DeferredToolResults(approvals={call.tool_call_id: ToolApproved()})
     agent.run_sync(message_history=first.all_messages(), deferred_tool_results=approved)
     assert len(list(client.memories.list())) == 2
-
-
-def test_openai_agents_server_lists_knoggin_tools(live: Live, via: str) -> None:
-    if via != "url":
-        pytest.skip("an MCP client reaches Knoggin by address")
-    from knoggin.openai_agents import READING_TOOLS, WRITING_TOOLS, mcp_server
-
-    async def tools() -> set[str]:
-        async with mcp_server(live.base_url, live.api_key, f"ct-{uuid.uuid4().hex[:8]}") as server:
-            return {t.name for t in await server.list_tools()}
-
-    assert asyncio.run(tools()) == set(READING_TOOLS) | set(WRITING_TOOLS)

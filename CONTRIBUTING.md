@@ -29,13 +29,13 @@ CI also runs `cargo deny check`, `cargo machete`, `cargo doc` with warnings deni
 - **Sign off every commit** with `git commit -s`, using your real name and email as configured in git. CI checks that every commit in a pull request has a `Signed-off-by` line that matches its author. To sign off commits you already made: `git rebase --signoff main`.
 - **Use [Conventional Commit](https://www.conventionalcommits.org/) subjects**: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`, `ci:`. The release tool builds the changelog and the version from them.
 - **One logical change per commit.** Each commit builds and passes `cargo fmt --check`, clippy and the fast tests.
-- Every source file starts with `// SPDX-License-Identifier: AGPL-3.0-only`.
+- Every source file starts with `// SPDX-License-Identifier: AGPL-3.0-only`, and every Python file under `sdk/python` with `# SPDX-License-Identifier: Apache-2.0`.
 
 Pull requests are squash-merged into `main`.
 
 ## Licence and sign-off
 
-Knoggin is licensed under the AGPL-3.0 (`AGPL-3.0-only`), and your contributions are too. There is **no contributor licence agreement**. Instead, the `Signed-off-by` line states that you agree to the Developer Certificate of Origin below.
+Knoggin is licensed under the AGPL-3.0 (`AGPL-3.0-only`), and your contributions are too. The Python SDK in `sdk/python` is licensed under the Apache License 2.0 (`Apache-2.0`), and contributions to it are too. There is **no contributor licence agreement**. Instead, the `Signed-off-by` line states that you agree to the Developer Certificate of Origin below.
 
 ```text
 Developer Certificate of Origin

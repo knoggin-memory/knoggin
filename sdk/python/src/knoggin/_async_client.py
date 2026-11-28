@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """The asynchronous client: the same methods as `Client`, as coroutines."""
 
 from __future__ import annotations

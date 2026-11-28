@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Every model's fields match the schema of the same name in `docs/openapi.json`."""
 
 from __future__ import annotations

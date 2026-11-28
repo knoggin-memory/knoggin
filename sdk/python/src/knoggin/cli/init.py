@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """`knoggin init`: install the binary and connect the agents on this machine, showing every change first.
 
 The agents' own commands are preferred over editing their files. A file is backed up before it is

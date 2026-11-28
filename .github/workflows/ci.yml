@@ -404,8 +404,10 @@ jobs:
         working-directory: .
       - run: rustup toolchain install
         working-directory: .
+      # The sdk job and the two adapter jobs that start a daemon share one cache of this build.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
+          shared-key: knoggin-debug
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build -p knoggin --locked
         working-directory: .
@@ -416,6 +418,236 @@ jobs:
       - run: uv run --locked pyright
       - run: uv run --locked mypy
       - run: uv build
+
+  # One job per framework adapter, with that framework's dependency group: its tests, then
+  # Pyright and mypy over the adapter and its tests. Twice: the framework's lowest version the
+  # extra allows on the lowest supported Python, and the version uv.lock holds on the highest.
+  sdk-litellm:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - versions: floor
+            python: "3.11.18"
+            with: litellm==1.110.0
+          - versions: newest
+            python: "3.15.2"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdk/python
+    env:
+      UV_PYTHON_DOWNLOADS: manual
+      UV_PYTHON: ${{ matrix.python }}
+      # The floor run pins the framework; a test checks the pin against the extra.
+      KNOGGIN_ADAPTER_FLOOR: ${{ matrix.with }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/uv.whl" https://files.pythonhosted.org/packages/3d/aa/26d64642d808de4a652579ef950d7cd2d37f080a8babf9c67c6b75fc4c3f/uv-0.13.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19  $RUNNER_TEMP/uv.whl" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          unzip -j -o "$RUNNER_TEMP/uv.whl" uv-0.13.9.data/scripts/uv -d "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP/bin/uv"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: uv python install "$UV_PYTHON"
+      - run: uv run --locked --group litellm ${KNOGGIN_ADAPTER_FLOOR:+--with "$KNOGGIN_ADAPTER_FLOOR"} pytest tests/adapters/litellm
+      - if: matrix.versions == 'newest'
+        run: uv run --locked --group litellm pyright -p pyright-adapters.json tests/adapters/*.py tests/adapters/litellm
+      - if: matrix.versions == 'newest'
+        run: uv run --locked --group litellm mypy tests/adapters/*.py tests/adapters/litellm/*.py
+
+  sdk-pydantic-ai:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - versions: floor
+            python: "3.11.18"
+            with: pydantic-ai-slim==2.71.0
+          - versions: newest
+            python: "3.15.2"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdk/python
+    env:
+      UV_PYTHON_DOWNLOADS: manual
+      KNOGGIN_BIN: ${{ github.workspace }}/target/debug/knoggin
+      UV_PYTHON: ${{ matrix.python }}
+      # The floor run pins the framework; a test checks the pin against the extra.
+      KNOGGIN_ADAPTER_FLOOR: ${{ matrix.with }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/uv.whl" https://files.pythonhosted.org/packages/3d/aa/26d64642d808de4a652579ef950d7cd2d37f080a8babf9c67c6b75fc4c3f/uv-0.13.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19  $RUNNER_TEMP/uv.whl" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          unzip -j -o "$RUNNER_TEMP/uv.whl" uv-0.13.9.data/scripts/uv -d "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP/bin/uv"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: uv python install "$UV_PYTHON"
+      # The adapter's contract tests start a daemon built from this commit.
+      - run: rustup toolchain install
+        working-directory: .
+      # The sdk job and the two adapter jobs that start a daemon share one cache of this build.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: knoggin-debug
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build -p knoggin --locked
+        working-directory: .
+      - run: uv run --locked --group pydantic-ai ${KNOGGIN_ADAPTER_FLOOR:+--with "$KNOGGIN_ADAPTER_FLOOR"} pytest tests/adapters/pydantic_ai
+      - if: matrix.versions == 'newest'
+        run: uv run --locked --group pydantic-ai pyright -p pyright-adapters.json src/knoggin/pydantic_ai.py tests/adapters/*.py tests/adapters/pydantic_ai
+      - if: matrix.versions == 'newest'
+        run: uv run --locked --group pydantic-ai mypy src/knoggin/pydantic_ai.py tests/adapters/*.py tests/adapters/pydantic_ai/*.py
+
+  sdk-openai-agents:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - versions: floor
+            python: "3.11.18"
+            with: openai-agents==0.25.0
+          - versions: newest
+            python: "3.15.2"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdk/python
+    env:
+      UV_PYTHON_DOWNLOADS: manual
+      KNOGGIN_BIN: ${{ github.workspace }}/target/debug/knoggin
+      UV_PYTHON: ${{ matrix.python }}
+      # The floor run pins the framework; a test checks the pin against the extra.
+      KNOGGIN_ADAPTER_FLOOR: ${{ matrix.with }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/uv.whl" https://files.pythonhosted.org/packages/3d/aa/26d64642d808de4a652579ef950d7cd2d37f080a8babf9c67c6b75fc4c3f/uv-0.13.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19  $RUNNER_TEMP/uv.whl" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          unzip -j -o "$RUNNER_TEMP/uv.whl" uv-0.13.9.data/scripts/uv -d "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP/bin/uv"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: uv python install "$UV_PYTHON"
+      # The adapter's contract tests start a daemon built from this commit.
+      - run: rustup toolchain install
+        working-directory: .
+      # The sdk job and the two adapter jobs that start a daemon share one cache of this build.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: knoggin-debug
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo build -p knoggin --locked
+        working-directory: .
+      - run: uv run --locked --group openai-agents ${KNOGGIN_ADAPTER_FLOOR:+--with "$KNOGGIN_ADAPTER_FLOOR"} pytest tests/adapters/openai_agents
+      - if: matrix.versions == 'newest'
+        run: uv run --locked --group openai-agents pyright -p pyright-adapters.json src/knoggin/openai_agents.py tests/adapters/*.py tests/adapters/openai_agents
+      - if: matrix.versions == 'newest'
+        run: uv run --locked --group openai-agents mypy src/knoggin/openai_agents.py tests/adapters/*.py tests/adapters/openai_agents/*.py
+
+  sdk-langchain:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - versions: floor
+            python: "3.11.18"
+            with: langchain==1.5.0
+          - versions: newest
+            python: "3.15.2"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdk/python
+    env:
+      UV_PYTHON_DOWNLOADS: manual
+      UV_PYTHON: ${{ matrix.python }}
+      # The floor run pins the framework; a test checks the pin against the extra.
+      KNOGGIN_ADAPTER_FLOOR: ${{ matrix.with }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/uv.whl" https://files.pythonhosted.org/packages/3d/aa/26d64642d808de4a652579ef950d7cd2d37f080a8babf9c67c6b75fc4c3f/uv-0.13.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19  $RUNNER_TEMP/uv.whl" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          unzip -j -o "$RUNNER_TEMP/uv.whl" uv-0.13.9.data/scripts/uv -d "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP/bin/uv"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: uv python install "$UV_PYTHON"
+      - run: uv run --locked --group langchain ${KNOGGIN_ADAPTER_FLOOR:+--with "$KNOGGIN_ADAPTER_FLOOR"} pytest tests/adapters/langchain
+      - if: matrix.versions == 'newest'
+        run: uv run --locked --group langchain pyright -p pyright-adapters.json tests/adapters/*.py tests/adapters/langchain
+      - if: matrix.versions == 'newest'
+        run: uv run --locked --group langchain mypy tests/adapters/*.py tests/adapters/langchain/*.py
+
+  sdk-google-adk:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - versions: floor
+            python: "3.11.18"
+            with: google-adk==2.15.0
+          - versions: newest
+            python: "3.15.2"
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: sdk/python
+    env:
+      UV_PYTHON_DOWNLOADS: manual
+      UV_PYTHON: ${{ matrix.python }}
+      # The floor run pins the framework; a test checks the pin against the extra.
+      KNOGGIN_ADAPTER_FLOOR: ${{ matrix.with }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/uv.whl" https://files.pythonhosted.org/packages/3d/aa/26d64642d808de4a652579ef950d7cd2d37f080a8babf9c67c6b75fc4c3f/uv-0.13.9-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          echo "d7f459fe4fd247d830351c75686d3996ace3c6f3f728eb0e85a30b7ada0cef19  $RUNNER_TEMP/uv.whl" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/bin"
+          unzip -j -o "$RUNNER_TEMP/uv.whl" uv-0.13.9.data/scripts/uv -d "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP/bin/uv"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: uv python install "$UV_PYTHON"
+      - run: uv run --locked --group google-adk ${KNOGGIN_ADAPTER_FLOOR:+--with "$KNOGGIN_ADAPTER_FLOOR"} pytest tests/adapters/google_adk
+      - if: matrix.versions == 'newest'
+        run: uv run --locked --group google-adk pyright -p pyright-adapters.json tests/adapters/*.py tests/adapters/google_adk
+      - if: matrix.versions == 'newest'
+        run: uv run --locked --group google-adk mypy tests/adapters/*.py tests/adapters/google_adk/*.py
 
   deps:
     # Dependency review needs GitHub Advanced Security on a private repository,
@@ -465,7 +697,7 @@ jobs:
   # The one required check. Skipped jobs (deps and dco on a push) count as passed.
   ci-ok:
     if: always()
-    needs: [fmt, clippy, test, stack, budgets, doc, deny, machete, openapi, workflows, web, web-e2e, sdk, deploy, deps, dco, wording]
+    needs: [fmt, clippy, test, stack, budgets, doc, deny, machete, openapi, workflows, web, web-e2e, sdk, sdk-litellm, sdk-pydantic-ai, sdk-openai-agents, sdk-langchain, sdk-google-adk, deploy, deps, dco, wording]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}

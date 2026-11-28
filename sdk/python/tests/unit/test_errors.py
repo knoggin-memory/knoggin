@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Error mapping, retries with `Retry-After`, idempotency-key reuse, the key-expiry warning, and the two local rules."""
 
 from __future__ import annotations

@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
 # knoggin
 
 <!-- mcp-name: io.github.knoggin-memory/knoggin -->
@@ -91,8 +92,16 @@ uv run ruff check . && uv run ruff format --check . && uv run pyright && uv run 
 uv build
 ```
 
+The framework adapters' tests run one framework at a time, with that framework's dependency group
+(`litellm`, `pydantic-ai`, `openai-agents`, `langchain` or `google-adk`):
+
+```sh
+uv run --locked --group pydantic-ai pytest tests/adapters/pydantic_ai
+uv run --locked --group pydantic-ai pyright -p pyright-adapters.json src/knoggin/pydantic_ai.py tests/adapters/*.py tests/adapters/pydantic_ai
+```
+
 The contract tests start `knoggin daemon` in test mode in a temporary home, from `KNOGGIN_BIN` or the
 repository's `target/debug/knoggin` (`cargo build -p knoggin`), and skip without one. With
 `KNOGGIN_TEST_URL` and `KNOGGIN_TEST_API_KEY` they run against that address instead.
 
-Licensed under AGPL-3.0-only.
+The Python SDK is licensed under the Apache License 2.0 (`Apache-2.0`); the rest of Knoggin is `AGPL-3.0-only`.

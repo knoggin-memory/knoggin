@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """`knoggin init` against a temporary home with fake agent commands on PATH, and the launcher of the real binary."""
 
 from __future__ import annotations
