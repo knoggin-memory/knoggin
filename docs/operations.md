@@ -19,7 +19,7 @@ The web UI's **Server status** page, for admins, shows the build, the containers
 | `knoggin_requests_total`, `knoggin_request_seconds` | Errors and latency, by route |
 | `knoggin_rate_limited_total` | Clients hitting limits, by `kind` |
 | `knoggin_containers` | Containers by `state` |
-| `knoggin_claims_total`, `knoggin_claim_seconds` | Claims by `outcome`. Failed claims after an upgrade point at a bad build |
+| `knoggin_claims_total`, `knoggin_claim_seconds` | Claims by `outcome`. Failed claims after an upgrade point at a bad build. `user_cap` and `user_churn` are claims refused by `containers.max_per_user` (below) |
 | `knoggin_container_ends_total` | Containers ending, by `reason`; `memory` means a container ran out of memory |
 | `knoggin_rollout_stalled` | 1 when no container of a new build becomes ready |
 | `knoggin_container_snapshot_failures_total`, `knoggin_upload_budget_refused_total` | Snapshots that could not be saved |
@@ -27,6 +27,14 @@ The web UI's **Server status** page, for admins, shows the build, the containers
 | `knoggin_reconcile_seconds`, `knoggin_hosts_draining` | The router's own loop |
 
 Route labels are route patterns, never real paths, so no ID reaches a metric.
+
+## Containers per user
+
+A user's own container serves their personal store and every app of theirs. An isolated or shared app gets a container of its own, which can reach only that app's key, and counts toward its owner's limit.
+
+`containers.max_per_user` (6) is the most containers one user may have at once, their own included, so at most 5 isolated or shared apps of one owner run at a time. One user can therefore hold 6 times `containers.memory_mib`; size the host or `max_hosts` for that. `0` turns the limit off; the smallest limit is 2 (a user's own container and one app), so 1 is refused at start.
+
+When an owner's apps would pass it, a request to one more app is refused with 429 `rate_limited`, reason `containers_per_user`, and `Retry-After: 30`. The personal store and normal apps are never refused by it. An app container is counted again each time it is claimed: more than `max(6, 3 × (max_per_user − 1))` claims for one owner's apps in 10 minutes are refused the same way with `Retry-After: 60`. The limit is checked by each router from the container records, so two routers that claim at the same moment can each pass it by one.
 
 ## Logs
 

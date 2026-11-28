@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! The forwarder: the router's store routes.
-//! Each request waits for its user's container (claiming one if needed), goes to it over
+//! Each request waits for the container of its store's slot (claiming one if needed): the
+//! user's own container, or an isolated or shared app's own. It goes to it over
 //! the pinned link with the client's credentials and `Knoggin-` headers removed and the
 //! internal headers added last, and comes back through the filter, so that a container
 //! can never speak to the client directly. A failed or silent link is checked with the
@@ -21,6 +22,7 @@ use http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, header};
 use http_body_util::{BodyExt, Limited};
 use hyper::body::Incoming;
 use knoggin_core::UserId;
+use knoggin_http::ctx::Serving;
 use knoggin_http::ctx::headers;
 use knoggin_http::error::Relayed;
 use knoggin_http::{ApiError, RequestContext};
@@ -172,6 +174,12 @@ impl Forwarder {
             .cloned()
             .ok_or_else(ApiError::internal)?;
         let user = ctx.user_id;
+        // Where the store is served: the edge's check put it there from the store record.
+        let serving = request
+            .extensions()
+            .get::<Serving>()
+            .copied()
+            .ok_or_else(ApiError::internal)?;
         let path = request.uri().path().to_owned();
         let method = request.method().clone();
         let mcp = path == "/mcp" || path == "/mcp/plugin";
@@ -191,7 +199,7 @@ impl Forwarder {
             let warm = self
                 .fleet
                 .leases
-                .get(user)
+                .get(serving.slot)
                 .await
                 .map_err(db_error)?
                 .is_some_and(|l| l.value.state == LeaseState::Warm);
@@ -217,7 +225,7 @@ impl Forwarder {
         let mut payload = Payload::read(&self.fleet, user, body).await?;
         let resendable = resendable && payload.buffered();
         self.run(
-            user,
+            serving,
             method,
             &target,
             outgoing,
@@ -231,7 +239,7 @@ impl Forwarder {
     #[expect(clippy::too_many_arguments, reason = "one forwarded request")]
     async fn run(
         &self,
-        user: UserId,
+        serving: Serving,
         method: Method,
         target: &str,
         outgoing: HeaderMap,
@@ -250,13 +258,23 @@ impl Forwarder {
         let mut resent = false;
         loop {
             let lease = if kind == Kind::Events {
-                match self.fleet.leases.get(user).await.map_err(db_error)? {
+                match self
+                    .fleet
+                    .leases
+                    .get(serving.slot)
+                    .await
+                    .map_err(db_error)?
+                {
                     Some(l) if l.value.state == LeaseState::Warm => l,
                     _ => return Ok(StatusCode::NO_CONTENT.into_response()),
                 }
             } else {
                 self.fleet
-                    .acquire(user, deadline.saturating_duration_since(Instant::now()))
+                    .acquire(
+                        serving.slot,
+                        serving.owner,
+                        deadline.saturating_duration_since(Instant::now()),
+                    )
                     .await?
             };
             let (Some(id), Some(peer)) = (
@@ -702,7 +720,7 @@ mod tests {
             c.user_id.to_string()
         );
         assert_eq!(out.get(headers::NAMESPACE).unwrap(), "work");
-        assert_eq!(out.get(headers::PROTOCOL).unwrap(), "1");
+        assert_eq!(out.get(headers::PROTOCOL).unwrap(), "2");
     }
 
     #[test]

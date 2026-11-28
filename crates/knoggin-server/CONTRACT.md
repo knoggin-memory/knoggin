@@ -35,15 +35,28 @@ Outside the crate: `knoggin_http::ctx::headers::{CONTAINER_ID, INTERNAL_STATUS}`
   through `http_body_util::Limited` with `MAX_ANSWER_BYTES`.
 - **The container's listener**: `ServerIdentity::for_container(id)`, `server_config`, `serve_tls`
   with `admit = |_| Some(())`. Its middleware calls `verify_router_call` (except `hello`), and
-  refuses `/internal/*` that carries `Knoggin-User-Id`. A parking answer is 503 with
+  refuses `/internal/*` that carries `Knoggin-User-Id`. A forwarded request for another slot
+  than its claim's is refused with `internal` (log kind `wrong_slot`). A parking answer is 503 with
   `Knoggin-Internal-Status: parking` (`paths::PARKING`).
 - **The router's internal listener**: `ServerIdentity::from_pem(&s.internal.cert,
   s.internal.key.expose())`, `serve_tls` with an `admit` that applies the per-address bounds
   (8 open, 60 a minute, 5 failed tokens) and, with `one_host`, `user_net_cidr.contains(ip)`; the
   returned guard is held for the connection's life. Handlers read `Extension<PeerAddr>` and call
-  `verify_container_call(&secret, &headers)`, then check the lease (state, container, IP).
+  `verify_container_call(&secret, &headers)`, then check the lease of the slot the call names
+  (state, container, IP).
 - **The container's client to the router**: `router_client(env.router_cert_sha256, local)`;
-  every call gets `write_container_call(headers, &launch, user, id)`.
+  every call gets `write_container_call(headers, &launch, slot, id)` (`Knoggin-Slot`).
+- **Slots.** A container serves one `Slot` (`knoggin_state::record::Slot`): `User(user)`, the
+  personal store and every app without a container of its own, or `Store(store)`, one isolated or
+  shared app. `StoreRecord::slot()` is the only way to know where a store is served. Leases are
+  kept per slot (`lease#user:<id>`, `lease#store:<id>`); the claim, `status` and container
+  records carry the slot. The edge puts `knoggin_http::ctx::Serving { slot, owner }` in each
+  store request; the forwarder calls `Fleet::acquire(slot, owner, wait)`. A store-slot claim
+  counts toward its owner's `containers.max_per_user`.
+- **The holder rule.** The broker opens a store only for a container of its slot (else 404
+  `not_found`), and writes `StoreRecord.holder` (slot and generation) at open. Only the holder
+  saves (snapshots, commit, blob route). An open while another lease that may hold unsaved
+  writes is the holder asks it to park (`moved`) and answers 503.
 - **Signed links.** `ObjectStorage::presign_put_new` / `presign_get` with
   `Duration::from_secs(s.storage.link_ttl_seconds)` and `now`. The container sends a
   `SignedRequest` exactly as given (method, URL, every header). `names::snapshot_key(store,
@@ -81,7 +94,7 @@ ServeConfig, stop) -> ServeEnd` on `container::runtime()`; `main` exits with `en
 
 | Module | Offers |
 | --- | --- |
-| `lease` | `Fleet::new(FleetConfig, db, field_keys, launcher, storage, clock)`; `acquire(user, wait)`, `mark_gone(id, Option<StopReason>, Caller)`, `finish_parked(id)`, `request_park(user, reason)`, `status`, `park`, `limits()` (the internal listener's `PeerLimits`), `shutdown().await` (ends and joins its tasks) |
+| `lease` | `Fleet::new(FleetConfig, db, field_keys, launcher, storage, clock)`; `acquire(slot, owner, wait)`, `mark_gone(id, Option<StopReason>, Caller)`, `finish_parked(id)`, `request_park(slot, reason)`, `ask_park(slot, reason)`, `status`, `park`, `limits()` (the internal listener's `PeerLimits`), `shutdown().await` (ends and joins its tasks) |
 | `pool` | `Fleet::launch(BuildSpec)` (record `starting` first, the rest as an owned task) |
 | `reconcile` | `run(fleet, stop)`, `Fleet::take_leadership`, `Fleet::pass(&mut Reconciler)` |
 | `rollout` | `at_start(meta, own, allow_downgrade)` |
@@ -136,6 +149,7 @@ let router = broker::broker_router(BrokerConfig {
     one_host: one_host.then(|| "https://router:8443".into()), // the fleet tests: their router URL
     peers: peers.clone(),
     on_parked,                // Arc<dyn Fn(ContainerCaller) -> BoxFuture<Result<(), BrokerError>>>
+    ask_park,                 // Arc<dyn Fn(Slot, ParkReason) -> BoxFuture<()>>: Fleet::ask_park
 })?;
 serve_tls(listener, tls, router, move |peer| {
     // one host: also refuse peers outside containers.user_net_cidr
@@ -145,6 +159,8 @@ serve_tls(listener, tls, router, move |peer| {
 
 - `on_parked` writes the records "Mark gone" writes once that container has ended, plus a stop; the
   broker has already checked the caller's token, lease (`claiming` or `warm`, names it) and IP.
+- `ask_park` records a park request on the slot's lease and sends `park` to its container at once
+  (`moved` for a store that changes slot, `lifetime` for a generation that must rise).
 - `PeerLimits::clear(ip)` when a new container is recorded at an address.
 - The broker's bodies are `broker::api` (`OpenAnswer`, `UploadLink`, `CommitRequest`, ...);
   errors are `{"error":{"code","message","reason"?}}` with `BrokerCode` (`lease_lost` = 409).

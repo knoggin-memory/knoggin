@@ -1626,3 +1626,210 @@ async fn the_mcp_endpoint_sits_behind_the_credential_check() {
         .await;
     assert_eq!(r.error(), Code::PermissionDenied);
 }
+
+/// A warm lease of `slot`, as a claim leaves it.
+async fn warm_lease(env: &EdgeEnv, slot: knoggin_state::record::Slot) {
+    let mut lease = knoggin_state::record::Lease::default();
+    lease.generation = 1;
+    lease.container_id = Some(Uuid::now_v7());
+    lease.set_state(knoggin_state::record::LeaseState::Warm, env.clock.now());
+    knoggin_state::Leases::new(env.db.clone())
+        .put(slot, &lease, knoggin_state::Cond::Any)
+        .await
+        .unwrap();
+}
+
+async fn park_request(
+    env: &EdgeEnv,
+    slot: knoggin_state::record::Slot,
+) -> Option<knoggin_state::record::ParkReason> {
+    knoggin_state::Leases::new(env.db.clone())
+        .get(slot)
+        .await
+        .unwrap()
+        .and_then(|l| l.value.park_requested())
+}
+
+async fn isolate(env: &EdgeEnv, store: StoreId) {
+    env.stores
+        .update(env.user, store, |s| {
+            s.isolated = true;
+            Ok::<_, knoggin_state::StateError>(())
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn deleting_an_isolated_app_parks_its_container() {
+    use knoggin_state::record::{ParkReason, Slot};
+    let env = EdgeEnv::new().await;
+    let x = env.app("Isolated").await;
+    let normal = env.app("Normal").await;
+    isolate(&env, x).await;
+    for slot in [Slot::User(env.user), Slot::Store(x)] {
+        warm_lease(&env, slot).await;
+    }
+    let r = env
+        .local(Method::DELETE, &format!("/v1/stores/{x}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(
+        park_request(&env, Slot::Store(x)).await,
+        Some(ParkReason::Deleted)
+    );
+    assert_eq!(
+        park_request(&env, Slot::User(env.user)).await,
+        None,
+        "the user's own container keeps serving"
+    );
+    // A normal app lives in the user's container, which is not parked for it.
+    let r = env
+        .local(Method::DELETE, &format!("/v1/stores/{normal}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(park_request(&env, Slot::User(env.user)).await, None);
+}
+
+#[tokio::test]
+async fn deleting_the_account_parks_its_own_containers_only() {
+    use knoggin_state::record::{ParkReason, Slot};
+    let env = EdgeEnv::new().await;
+    let x = env.app("Isolated").await;
+    let gone = env.app("Deleted earlier").await;
+    isolate(&env, x).await;
+    isolate(&env, gone).await;
+    let r = env
+        .local(Method::DELETE, &format!("/v1/stores/{gone}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    env.clock.advance(1_000);
+    // Someone else's app that this user may use, served by its own container.
+    let elsewhere = Slot::Store(StoreId::from_uuid(Uuid::now_v7()));
+    for slot in [
+        Slot::User(env.user),
+        Slot::Store(x),
+        Slot::Store(gone),
+        elsewhere,
+    ] {
+        warm_lease(&env, slot).await;
+    }
+    let r = env
+        .local(
+            Method::DELETE,
+            "/v1/account",
+            Some(json!({ "confirm": "delete my data" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    for slot in [Slot::User(env.user), Slot::Store(x)] {
+        assert_eq!(
+            park_request(&env, slot).await,
+            Some(ParkReason::Deleted),
+            "{slot}"
+        );
+    }
+    // Not marked deleted in this call: these stay warm.
+    for slot in [Slot::Store(gone), elsewhere] {
+        assert_eq!(park_request(&env, slot).await, None, "{slot}");
+    }
+}
+
+async fn set_holder(
+    env: &EdgeEnv,
+    store: StoreId,
+    slot: knoggin_state::record::Slot,
+    generation: u64,
+) {
+    env.stores
+        .update(env.user, store, |s| {
+            s.holder = Some(knoggin_state::record::Holder { slot, generation });
+            Ok::<_, knoggin_state::StateError>(())
+        })
+        .await
+        .unwrap();
+}
+
+/// A store in the middle of a slot change: deleting it parks the container that still
+/// holds it as well, while that container's lease is still the one that opened it.
+#[tokio::test]
+async fn deleting_an_app_in_the_middle_of_a_move_parks_its_holder() {
+    use knoggin_state::record::{ParkReason, Slot};
+    let env = EdgeEnv::new().await;
+    let (x, y) = (env.app("Moving").await, env.app("Moved long ago").await);
+    for store in [x, y] {
+        isolate(&env, store).await;
+    }
+    for slot in [Slot::User(env.user), Slot::Store(x), Slot::Store(y)] {
+        warm_lease(&env, slot).await;
+    }
+    // Y was held by an older lease of the user's slot: that container is gone.
+    set_holder(&env, y, Slot::User(env.user), 0).await;
+    let r = env
+        .local(Method::DELETE, &format!("/v1/stores/{y}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    assert_eq!(park_request(&env, Slot::User(env.user)).await, None);
+    // X is still held by the user's current container.
+    set_holder(&env, x, Slot::User(env.user), 1).await;
+    let r = env
+        .local(Method::DELETE, &format!("/v1/stores/{x}"), None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    for slot in [Slot::Store(x), Slot::User(env.user)] {
+        assert_eq!(
+            park_request(&env, slot).await,
+            Some(ParkReason::Deleted),
+            "{slot}"
+        );
+    }
+}
+
+/// An account deletion that failed after marking the stores is tried again: the retry
+/// parks the containers of every store marked with that deletion, not only the ones it
+/// marks itself.
+#[tokio::test]
+async fn a_retried_account_deletion_parks_what_the_first_try_marked() {
+    use knoggin_state::record::{ParkReason, Slot};
+    let env = EdgeEnv::new().await;
+    let x = env.app("Isolated").await;
+    isolate(&env, x).await;
+    for slot in [Slot::User(env.user), Slot::Store(x)] {
+        warm_lease(&env, slot).await;
+    }
+    // What a first try leaves when it fails before its park requests: the marks only.
+    let at = env.clock.now();
+    env.users
+        .update(env.user, |u| {
+            u.deleted_at_ms = Some(at);
+            u.deleted_by = Some(knoggin_state::record::DeletedBy::Owner);
+            Ok::<_, knoggin_state::StateError>(())
+        })
+        .await
+        .unwrap();
+    for store in [env.personal, x] {
+        env.stores
+            .update(env.user, store, |s| {
+                s.deleted_at_ms = Some(at);
+                Ok::<_, knoggin_state::StateError>(())
+            })
+            .await
+            .unwrap();
+    }
+    env.clock.advance(1_000);
+    let r = env
+        .local(
+            Method::DELETE,
+            "/v1/account",
+            Some(json!({ "confirm": "delete my data" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.json);
+    for slot in [Slot::User(env.user), Slot::Store(x)] {
+        assert_eq!(
+            park_request(&env, slot).await,
+            Some(ParkReason::Deleted),
+            "{slot}"
+        );
+    }
+}

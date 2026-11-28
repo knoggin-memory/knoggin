@@ -1049,6 +1049,10 @@ async fn prepare(
     };
     edge.bookkeeping(&caller).await;
     request.extensions_mut().insert(ctx);
+    request.extensions_mut().insert(crate::ctx::Serving {
+        slot: store.value.slot(),
+        owner: store.value.user_id,
+    });
     Ok(Prepared {
         store,
         presented: p,

@@ -3,16 +3,16 @@
 //! and the route paths. The router builds them, the container answers them; both sides use these
 //! types so that they agree. The broker's bodies belong to the broker.
 
+use knoggin_core::StoreId;
 use knoggin_core::ops::ModelState;
-use knoggin_core::{StoreId, UserId};
 use knoggin_http::error::LockReason;
-use knoggin_state::record::ParkReason;
+use knoggin_state::record::{ParkReason, Slot};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// The versions of the internal protocol this build speaks: the current one and, once
 /// there is one, the one before.
-pub const PROTOCOLS: &[u32] = &[1];
+pub const PROTOCOLS: &[u32] = &[2];
 
 /// The highest version both sides speak, or `None`: a router stops such a container.
 pub fn shared_protocol(theirs: &[u32]) -> Option<u32> {
@@ -57,12 +57,12 @@ pub struct HelloAnswer {
     pub proof: String,
 }
 
-/// The body of `claim`. From then on the container serves this user only.
+/// The body of `claim`. From then on the container serves this slot only.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaimRequest {
-    /// The user.
-    pub user_id: UserId,
+    /// The slot: a user's own container, or one isolated or shared app's.
+    pub slot: Slot,
     /// The lease generation; every snapshot name carries it.
     pub generation: u64,
     /// What the container would otherwise read from a config file.
@@ -109,9 +109,9 @@ pub struct ParkRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContainerPhase {
-    /// In the pool: no user.
+    /// In the pool: no slot.
     Ready,
-    /// Serves its user.
+    /// Serves its slot.
     Claimed,
     /// Running the park sequence.
     Parking,
@@ -123,8 +123,8 @@ pub enum ContainerPhase {
 pub struct StatusAnswer {
     /// Ready, claimed or parking.
     pub state: ContainerPhase,
-    /// The user it was claimed for; `None` in the pool.
-    pub user_id: Option<UserId>,
+    /// The slot it was claimed for; `None` in the pool.
+    pub slot: Option<Slot>,
     /// The claim's generation; `None` in the pool.
     pub generation: Option<u64>,
     /// The release version of its build.
@@ -242,7 +242,7 @@ mod tests {
     #[test]
     fn field_names_are_the_specified_ones() {
         let claim = ClaimRequest {
-            user_id: UserId::from_uuid(Uuid::nil()),
+            slot: Slot::User(knoggin_core::UserId::from_uuid(Uuid::nil())),
             generation: 7,
             settings: ClaimSettings {
                 idle_seconds: 600,
@@ -260,7 +260,7 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({
-                "userId": "00000000-0000-0000-0000-000000000000",
+                "slot": { "user": "00000000-0000-0000-0000-000000000000" },
                 "generation": 7,
                 "settings": {
                     "idleSeconds": 600, "memoryLimitBytes": 1_073_741_824u64,
@@ -272,9 +272,11 @@ mod tests {
         assert_eq!(serde_json::from_value::<ClaimRequest>(json).unwrap(), claim);
         let park: ParkRequest = serde_json::from_str(r#"{"reason":"restore"}"#).unwrap();
         assert_eq!(park.reason, ParkReason::Restore);
+        let park: ParkRequest = serde_json::from_str(r#"{"reason":"moved"}"#).unwrap();
+        assert_eq!(park.reason, ParkReason::Moved);
         let status = StatusAnswer {
             state: ContainerPhase::Claimed,
-            user_id: None,
+            slot: Some(Slot::Store(StoreId::from_uuid(Uuid::nil()))),
             generation: Some(3),
             build: "0.1.0".into(),
             idle_seconds: 0,
@@ -290,6 +292,10 @@ mod tests {
         };
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["state"], "claimed");
+        assert_eq!(
+            json["slot"],
+            serde_json::json!({ "store": "00000000-0000-0000-0000-000000000000" })
+        );
         assert_eq!(json["locks"][0]["reason"], "out_of_memory");
         assert_eq!(json["model"]["state"], "ready");
         assert!(json["counters"].get("snapshotBytes").is_some());
@@ -300,7 +306,7 @@ mod tests {
         let hello = HelloAnswer {
             container_id: Uuid::nil(),
             build: "0.1.0".into(),
-            protocols: vec![1],
+            protocols: vec![2],
             model: model(),
             test_mode: true,
             proof: "ab".into(),
@@ -313,8 +319,10 @@ mod tests {
 
     #[test]
     fn protocols_and_counters() {
-        assert_eq!(shared_protocol(&[1, 2]), Some(1));
-        assert_eq!(shared_protocol(&[2]), None);
+        assert_eq!(shared_protocol(&[1, 2]), Some(2));
+        assert_eq!(shared_protocol(&[2]), Some(2));
+        // A build that speaks only the first protocol sends a user, not a slot.
+        assert_eq!(shared_protocol(&[1]), None);
         let max = Counters {
             requests: u64::MAX,
             ..Counters::default()

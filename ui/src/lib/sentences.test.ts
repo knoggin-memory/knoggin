@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { lockSentence, modelCause, signInError } from './sentences';
+import { containersPerUser, lockSentence, modelCause, signInError } from './sentences';
 import { setupSteps, type Tab } from './setup';
 import { dayLabel, safeReturnTo, who } from './session.svelte';
 import { resolveTheme } from './prefs.svelte';
@@ -23,6 +23,10 @@ describe('fixed sentences', () => {
     expect(signInError('not_allowed', true)).toBe('This account is not allowed to use this Knoggin server. Ask whoever runs it.');
     expect(signInError('account_removed', false)).toBe('This account was removed from this Knoggin install.');
     expect(signInError('state_mismatch', true)).toBe('This sign-in link has expired. Start again.');
+  });
+  it('too many app containers, to the owner and to anyone else', () => {
+    expect(containersPerUser(true)).toBe('Too many of your isolated and shared apps are open at once. Try again in a few minutes.');
+    expect(containersPerUser(false)).toBe('Too many of this app owner’s apps are open at once. Try again in a few minutes.');
   });
   it('one short cause for a model that is not available', () => {
     expect(modelCause('hash_mismatch')).toBe('The model files are missing or damaged. ');

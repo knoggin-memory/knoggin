@@ -76,6 +76,8 @@ class Status {
   fullByWrite = $state(false);
   /** The short notice for `rate_limited`: when to try again, as a time. */
   rateLimitedUntil = $state<number | null>(null);
+  /** The reason of that `rate_limited`, if it gave one. */
+  rateLimitedReason = $state<string | null>(null);
 
   private pollTimer: ReturnType<typeof setTimeout> | undefined;
   private retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -138,6 +140,7 @@ class Status {
         return;
       case 'rate_limited':
         this.rateLimitedUntil = Date.now() + (e.retryAfter ?? 30) * 1000;
+        this.rateLimitedReason = e.reason;
         return;
       case 'store_locked':
         if (isStore) this.lockedByError = e.reason ?? 'master_key_missing';

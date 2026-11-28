@@ -3,6 +3,7 @@
 //! document. Field names are the JSON keys, in `snake_case`; a field that is not set is `null`.
 
 use std::fmt;
+use std::str::FromStr;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -192,6 +193,60 @@ pub struct Newest {
     pub sequence: u64,
 }
 
+/// What one container serves. Written `user:<uuid>` and `store:<uuid>` in keys, the link
+/// header and logs; `{"user": "<uuid>"}` or `{"store": "<uuid>"}` in JSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Slot {
+    /// A user's own container: the personal store and every app of that user that has no
+    /// container of its own.
+    User(UserId),
+    /// The container of one isolated or shared app.
+    Store(StoreId),
+}
+
+impl fmt::Display for Slot {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::User(u) => write!(f, "user:{u}"),
+            Self::Store(s) => write!(f, "store:{s}"),
+        }
+    }
+}
+
+/// A text that is not `user:<uuid>` or `store:<uuid>`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("not a slot")]
+pub struct NotASlot;
+
+impl FromStr for Slot {
+    type Err = NotASlot;
+
+    fn from_str(text: &str) -> Result<Self, NotASlot> {
+        let (kind, id) = text.split_once(':').ok_or(NotASlot)?;
+        // Only the hyphenated form that `Display` writes.
+        if id.len() != 36 {
+            return Err(NotASlot);
+        }
+        let id = Uuid::parse_str(id).map_err(|_| NotASlot)?;
+        match kind {
+            "user" => Ok(Self::User(UserId::from_uuid(id))),
+            "store" => Ok(Self::Store(StoreId::from_uuid(id))),
+            _ => Err(NotASlot),
+        }
+    }
+}
+
+/// The lease (slot and generation) whose container last opened a store. Only that lease
+/// may save the store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Holder {
+    /// The container's slot.
+    pub slot: Slot,
+    /// The lease's generation at that open.
+    pub generation: u64,
+}
+
 /// `user-stores#<user id>` / `<store id>`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StoreRecord {
@@ -223,6 +278,15 @@ pub struct StoreRecord {
     pub newest: Option<Newest>,
     /// A snapshot name an admin chose to restore.
     pub restore_from: Option<String>,
+    /// Served by a container of its own. Never true for the personal store.
+    #[serde(default)]
+    pub isolated: bool,
+    /// Shared with other people; always served by a container of its own.
+    #[serde(default)]
+    pub shared: bool,
+    /// The lease whose container last opened the store; written only by the broker's open.
+    #[serde(default)]
+    pub holder: Option<Holder>,
 }
 
 impl Record for StoreRecord {
@@ -254,6 +318,19 @@ impl StoreRecord {
             last_write_client: None,
             newest: None,
             restore_from: None,
+            isolated: false,
+            shared: false,
+            holder: None,
+        }
+    }
+
+    /// Where the store is served: a container of its own when it is isolated or shared,
+    /// else its owner's container. Every place that needs to know asks this.
+    pub fn slot(&self) -> Slot {
+        if self.isolated || self.shared {
+            Slot::Store(self.id)
+        } else {
+            Slot::User(self.user_id)
         }
     }
 
@@ -379,9 +456,9 @@ impl Record for SessionIndex {}
 pub enum LeaseState {
     /// No container.
     Parked,
-    /// A router is handing a container the user.
+    /// A router is handing a container the slot.
     Claiming,
-    /// The container serves the user.
+    /// The container serves the slot.
     Warm,
 }
 
@@ -401,6 +478,8 @@ pub enum ParkReason {
     Deleted,
     /// The router stops.
     Shutdown,
+    /// A store it holds now belongs to another container.
+    Moved,
 }
 
 /// How a warm container ended abnormally.
@@ -422,7 +501,7 @@ pub struct AbnormalEnd {
     pub kind: EndKind,
 }
 
-/// `lease#<user id>` / `-`. A missing lease is `Lease::default()`: parked, generation 0.
+/// `lease#<slot>` / `-`. A missing lease is `Lease::default()`: parked, generation 0.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Lease {
     /// Parked, claiming or warm.
@@ -510,7 +589,7 @@ impl Lease {
         self.park_requested_ms
     }
 
-    /// Records that a lease of this user became warm; keeps the last 10 minutes.
+    /// Records that this lease became warm; keeps the last 10 minutes.
     pub fn add_claim(&mut self, now: i64) {
         self.claims.retain(|&t| t > now - LEASE_WINDOW_MS);
         self.claims.push(now);
@@ -549,7 +628,7 @@ pub enum ContainerState {
     Starting,
     /// In the pool.
     Ready,
-    /// Belongs to one user.
+    /// Serves one slot.
     Claimed,
     /// Finished; kept an hour for diagnosis.
     Gone,
@@ -596,8 +675,15 @@ pub struct Container {
     pub spec: String,
     /// Starting, ready, claimed or gone.
     pub state: ContainerState,
-    /// The user, once claimed.
-    pub user_id: Option<UserId>,
+    /// The slot, once claimed.
+    #[serde(default)]
+    pub slot: Option<Slot>,
+    /// The user whose container limit it counts toward: the owner of what it serves.
+    #[serde(default)]
+    pub charged_to: Option<UserId>,
+    /// When it was claimed.
+    #[serde(default)]
+    pub claimed_ms: Option<i64>,
     /// When it was launched.
     pub started_ms: i64,
     /// When it is retired.
@@ -622,7 +708,9 @@ impl Container {
             build,
             spec,
             state: ContainerState::Starting,
-            user_id: None,
+            slot: None,
+            charged_to: None,
+            claimed_ms: None,
             started_ms: now,
             retire_at_ms,
             host: None,

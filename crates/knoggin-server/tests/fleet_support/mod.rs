@@ -37,7 +37,7 @@ use knoggin_server::router::{Backends, Listeners, RouterStart, reserve, run_rout
 use knoggin_server::settings::RouterSettings;
 use knoggin_server::storage::MemoryStorage;
 use knoggin_server::testing::{FakeLauncher, FlakyDb, serve_runner};
-use knoggin_state::record::{Container, ContainerState, Leader, Lease};
+use knoggin_state::record::{Container, ContainerState, Leader, Lease, Slot};
 use knoggin_state::{
     Clock, Cond, Containers, Leases, LocalFileDb, Meta, StateDb, Stores, Users, system_clock,
 };
@@ -156,9 +156,15 @@ impl Deployment {
         Containers::new(self.db.clone())
     }
 
+    /// The lease of the user's own container.
     pub async fn lease(&self, user: UserId) -> Lease {
+        self.lease_of(Slot::User(user)).await
+    }
+
+    /// The lease of a slot.
+    pub async fn lease_of(&self, slot: Slot) -> Lease {
         self.leases()
-            .get(user)
+            .get(slot)
             .await
             .unwrap()
             .map(|l| l.value)

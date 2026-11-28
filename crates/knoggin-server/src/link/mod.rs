@@ -265,7 +265,7 @@ mod tests {
         .await;
         let id = Uuid::now_v7();
         let launch = secret.launch_secret(id);
-        let user = UserId::from_uuid(Uuid::now_v7());
+        let user = knoggin_state::record::Slot::User(UserId::from_uuid(Uuid::now_v7()));
         let url = format!("https://127.0.0.1:{}/internal/v1/parked", addr.port());
         let post = |pin: CertPin, local: Option<std::net::IpAddr>| {
             let client = router_client::<Body>(pin, local).unwrap();

@@ -27,8 +27,8 @@ use uuid::Uuid;
 use crate::db::{Clock, Cond, Item, MAX_WRITES, StateDb, StateError, Write};
 use crate::keys::{self, ONE};
 use crate::record::{
-    Container, ContainerState, EndKind, Leader, Lease, LeaseState, ParkReason, Permission, Rollout,
-    StopReason, StoreKind, StoreRecord, Versioned, utc_day,
+    Container, ContainerState, EndKind, Holder, Leader, Lease, LeaseState, ParkReason, Permission,
+    Rollout, Slot, StopReason, StoreKind, StoreRecord, Versioned, utc_day,
 };
 use crate::seal::FieldKeys;
 use crate::stores::{MAX_APPS, store_writes};
@@ -87,6 +87,8 @@ pub async fn conformance(db: Arc<dyn StateDb>, clock: &TestClock) {
     api_keys(&db, &keys, clock).await;
     sessions(&db, &keys, clock).await;
     leases_and_containers(&db, clock).await;
+    leases_are_kept_per_slot(&db, clock).await;
+    a_store_record_names_its_slot(&db, &keys, clock).await;
     leader_and_rollout(&db, clock).await;
     erase_cases(&db, &keys, clock).await;
     rewrap(&db, &keys).await;
@@ -1269,7 +1271,7 @@ async fn leases_and_containers(db: &Arc<dyn StateDb>, clock: &TestClock) {
     let leases = Leases::new(db.clone());
     let containers = Containers::new(db.clone());
     let now = clock.now();
-    let user = uid();
+    let user = Slot::User(uid());
     assert!(leases.get(user).await.unwrap().is_none());
     let mut lease = Lease::default();
     assert_eq!((lease.state, lease.generation), (LeaseState::Parked, 0));
@@ -1300,7 +1302,7 @@ async fn leases_and_containers(db: &Arc<dyn StateDb>, clock: &TestClock) {
 
     let mut claimed = ready.value.clone();
     claimed.state = ContainerState::Claimed;
-    claimed.user_id = Some(user);
+    claimed.slot = Some(user);
     let mut lease = Lease::default();
     lease.generation = lease.next_generation(now);
     lease.set_state(LeaseState::Claiming, now);
@@ -1317,7 +1319,7 @@ async fn leases_and_containers(db: &Arc<dyn StateDb>, clock: &TestClock) {
     );
     assert_eq!(leases.list_active(1000, None).await.unwrap(), vec![user]);
     // A second router with the same reads loses, and changes nothing.
-    let other = uid();
+    let other = Slot::User(uid());
     let mut writes = Leases::writes(other, &lease, Cond::Absent).unwrap();
     writes.push(Containers::write(&claimed, ready.cond()).unwrap());
     conflict(db.write(writes).await);
@@ -1378,6 +1380,189 @@ async fn leases_and_containers(db: &Arc<dyn StateDb>, clock: &TestClock) {
     conflict(containers.delete(cid, c.cond()).await);
     containers.delete(cid, c2.cond()).await.unwrap();
     assert!(containers.get(cid).await.unwrap().is_none());
+}
+
+/// A user's own lease and the lease of one of their apps are two records with two
+/// active-lease items, under `lease#user:<id>` and `lease#store:<id>`.
+async fn leases_are_kept_per_slot(db: &Arc<dyn StateDb>, clock: &TestClock) {
+    let leases = Leases::new(db.clone());
+    let now = clock.now();
+    let user = uid();
+    let store = StoreId::from_uuid(Uuid::now_v7());
+    let (mine, its) = (Slot::User(user), Slot::Store(store));
+    assert_eq!(mine.to_string(), format!("user:{user}"));
+    assert_eq!(its.to_string(), format!("store:{store}"));
+    assert_eq!(mine.to_string().parse::<Slot>().unwrap(), mine);
+    assert_eq!(its.to_string().parse::<Slot>().unwrap(), its);
+    for bad in [
+        String::new(),
+        user.to_string(),
+        format!("app:{store}"),
+        format!("user:{}", user.uuid().simple()),
+        format!("store:{store}x"),
+    ] {
+        assert!(bad.parse::<Slot>().is_err(), "{bad}");
+    }
+    assert_eq!(
+        serde_json::to_value(mine).unwrap(),
+        json!({ "user": user.to_string() })
+    );
+    assert_eq!(
+        serde_json::from_value::<Slot>(json!({ "store": store.to_string() })).unwrap(),
+        its
+    );
+
+    let mut a = Lease::default();
+    a.generation = 10;
+    a.set_state(LeaseState::Warm, now);
+    let mut b = Lease::default();
+    b.generation = 20;
+    b.set_state(LeaseState::Claiming, now);
+    leases.put(mine, &a, Cond::Absent).await.unwrap();
+    leases.put(its, &b, Cond::Absent).await.unwrap();
+    assert!(
+        db.get(&format!("lease#user:{user}"), ONE)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        db.get(&format!("lease#store:{store}"), ONE)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        leases.get(mine).await.unwrap().unwrap().value.generation,
+        10
+    );
+    assert_eq!(leases.get(its).await.unwrap().unwrap().value.generation, 20);
+    let active = leases.list_active(1000, None).await.unwrap();
+    assert!(active.contains(&mine) && active.contains(&its));
+    // Paging goes on after a slot of either kind.
+    let all: Vec<Slot> = {
+        let mut out = Vec::new();
+        let mut after = None;
+        loop {
+            let page = leases.list_active(1, after).await.unwrap();
+            let Some(&last) = page.last() else { break };
+            out.extend(page);
+            after = Some(last);
+        }
+        out
+    };
+    assert_eq!(all, active);
+
+    // Parking one leaves the other active.
+    let read = leases.get(its).await.unwrap().unwrap();
+    let mut parked = read.value.clone();
+    parked.set_state(LeaseState::Parked, now + 1);
+    leases.put(its, &parked, read.cond()).await.unwrap();
+    let active = leases.list_active(1000, None).await.unwrap();
+    assert!(active.contains(&mine) && !active.contains(&its));
+
+    // A container record names its slot, whom it is charged to and when it was claimed.
+    let containers = Containers::new(db.clone());
+    let mut c = Container::starting(Uuid::now_v7(), "1.0.0".into(), String::new(), now, now + 1);
+    c.state = ContainerState::Claimed;
+    c.slot = Some(its);
+    c.charged_to = Some(user);
+    c.claimed_ms = Some(now);
+    containers.put(&c, Cond::Absent).await.unwrap();
+    let back = containers.get(c.id).await.unwrap().unwrap().value;
+    assert_eq!(back, c);
+    let doc = raw(&**db, keys::CONTAINERS, &c.id.to_string()).await;
+    assert_eq!(doc["slot"], json!({ "store": store.to_string() }));
+    containers.delete(c.id, Cond::Any).await.unwrap();
+    leases
+        .put(mine, &Lease::default(), Cond::Any)
+        .await
+        .unwrap();
+}
+
+/// Where each kind of store is served, and the holder round-trips.
+async fn a_store_record_names_its_slot(
+    db: &Arc<dyn StateDb>,
+    keys: &Arc<FieldKeys>,
+    clock: &TestClock,
+) {
+    let users = Users::new(db.clone(), keys.clone());
+    let stores = Stores::new(db.clone(), keys.clone());
+    let now = clock.now();
+    let owner = make_user(&users, "https://issuer.example", "slot-owner", now)
+        .await
+        .value;
+    let personal = stores
+        .get(owner.personal_store_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .value;
+    assert!(!personal.isolated && !personal.shared && personal.holder.is_none());
+    assert_eq!(personal.slot(), Slot::User(owner.id));
+    let mut slots = Vec::new();
+    for (name, isolated, shared) in [
+        ("slot-normal", false, false),
+        ("slot-isolated", true, false),
+        ("slot-shared", false, true),
+    ] {
+        let new = new_store(name).await;
+        let id = new.id;
+        stores.create_app(owner.id, new, now).await.unwrap();
+        let holder = Holder {
+            slot: Slot::Store(id),
+            generation: 77,
+        };
+        stores
+            .update(owner.id, id, |r| {
+                r.isolated = isolated;
+                r.shared = shared;
+                r.holder = Some(holder);
+                Ok::<_, StateError>(())
+            })
+            .await
+            .unwrap();
+        let back = stores.get(id).await.unwrap().unwrap().value;
+        assert_eq!(
+            (back.isolated, back.shared, back.holder),
+            (isolated, shared, Some(holder))
+        );
+        let doc = raw(&**db, &keys::user_stores(owner.id), &id.to_string()).await;
+        assert_eq!(
+            doc["holder"],
+            json!({ "slot": { "store": id.to_string() }, "generation": 77 }),
+            "the holder is plain"
+        );
+        assert_eq!(
+            (doc["isolated"].clone(), doc["shared"].clone()),
+            (json!(isolated), json!(shared))
+        );
+        slots.push((back.slot(), id));
+    }
+    assert_eq!(
+        slots[0].0,
+        Slot::User(owner.id),
+        "a normal app shares the user's container"
+    );
+    assert_eq!(
+        slots[1].0,
+        Slot::Store(slots[1].1),
+        "an isolated app has its own"
+    );
+    assert_eq!(
+        slots[2].0,
+        Slot::Store(slots[2].1),
+        "a shared app has its own"
+    );
+    // A record written before these fields existed reads as a normal store.
+    let mut doc = raw(&**db, &keys::user_stores(owner.id), &slots[0].1.to_string()).await;
+    for field in ["isolated", "shared", "holder"] {
+        doc.as_object_mut().unwrap().remove(field);
+    }
+    // The sealed fields stay sealed strings here, which still read as text.
+    let old: StoreRecord = serde_json::from_value(doc).unwrap();
+    assert_eq!(old.slot(), Slot::User(owner.id));
+    assert!(old.holder.is_none());
 }
 
 async fn leader_and_rollout(db: &Arc<dyn StateDb>, clock: &TestClock) {
@@ -1466,7 +1651,15 @@ async fn erase_cases(db: &Arc<dyn StateDb>, keys: &Arc<FieldKeys>, clock: &TestC
         .unwrap();
     let mut lease = Lease::default();
     lease.set_state(LeaseState::Warm, t0);
-    leases.put(gina.id, &lease, Cond::Absent).await.unwrap();
+    leases
+        .put(Slot::User(gina.id), &lease, Cond::Absent)
+        .await
+        .unwrap();
+    // The app was isolated once: its own lease is erased with it.
+    leases
+        .put(Slot::Store(app_id), &lease, Cond::Absent)
+        .await
+        .unwrap();
 
     stores
         .update(gina.id, app_id, |r| {
@@ -1511,6 +1704,14 @@ async fn erase_cases(db: &Arc<dyn StateDb>, keys: &Arc<FieldKeys>, clock: &TestC
             .is_none()
     );
     assert!(db.get(&keys::store(app_id), ONE).await.unwrap().is_none());
+    assert!(
+        leases.get(Slot::Store(app_id)).await.unwrap().is_none(),
+        "the app's own lease is erased with it"
+    );
+    assert!(
+        leases.get(Slot::User(gina.id)).await.unwrap().is_some(),
+        "the user's lease stays while the user does"
+    );
     assert!(
         db.get(&keys::key(&keys::secret_hash(&key.hash)), ONE)
             .await
@@ -1566,8 +1767,11 @@ async fn erase_cases(db: &Arc<dyn StateDb>, keys: &Arc<FieldKeys>, clock: &TestC
         (keys::user(gina.id), ONE.to_owned()),
         (keys::USERS.to_owned(), gina.id.to_string()),
         (keys::sub(&sub_hash), ONE.to_owned()),
-        (keys::lease(gina.id), ONE.to_owned()),
-        (keys::ACTIVE_LEASES.to_owned(), gina.id.to_string()),
+        (keys::lease(Slot::User(gina.id)), ONE.to_owned()),
+        (
+            keys::ACTIVE_LEASES.to_owned(),
+            Slot::User(gina.id).to_string(),
+        ),
         (keys::session(&keys::secret_hash(&[7; 32])), ONE.to_owned()),
         (keys::store(personal), ONE.to_owned()),
     ] {

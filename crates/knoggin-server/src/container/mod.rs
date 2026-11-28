@@ -20,11 +20,11 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::Router;
-use knoggin_core::UserId;
 use knoggin_core::embed::{EmbeddingProvider, ModelIdentity};
 use knoggin_core::ops::{ModelState, ModelStatus};
 use knoggin_core::testing::FakeProvider;
 use knoggin_http::host::{BackendError, Providers, StoreHost};
+use knoggin_state::record::Slot;
 use tokio::net::TcpListener;
 use tokio::sync::{Notify, OnceCell, Semaphore, watch};
 use tokio::time::Instant;
@@ -184,9 +184,9 @@ enum Phase {
     Parking,
 }
 
-/// The user a container was claimed for, and the host that serves them.
+/// The slot a container was claimed for, and the host that serves it.
 struct Claim {
-    user: UserId,
+    slot: Slot,
     generation: u64,
     host: Arc<StoreHost>,
     store: Router,
@@ -474,7 +474,7 @@ async fn drive(s: &Arc<Shared>, stop: impl Future<Output = ()> + Send) -> ServeE
             _ = lost.wait_for(|l| *l) => return ServeEnd::of(EndReason::LeaseLost),
         };
         if parked {
-            if !s.link.parked(claim.user).await {
+            if !s.link.parked(claim.slot).await {
                 tracing::warn!(container_id = %s.env.container_id, "parked could not be reported");
             }
             if s.lease_lost() {
@@ -494,7 +494,7 @@ async fn drive(s: &Arc<Shared>, stop: impl Future<Output = ()> + Send) -> ServeE
 /// Steps 1 and 2 of the park sequence; true when every store was saved. After a stop
 /// signal the snapshots are tried again until they succeed or the process is killed.
 async fn park(s: &Arc<Shared>, claim: &Claim, stopping: bool) -> bool {
-    tracing::info!(container_id = %s.env.container_id, user_id = %claim.user, "parking");
+    tracing::info!(container_id = %s.env.container_id, slot = %claim.slot, "parking");
     s.set_phase(Phase::Parking);
     claim.host.end_event_streams();
     let deadline = Instant::now() + s.timings.drain;

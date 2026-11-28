@@ -21,14 +21,16 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::body::Body;
-use fleet_support::{Deployment, RouterHandle, eventually, json, peer, save, summaries};
+use fleet_support::{
+    Deployment, RouterHandle, eventually, json, local_user, peer, save, summaries,
+};
 use http::{Method, StatusCode};
 use http_body_util::BodyExt;
 use knoggin_core::{StoreId, UserId};
 use knoggin_http::ctx::{CredentialKind, CredentialRef, Permissions, RequestContext};
 use knoggin_server::broker::api::paths;
 use knoggin_server::link::{Peers, forwarding_client, write_container_call, write_router_call};
-use knoggin_state::record::{Container, LeaseState, ParkReason};
+use knoggin_state::record::{Container, LeaseState, ParkReason, Slot};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -70,7 +72,7 @@ async fn two() -> Two {
             .unwrap()
             .unwrap()
             .value;
-        assert_eq!(c.user_id, Some(user));
+        assert_eq!(c.slot, Some(Slot::User(user)));
         out.push((token, user, store, c));
     }
     let bob = out.pop().unwrap();
@@ -94,7 +96,12 @@ async fn broker_call(
         .header(http::header::CONTENT_TYPE, "application/json")
         .body(Body::from(body.to_string()))
         .unwrap();
-    write_container_call(req.headers_mut(), &t.d.launch_secret(c.id), user, c.id);
+    write_container_call(
+        req.headers_mut(),
+        &t.d.launch_secret(c.id),
+        Slot::User(user),
+        c.id,
+    );
     let answer = t.d.broker_client(local).request(req).await.unwrap();
     let status = answer.status();
     let bytes = answer.into_body().collect().await.unwrap().to_bytes();
@@ -319,7 +326,12 @@ async fn a_container_that_floods_the_internal_listener_is_cut_off_while_others_a
         .body(Body::from("{}"))
         .unwrap();
         // A token of another container: a failed check.
-        write_container_call(req.headers_mut(), &t.d.launch_secret(a.3.id), b.1, b.3.id);
+        write_container_call(
+            req.headers_mut(),
+            &t.d.launch_secret(a.3.id),
+            Slot::User(b.1),
+            b.3.id,
+        );
         let _ = t.d.broker_client(Some(flood)).request(req).await;
     }
     let mut req = http::Request::post(format!(
@@ -329,7 +341,12 @@ async fn a_container_that_floods_the_internal_listener_is_cut_off_while_others_a
     ))
     .body(Body::from("{}"))
     .unwrap();
-    write_container_call(req.headers_mut(), &t.d.launch_secret(b.3.id), b.1, b.3.id);
+    write_container_call(
+        req.headers_mut(),
+        &t.d.launch_secret(b.3.id),
+        Slot::User(b.1),
+        b.3.id,
+    );
     assert!(
         t.d.broker_client(Some(flood)).request(req).await.is_err(),
         "the address is refused"
@@ -547,7 +564,7 @@ async fn one_container_keeps_a_users_stores_apart() {
         .records()
         .await
         .into_iter()
-        .filter(|c| c.user_id.is_some())
+        .filter(|c| c.slot.is_some())
         .collect();
     assert_eq!(launched.len(), 1, "one container holds the three stores");
     for path in [
@@ -678,5 +695,103 @@ async fn one_container_keeps_a_users_stores_apart() {
     assert!(
         !seen.contains("event: recall") && !seen.contains("event: forget"),
         "{seen}"
+    );
+}
+
+/// An app that becomes isolated moves to a container of its own while it is written to:
+/// the record changes first, the user's container is asked to park and saves what it
+/// holds, and the app's own container opens it after that. Every write answered as saved,
+/// before and during the move, is there afterwards.
+#[tokio::test]
+async fn turning_isolation_on_loses_no_write() {
+    let d = Deployment::new(false).await;
+    let r = d.router("0.1.0").await;
+    let (user, _) = local_user(&d).await;
+    let (status, app) = json(
+        r.req(reqwest::Method::POST, "/v1/stores")
+            .json(&json!({ "name": "moving" }))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, 201, "{app}");
+    let app_id = StoreId::from_uuid(app["id"].as_str().unwrap().parse().unwrap());
+    let (status, key) = json(
+        r.req(reqwest::Method::POST, &format!("/v1/stores/{app_id}/keys"))
+            .json(&json!({ "name": "k", "permissions": ["memory:read", "memory:write"] }))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, 201, "{key}");
+    let key = key["secret"].as_str().unwrap().to_owned();
+    let mut written = Vec::new();
+    for i in 0..3 {
+        let text = format!("before{i}");
+        assert_eq!(save(&r, Some(&key), &text).await.0, 201);
+        written.push(text);
+    }
+    assert_eq!(save(&r, None, "personalnote").await.0, 201);
+    let first = d.lease(user).await;
+    assert_eq!(first.state, LeaseState::Warm);
+
+    // Isolation on, through the state layer.
+    d.stores()
+        .await
+        .update(user, app_id, |s| {
+            s.isolated = true;
+            Ok::<_, knoggin_state::StateError>(())
+        })
+        .await
+        .unwrap();
+    // The first write after the change waits for the user's container to park: the
+    // client is told to try again in 2 seconds.
+    let waiting = r
+        .req(reqwest::Method::POST, "/v1/memories")
+        .bearer_auth(&key)
+        .json(&json!({ "summary": "refused" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(waiting.status(), 503);
+    assert_eq!(waiting.headers()["retry-after"], "2");
+    assert_eq!(json(waiting).await.1["error"]["code"], "unavailable");
+    // Writes go on through the move; one that is refused for the wait is sent again.
+    for i in 0..3 {
+        let text = format!("during{i}");
+        let saved = eventually(LIMIT, || async {
+            let (status, _) = save(&r, Some(&key), &text).await;
+            assert!(status == 201 || status == 503, "{status}");
+            status == 201
+        })
+        .await;
+        assert!(saved, "{text} was not saved");
+        written.push(text);
+    }
+    let (status, mut found) = summaries(&r, Some(&key)).await;
+    assert_eq!(status, 200);
+    found.sort();
+    written.sort();
+    assert_eq!(found, written, "every write is in the app");
+    // The app is served by its own container now, charged to its owner; the user's
+    // own container saved and parked, and their personal store is intact.
+    let own = d.lease_of(Slot::Store(app_id)).await;
+    assert_eq!(own.state, LeaseState::Warm);
+    let record = d
+        .records()
+        .await
+        .into_iter()
+        .find(|c| Some(c.id) == own.container_id)
+        .unwrap();
+    assert_eq!(
+        (record.slot, record.charged_to),
+        (Some(Slot::Store(app_id)), Some(user))
+    );
+    assert_ne!(own.container_id, first.container_id);
+    assert_eq!(
+        summaries(&r, None).await,
+        (200, vec!["personalnote".to_owned()])
     );
 }

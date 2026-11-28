@@ -343,7 +343,7 @@ async fn isolation_on_the_one_host_stack() {
         drop(alive);
         String::new()
     } else {
-        local_containers(&s, &a, &b, alive).await
+        local_containers(&s, &a, &b, &ax, alive).await
     };
 
     // A revoked key is refused on its next request.
@@ -427,6 +427,7 @@ async fn local_containers(
     s: &Stack,
     a: &stack::User,
     b: &stack::User,
+    a_app: &str,
     alive: stack::KeepAlive,
 ) -> String {
     // From inside A's container, only the router's internal port answers.
@@ -434,6 +435,7 @@ async fn local_containers(
     let cb = s.container_of(b).expect("B's container");
     assert_ne!(ca.docker_id, cb.docker_id, "one container per user");
     network_probes(s, &ca, &cb);
+    broker_probes(s, &ca, a, b, a_app).await;
     container_description(s, &ca);
     service_probes(s);
     second_stack_leaves_this_one_alone(s, &[&ca, &cb]).await;
@@ -661,6 +663,116 @@ fn network_probes(s: &Stack, a: &stack::UserContainer, b: &stack::UserContainer)
     } else {
         println!("skipped: the host-side network checks run on Linux only");
     }
+}
+
+/// Store isolation at the broker, from inside A's container's network namespace and with
+/// that container's own launch secret: A's own container gets the keys of A's personal
+/// store and of A's normal apps, and nothing of B's; it cannot name another slot.
+async fn broker_probes(
+    s: &Stack,
+    ca: &stack::UserContainer,
+    a: &stack::User,
+    b: &stack::User,
+    a_app: &str,
+) {
+    let mine = format!("user:{}", a.id);
+    for (what, slot, store, expected) in [
+        (
+            "A's personal store",
+            mine.as_str(),
+            a.personal.as_str(),
+            200,
+        ),
+        ("A's normal app", mine.as_str(), a_app, 200),
+        (
+            "B's personal store",
+            mine.as_str(),
+            b.personal.as_str(),
+            404,
+        ),
+        (
+            "B's slot",
+            &format!("user:{}", b.id),
+            b.personal.as_str(),
+            409,
+        ),
+    ] {
+        let status = broker_open_from(s, ca, slot, store).await;
+        assert_eq!(status, expected, "{what}");
+    }
+}
+
+/// One broker `open` from inside `c`'s network namespace, with `c`'s own launch secret,
+/// naming `slot`; the answer's status. A busybox `nc` in that namespace relays the bytes,
+/// so the call comes from the container's own address; TLS and HTTP run here.
+async fn broker_open_from(s: &Stack, c: &stack::UserContainer, slot: &str, store: &str) -> u16 {
+    use std::sync::Arc;
+
+    use http_body_util::Full;
+    use knoggin_server::link::{
+        InternalSecret, ServerIdentity, pinned_client_config, write_container_call,
+    };
+
+    let dir = s.secrets_dir();
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap();
+    let secret = InternalSecret::from_base64(read("internal_secret").trim()).unwrap();
+    let pin = ServerIdentity::from_pem(&read("internal_cert.pem"), &read("internal_key.pem"))
+        .unwrap()
+        .pin();
+    let router = addresses(&s.service_id("router"))[&c.network].clone();
+    let mut relay = tokio::process::Command::new("docker")
+        .args([
+            "run",
+            "-i",
+            "--rm",
+            "--network",
+            &format!("container:{}", c.docker_id),
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            &pinned_image("busybox"),
+            "nc",
+            &router,
+            "8443",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let io = tokio::io::join(relay.stdout.take().unwrap(), relay.stdin.take().unwrap());
+    let mut tls = pinned_client_config(pin).unwrap();
+    tls.alpn_protocols = vec![b"http/1.1".to_vec()];
+    let stream = tokio_rustls::TlsConnector::from(Arc::new(tls))
+        .connect(
+            rustls::pki_types::ServerName::try_from("router").unwrap(),
+            io,
+        )
+        .await
+        .unwrap();
+    let (mut send, connection) =
+        hyper::client::conn::http1::handshake(hyper_util::rt::TokioIo::new(stream))
+            .await
+            .unwrap();
+    tokio::spawn(connection);
+    let id: uuid::Uuid = c.knoggin_id.parse().unwrap();
+    let mut req = http::Request::post(format!("/internal/v1/stores/{store}/open"))
+        .header(http::header::HOST, "router")
+        .header(http::header::CONTENT_TYPE, "application/json")
+        .body(Full::new(bytes::Bytes::from_static(b"{}")))
+        .unwrap();
+    write_container_call(
+        req.headers_mut(),
+        &secret.launch_secret(id),
+        slot.parse().unwrap(),
+        id,
+    );
+    let status = send.send_request(req).await.unwrap().status().as_u16();
+    drop(send);
+    let _ = relay.kill().await;
+    status
 }
 
 /// Network isolation: what the launcher's fixed description sets for safety (read-only root,

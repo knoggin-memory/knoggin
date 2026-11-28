@@ -25,7 +25,7 @@ use http_body_util::{BodyExt, Empty};
 use knoggin_core::{Sensitive, StoreId, UserId};
 use knoggin_crypto::KeyProvider;
 use knoggin_http::ctx::{CredentialKind, CredentialRef, Permissions, RequestContext};
-use knoggin_server::broker::{BrokerConfig, OnParked, PeerLimits, broker_router};
+use knoggin_server::broker::{AskPark, BrokerConfig, OnParked, PeerLimits, broker_router};
 use knoggin_server::container::{ServeConfig, ServeEnd, ServeModel, ServeTimings, serve_on};
 use knoggin_server::launcher::{BuildInfo, ContainerEnv, LogLevel};
 use knoggin_server::link::api::{
@@ -37,7 +37,7 @@ use knoggin_server::link::{
     server_config, write_container_call, write_router_call,
 };
 use knoggin_server::storage::MemoryStorage;
-use knoggin_state::record::{Lease, LeaseState, ParkReason};
+use knoggin_state::record::{Lease, LeaseState, ParkReason, Slot};
 use knoggin_state::testing::TestClock;
 use knoggin_state::{Cond, Leases, LocalFileDb, NewStore, NewUser, StateDb, Stores, Users};
 use tokio::sync::oneshot;
@@ -82,6 +82,8 @@ pub struct Rig {
     pub broker_calls: Arc<Mutex<Vec<String>>>,
     /// The containers that reported `parked`.
     pub parked: Arc<Mutex<Vec<Uuid>>>,
+    /// Every park the broker asked for, in order.
+    pub asked: Arc<Mutex<Vec<(Slot, ParkReason)>>>,
     /// While above zero, each commit is answered 503 and counts it down.
     pub fail_commits: Arc<std::sync::atomic::AtomicUsize>,
     /// One pooled client to the broker, as a container has.
@@ -94,6 +96,13 @@ pub struct Rig {
 pub struct Account {
     pub user: UserId,
     pub store: StoreId,
+}
+
+impl Account {
+    /// The user's own slot.
+    pub fn slot(&self) -> Slot {
+        Slot::User(self.user)
+    }
 }
 
 impl Rig {
@@ -124,15 +133,34 @@ impl Rig {
                 let now = clock.now();
                 Box::pin(async move {
                     // The records the router's "Mark gone" writes, cut down to the lease.
-                    let lease = leases.get(caller.user_id).await.unwrap().unwrap();
+                    let lease = leases.get(caller.slot).await.unwrap().unwrap();
                     let mut value = lease.value.clone();
                     value.set_state(LeaseState::Parked, now);
-                    leases
-                        .put(caller.user_id, &value, lease.cond())
-                        .await
-                        .unwrap();
+                    leases.put(caller.slot, &value, lease.cond()).await.unwrap();
                     parked.lock().unwrap().push(caller.container_id);
                     Ok(())
+                })
+            })
+        };
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let ask_park: AskPark = {
+            let leases = leases.clone();
+            let asked = asked.clone();
+            let clock = clock.clone();
+            Arc::new(move |slot, reason| {
+                let leases = leases.clone();
+                let asked = asked.clone();
+                let now = clock.now();
+                Box::pin(async move {
+                    // The router records the request on the lease (and sends `park`,
+                    // which the test does itself where it matters).
+                    if let Some(lease) = leases.get(slot).await.unwrap() {
+                        let mut value = lease.value.clone();
+                        if value.request_park(reason, now) {
+                            let _ = leases.put(slot, &value, lease.cond()).await;
+                        }
+                    }
+                    asked.lock().unwrap().push((slot, reason));
                 })
             })
         };
@@ -150,6 +178,7 @@ impl Rig {
             one_host: options.one_host.then(|| router_url.clone()),
             peers: peers.clone(),
             on_parked,
+            ask_park,
         };
         let broker_calls = Arc::new(Mutex::new(Vec::new()));
         let seen = broker_calls.clone();
@@ -203,6 +232,7 @@ impl Rig {
             router_url,
             broker_calls,
             parked,
+            asked,
             fail_commits,
             client: router_client(identity.pin(), None).unwrap(),
             _stop: stop,
@@ -274,9 +304,9 @@ impl Rig {
         u64::try_from(self.clock.now() / 1000).unwrap()
     }
 
-    /// Writes a warm lease of `user` naming `c`, as a claim would.
-    pub async fn lease(&self, user: UserId, c: &Container, generation: u64) {
-        let old = self.leases.get(user).await.unwrap();
+    /// Writes a warm lease of `slot` naming `c`, as a claim would.
+    pub async fn lease(&self, slot: Slot, c: &Container, generation: u64) {
+        let old = self.leases.get(slot).await.unwrap();
         let mut lease = old.as_ref().map(|l| l.value.clone()).unwrap_or_default();
         lease.generation = generation;
         lease.container_id = Some(c.id);
@@ -284,12 +314,25 @@ impl Rig {
         lease.cert_sha256 = c.pin.map(|p| p.to_hex());
         lease.set_state(LeaseState::Warm, self.clock.now());
         let cond = old.map_or(Cond::Absent, |l| l.cond());
-        self.leases.put(user, &lease, cond).await.unwrap();
+        self.leases.put(slot, &lease, cond).await.unwrap();
     }
 
-    /// The lease of `user`.
-    pub async fn lease_of(&self, user: UserId) -> Lease {
-        self.leases.get(user).await.unwrap().unwrap().value
+    /// The lease of `slot`.
+    pub async fn lease_of(&self, slot: Slot) -> Lease {
+        self.leases.get(slot).await.unwrap().unwrap().value
+    }
+
+    /// Marks a store isolated or shared through the state layer.
+    pub async fn set_slot_flags(&self, store: StoreId, isolated: bool, shared: bool) {
+        let record = self.stores.get(store).await.unwrap().unwrap();
+        self.stores
+            .update(record.value.user_id, store, |r| {
+                r.isolated = isolated;
+                r.shared = shared;
+                Ok::<_, knoggin_state::StateError>(())
+            })
+            .await
+            .unwrap();
     }
 
     /// Starts a container role on a loopback port and passes `hello` with it.
@@ -350,11 +393,11 @@ impl Rig {
         self.client.clone()
     }
 
-    /// A broker call with `id`'s identity (as user `user`), raw.
+    /// A broker call with `id`'s identity (naming `slot`), raw.
     pub async fn broker_call(
         &self,
         id: Uuid,
-        user: UserId,
+        slot: Slot,
         method: Method,
         path: &str,
         body: impl Into<Body>,
@@ -365,7 +408,7 @@ impl Rig {
             .uri(format!("{}{path}", self.router_url))
             .body(body.into())
             .unwrap();
-        write_container_call(req.headers_mut(), &launch, user, id);
+        write_container_call(req.headers_mut(), &launch, slot, id);
         let answer = self.broker_client().request(req).await.unwrap();
         let status = answer.status();
         let headers = answer.headers().clone();
@@ -407,7 +450,7 @@ impl Container {
     pub async fn hello(&self, nonce: &Nonce) -> (Option<HelloAnswer>, Vec<u8>) {
         let req = http::Request::get(format!("{}?nonce={}", paths::HELLO, nonce.to_hex()))
             .header(http::header::HOST, self.id.to_string())
-            .header("knoggin-protocol", "1")
+            .header("knoggin-protocol", "2")
             .body(Empty::<Bytes>::new())
             .unwrap();
         let reply = fetch_unpinned(self.addr, &self.id.to_string(), req)
@@ -449,14 +492,9 @@ impl Container {
         (status, headers, bytes)
     }
 
-    pub async fn claim(
-        &self,
-        user: UserId,
-        generation: u64,
-        settings: ClaimSettings,
-    ) -> StatusCode {
+    pub async fn claim(&self, slot: Slot, generation: u64, settings: ClaimSettings) -> StatusCode {
         let body = serde_json::to_vec(&ClaimRequest {
-            user_id: user,
+            slot,
             generation,
             settings,
         })

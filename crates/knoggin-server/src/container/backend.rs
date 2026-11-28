@@ -15,11 +15,12 @@ use bytes::Bytes;
 use futures_util::{Stream, StreamExt, TryStreamExt};
 use http::{HeaderName, HeaderValue, Method, Request, StatusCode, header};
 use http_body_util::{BodyExt, Limited};
+use knoggin_core::StoreId;
 use knoggin_core::snapshot::SnapshotName;
-use knoggin_core::{StoreId, UserId};
 use knoggin_crypto::{DataKey, WrappedKey};
 use knoggin_http::error::{Code, LockReason};
 use knoggin_http::host::{BackendError, OpenedStore, SealedSnapshot, SnapshotSource, StoreBackend};
+use knoggin_state::record::Slot;
 use tokio::sync::watch;
 use tokio_util::io::{StreamReader, SyncIoBridge};
 use uuid::Uuid;
@@ -105,15 +106,9 @@ impl Link {
     }
 
     /// A request to the router with the container's identity.
-    fn request(
-        &self,
-        user: UserId,
-        method: Method,
-        url: &str,
-        body: Body,
-    ) -> Option<Request<Body>> {
+    fn request(&self, slot: Slot, method: Method, url: &str, body: Body) -> Option<Request<Body>> {
         let mut req = Request::builder().method(method).uri(url).body(body).ok()?;
-        write_container_call(req.headers_mut(), &self.launch, user, self.container_id);
+        write_container_call(req.headers_mut(), &self.launch, slot, self.container_id);
         Some(req)
     }
 
@@ -121,7 +116,7 @@ impl Link {
     /// buffer that wipes itself. A 429 without a reason is tried again after a pause.
     pub(crate) async fn call(
         &self,
-        user: UserId,
+        slot: Slot,
         path: &str,
         body: Vec<u8>,
     ) -> Result<Zeroizing<Vec<u8>>, BackendError> {
@@ -132,7 +127,7 @@ impl Link {
             }
             let url = format!("{}{path}", self.router_url);
             let mut req = self
-                .request(user, Method::POST, &url, Body::from(body.clone()))
+                .request(slot, Method::POST, &url, Body::from(body.clone()))
                 .ok_or(BackendError::Internal)?;
             req.headers_mut().insert(
                 header::CONTENT_TYPE,
@@ -172,7 +167,7 @@ impl Link {
     /// `parked`: tried 3 times within 10 seconds (each try and each pause at most
     /// [`PARKED_STEP`]). Returns whether it went through; a `lease_lost` answer marks the
     /// lease lost and is not tried again.
-    pub(crate) async fn parked(&self, user: UserId) -> bool {
+    pub(crate) async fn parked(&self, slot: Slot) -> bool {
         for attempt in 0..PARKED_TRIES {
             if attempt > 0 {
                 tokio::time::sleep(PARKED_STEP).await;
@@ -181,7 +176,7 @@ impl Link {
                 return false;
             }
             let url = format!("{}{}", self.router_url, paths::PARKED);
-            let Some(req) = self.request(user, Method::POST, &url, Body::empty()) else {
+            let Some(req) = self.request(slot, Method::POST, &url, Body::empty()) else {
                 return false;
             };
             let sent = async {
@@ -219,7 +214,7 @@ impl Link {
     /// broker's code from the blob route, `Unavailable` from a bucket.
     async fn send_signed(
         &self,
-        user: UserId,
+        slot: Slot,
         method: Method,
         url: &str,
         headers: &std::collections::BTreeMap<String, String>,
@@ -236,7 +231,7 @@ impl Link {
         if self.via_router(url) {
             let body = body.map_or_else(Body::empty, Body::from_stream);
             let mut req = self
-                .request(user, method, url, body)
+                .request(slot, method, url, body)
                 .ok_or(BackendError::Internal)?;
             for (name, value) in headers {
                 let name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| unavailable())?;
@@ -312,24 +307,33 @@ struct Pending {
 /// The container's `StoreBackend`: every open and save goes through the broker.
 pub struct RouterBackend {
     link: Arc<Link>,
-    user: UserId,
+    slot: Slot,
     pending: Mutex<HashMap<StoreId, Pending>>,
 }
 
 impl std::fmt::Debug for RouterBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RouterBackend")
-            .field("user", &self.user)
+            .field("slot", &self.slot)
             .finish_non_exhaustive()
     }
 }
 
 impl RouterBackend {
-    pub(crate) fn new(link: Arc<Link>, user: UserId) -> Self {
+    pub(crate) fn new(link: Arc<Link>, slot: Slot) -> Self {
         Self {
             link,
-            user,
+            slot,
             pending: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Whether `store` may be asked of the broker. A user's own container may ask for any
+    /// store (the broker answers for its slot); an app's own container only for its app.
+    fn may_ask(&self, store: StoreId) -> Result<(), BackendError> {
+        match self.slot {
+            Slot::Store(own) if own != store => Err(BackendError::Deleted),
+            Slot::Store(_) | Slot::User(_) => Ok(()),
         }
     }
 
@@ -344,7 +348,7 @@ impl RouterBackend {
         body: Vec<u8>,
     ) -> Result<(), BackendError> {
         let path = paths::commit(store, name.sequence());
-        match self.link.call(self.user, &path, body).await {
+        match self.link.call(self.slot, &path, body).await {
             Ok(_) => {
                 self.pending().remove(&store);
                 Ok(())
@@ -370,6 +374,7 @@ impl StoreBackend for RouterBackend {
         store: StoreId,
         after: Option<SnapshotName>,
     ) -> Result<OpenedStore, BackendError> {
+        self.may_ask(store)?;
         let request = OpenRequest {
             after: after.map(|n| NameParts {
                 generation: n.generation(),
@@ -378,7 +383,7 @@ impl StoreBackend for RouterBackend {
         };
         let bytes = self
             .link
-            .call(self.user, &paths::open(store), to_json(&request)?)
+            .call(self.slot, &paths::open(store), to_json(&request)?)
             .await?;
         let answer: OpenAnswer =
             serde_json::from_slice(&bytes).map_err(|_| BackendError::Unavailable)?;
@@ -399,7 +404,7 @@ impl StoreBackend for RouterBackend {
                     .map_err(|_| BackendError::Unavailable)?;
                 let (status, stream) = self
                     .link
-                    .send_signed(self.user, Method::GET, &link.url, &link.headers, None)
+                    .send_signed(self.slot, Method::GET, &link.url, &link.headers, None)
                     .await?;
                 if !status.is_success() {
                     tracing::warn!(store_id = %store, status = status.as_u16(), "a snapshot download was refused");
@@ -427,6 +432,7 @@ impl StoreBackend for RouterBackend {
     }
 
     async fn save(&self, store: StoreId, snapshot: SealedSnapshot) -> Result<(), BackendError> {
+        self.may_ask(store)?;
         let leftover = self.pending().get(&store).map(|p| (p.name, p.body.clone()));
         if let Some((pending, body)) = leftover {
             self.commit(store, pending, body).await?;
@@ -452,7 +458,7 @@ impl StoreBackend for RouterBackend {
         };
         let bytes = self
             .link
-            .call(self.user, &paths::snapshots(store), to_json(&request)?)
+            .call(self.slot, &paths::snapshots(store), to_json(&request)?)
             .await?;
         let link: UploadLink =
             serde_json::from_slice(&bytes).map_err(|_| BackendError::Unavailable)?;
@@ -480,7 +486,7 @@ impl StoreBackend for RouterBackend {
         let mut sent = self
             .link
             .send_signed(
-                self.user,
+                self.slot,
                 method,
                 &link.url,
                 &link.headers,
@@ -550,13 +556,88 @@ mod tests {
             lost: watch::Sender::new(false),
         };
         let started = tokio::time::Instant::now();
-        assert!(!link.parked(UserId::from_uuid(Uuid::now_v7())).await);
+        assert!(
+            !link
+                .parked(Slot::User(knoggin_core::UserId::from_uuid(Uuid::now_v7())))
+                .await
+        );
         assert!(
             started.elapsed() <= Duration::from_secs(10),
             "{:?}",
             started.elapsed()
         );
         assert!(accepted.load(std::sync::atomic::Ordering::SeqCst) <= 3);
+        held.abort();
+    }
+
+    /// An app's own container opens and saves its app only: any other store is answered
+    /// as gone (drop it) before anything is sent to the broker.
+    #[tokio::test]
+    async fn a_store_container_asks_the_broker_for_its_store_only() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let accepted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = accepted.clone();
+        let held = tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                drop(stream);
+            }
+        });
+        let id = Uuid::now_v7();
+        let link = Arc::new(Link {
+            client: router_client(CertPin::of(b"no certificate"), None).unwrap(),
+            bucket: reqwest::Client::new(),
+            router_url: format!("https://127.0.0.1:{}", addr.port()),
+            launch: InternalSecret::from_bytes([3u8; 32]).launch_secret(id),
+            container_id: id,
+            lost: watch::Sender::new(false),
+        });
+        let own = StoreId::from_uuid(Uuid::now_v7());
+        let other = StoreId::from_uuid(Uuid::now_v7());
+        let backend = RouterBackend::new(link, Slot::Store(own));
+        assert_eq!(
+            backend.open(other, None).await.err(),
+            Some(BackendError::Deleted)
+        );
+        let name = SnapshotName::new(1, 1).unwrap();
+        let header = knoggin_crypto::container::Header::new(
+            other,
+            1,
+            1,
+            0,
+            1,
+            WrappedKey {
+                kek_id: "local:0000000000000001".into(),
+                blob: vec![0; 60],
+            },
+        );
+        let snapshot = SealedSnapshot {
+            name,
+            chunks: knoggin_crypto::container::seal(header, DataKey::from_bytes([1; 32]), vec![1]),
+            len: 1,
+            memory_count: 0,
+            namespace_count: 0,
+            last_write_at: None,
+            last_write_client: None,
+            restored: None,
+        };
+        assert_eq!(
+            backend.save(other, snapshot).await.err(),
+            Some(BackendError::Deleted)
+        );
+        tokio::task::yield_now().await;
+        assert_eq!(
+            accepted.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "nothing reached the router"
+        );
+        // Its own app is asked of the broker (which here refuses the TLS handshake).
+        assert_eq!(
+            backend.open(own, None).await.err(),
+            Some(BackendError::Unavailable)
+        );
+        assert!(accepted.load(std::sync::atomic::Ordering::SeqCst) >= 1);
         held.abort();
     }
 }

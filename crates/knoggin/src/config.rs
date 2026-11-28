@@ -520,6 +520,7 @@ pub(crate) struct Containers {
     pub(crate) idle_seconds: u64,
     pub(crate) max_lifetime_hours: u64,
     pub(crate) claim_wait_ms: u64,
+    pub(crate) max_per_user: u32,
 }
 
 impl Default for Containers {
@@ -532,6 +533,7 @@ impl Default for Containers {
             idle_seconds: 600,
             max_lifetime_hours: 24,
             claim_wait_ms: 20_000,
+            max_per_user: 6,
         }
     }
 }
@@ -645,6 +647,7 @@ const KEYS: &[(&str, Kind)] = {
         ("containers.idle_seconds", Int),
         ("containers.max_lifetime_hours", Int),
         ("containers.claim_wait_ms", Int),
+        ("containers.max_per_user", Int),
         ("internal.bind", Str),
         ("internal.router_url", Str),
         ("internal.secret_file", Str),
@@ -894,6 +897,12 @@ impl Config {
                 bail!("{name} must be between 1 and 3650");
             }
         }
+        if self.containers.max_per_user == 1 {
+            bail!(
+                "containers.max_per_user must be 0 or at least 2: 0 turns the bound off, and the \
+                 smallest bound is 2, the user's own container and one app"
+            );
+        }
         if let Some(bind) = self.metrics.bind.as_deref().filter(|b| !b.is_empty()) {
             bind.parse::<SocketAddr>()
                 .map_err(|_| anyhow!("metrics.bind: {bind:?} is not an address and port"))?;
@@ -1141,6 +1150,42 @@ mod tests {
         );
         // The default file may be missing.
         assert!(Config::load(&e, Role::Local, None, &Flags::default()).is_ok());
+    }
+
+    #[test]
+    fn containers_per_user_is_off_or_at_least_two() {
+        let d = tempfile::tempdir().unwrap();
+        let p = file(d.path(), "");
+        for role in [Role::Router, Role::Lifecycle, Role::Launcher] {
+            let load = |value: &str| {
+                Config::load(
+                    &env(d.path(), &[("KNOGGIN_CONTAINERS__MAX_PER_USER", value)]),
+                    role,
+                    Some(&p),
+                    &Flags::default(),
+                )
+            };
+            let e = load("1").err().unwrap().to_string();
+            assert!(
+                e.contains("containers.max_per_user") && e.contains("0 turns the bound off"),
+                "{e}"
+            );
+            for ok in ["0", "2", "6"] {
+                assert_eq!(
+                    load(ok).unwrap().containers.max_per_user.to_string(),
+                    ok,
+                    "{role:?}"
+                );
+            }
+        }
+        let c = Config::load(
+            &env(d.path(), &[]),
+            Role::Router,
+            Some(&p),
+            &Flags::default(),
+        )
+        .unwrap();
+        assert_eq!(c.containers.max_per_user, 6);
     }
 
     #[test]

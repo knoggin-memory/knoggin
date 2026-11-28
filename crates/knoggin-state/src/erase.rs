@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use crate::db::{Cond, Item, StateDb, StateError, Write};
 use crate::keys::{self, ONE};
 use crate::leases::lease_deletes;
-use crate::record::Newest;
+use crate::record::{Newest, Slot};
 use crate::sessions::delete_session_pairs;
 use crate::typed::{PAGE, read_all};
 use crate::users::LOCAL_IDENTITY;
@@ -104,8 +104,8 @@ fn marks<T: DeserializeOwned>(item: &Item) -> Result<T, StateError> {
 
 /// Erases every store whose own deletion mark, or its user's, is more than
 /// `soft_delete_days` plus 10 minutes old: first its snapshots through
-/// `delete_snapshots`, then its API-key records, then its name item, ID item and record
-/// in one write conditional on the record as read. Then erases every user whose mark is
+/// `delete_snapshots`, then its API-key records, then its name item, ID item, record and
+/// the lease of its own slot in one write conditional on the record as read. Then erases every user whose mark is
 /// that old and who has no store left: sessions, lease, sign-in index and user records.
 /// The user with issuer `local` is never erased. A run that stops part-way leaves records
 /// that the next run finishes.
@@ -160,7 +160,7 @@ where
             if user_due && left == 0 && user_marks.issuer != LOCAL_IDENTITY {
                 let sessions = read_all(&*db, &keys::user_sessions(user), "").await?;
                 delete_session_pairs(&*db, user, sessions.into_iter().map(|i| i.sk)).await?;
-                let mut writes = lease_deletes(user);
+                let mut writes = lease_deletes(Slot::User(user));
                 writes.extend([
                     Write::delete(keys::sub(&user_marks.sub_hash), ONE, Cond::Any),
                     Write::delete(keys::USERS, user.to_string(), Cond::Any),
@@ -180,7 +180,8 @@ where
     }
 }
 
-/// Deletes a store's key records, then its name item, ID item and record. Returns false
+/// Deletes a store's key records, then its name item, ID item, record and the lease of
+/// its own slot (`lease#store:<id>`, there only if it was isolated or shared). Returns false
 /// if the record changed since it was read (an undo got in first).
 async fn erase_store_records(
     db: &dyn StateDb,
@@ -213,6 +214,7 @@ async fn erase_store_records(
         }
     }
     writes.push(Write::delete(keys::store(store), ONE, Cond::Any));
+    writes.extend(lease_deletes(Slot::Store(store)));
     writes.push(Write::delete(
         keys::user_stores(user),
         store.to_string(),

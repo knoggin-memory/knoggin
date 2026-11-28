@@ -21,7 +21,7 @@ use axum::response::Response;
 use http::{StatusCode, header};
 use http_body_util::BodyExt;
 use knoggin_core::{StoreId, UserId};
-use knoggin_http::ctx::{CredentialKind, CredentialRef, Permissions};
+use knoggin_http::ctx::{CredentialKind, CredentialRef, Permissions, Serving};
 use knoggin_http::{Code, RequestContext};
 use knoggin_server::launcher::{
     BuildInfo, ContainerInfo, ContainerSpec, LaunchError, LaunchHandle, Launcher, LogLevel,
@@ -34,9 +34,11 @@ use knoggin_server::router::forward::{Timing, forwarder};
 use knoggin_server::settings::ContainerSettings;
 use knoggin_server::storage::MemoryStorage;
 use knoggin_server::testing::{Behaviour, FakeLauncher, FlakyDb, StubControl, stub_runner};
-use knoggin_state::record::{BuildSpec, ContainerState, Lease, LeaseState, ParkReason, StopReason};
+use knoggin_state::record::{
+    BuildSpec, ContainerState, Lease, LeaseState, ParkReason, Slot, StopReason,
+};
 use knoggin_state::testing::{TestClock, test_field_keys};
-use knoggin_state::{Containers, Leases, LocalFileDb, Meta, StateDb};
+use knoggin_state::{Containers, Leases, LocalFileDb, Meta, NewStore, StateDb, Stores};
 use tower::ServiceExt;
 use uuid::Uuid;
 
@@ -132,9 +134,50 @@ impl World {
         Containers::new(self.db.clone())
     }
 
+    /// An app of `owner`, isolated or shared as asked, written through the state layer.
+    async fn app(
+        &self,
+        owner: UserId,
+        isolated: bool,
+        shared: bool,
+    ) -> knoggin_state::record::StoreRecord {
+        let stores = Stores::new(self.db.clone(), Arc::new(test_field_keys()));
+        let id = StoreId::from_uuid(Uuid::now_v7());
+        let new = NewStore {
+            id,
+            name: knoggin_core::Sensitive::new(id.to_string()),
+            wrapped: knoggin_crypto::WrappedKey {
+                kek_id: "local:0000000000000001".into(),
+                blob: vec![0; 60],
+            },
+        };
+        stores
+            .create_app(owner, new, self.clock.now())
+            .await
+            .unwrap();
+        let (_, after) = stores
+            .update(owner, id, |r| {
+                r.isolated = isolated;
+                r.shared = shared;
+                Ok::<_, knoggin_state::StateError>(())
+            })
+            .await
+            .unwrap();
+        after.value
+    }
+
+    async fn lease_of(&self, slot: Slot) -> Lease {
+        self.leases()
+            .get(slot)
+            .await
+            .unwrap()
+            .map(|l| l.value)
+            .unwrap_or_default()
+    }
+
     async fn lease(&self, user: UserId) -> Lease {
         self.leases()
-            .get(user)
+            .get(Slot::User(user))
             .await
             .unwrap()
             .map(|l| l.value)
@@ -167,7 +210,10 @@ fn user() -> UserId {
 }
 
 async fn warm(fleet: &Arc<Fleet>, user: UserId) -> Uuid {
-    let l = fleet.acquire(user, Duration::from_secs(8)).await.unwrap();
+    let l = fleet
+        .acquire(Slot::User(user), user, Duration::from_secs(8))
+        .await
+        .unwrap();
     assert_eq!(l.value.state, LeaseState::Warm);
     l.value.container_id.unwrap()
 }
@@ -188,8 +234,8 @@ async fn two_routers_race_to_claim_one_user_and_both_are_served() {
     let (a, b) = (w.fleet(BUILD, true, |_| {}), w.fleet(BUILD, true, |_| {}));
     let u = user();
     let (x, y) = tokio::join!(
-        a.acquire(u, Duration::from_secs(8)),
-        b.acquire(u, Duration::from_secs(8))
+        a.acquire(Slot::User(u), u, Duration::from_secs(8)),
+        b.acquire(Slot::User(u), u, Duration::from_secs(8))
     );
     let (x, y) = (x.unwrap(), y.unwrap());
     assert_eq!(x.value.container_id, y.value.container_id);
@@ -214,8 +260,8 @@ async fn two_routers_claim_one_ready_container_for_two_users_and_the_loser_keeps
     w.launcher.refuse.store(true, Ordering::Relaxed);
     let (u1, u2) = (user(), user());
     let (x, y) = tokio::join!(
-        a.acquire(u1, Duration::from_secs(2)),
-        b.acquire(u2, Duration::from_secs(2))
+        a.acquire(Slot::User(u1), u1, Duration::from_secs(2)),
+        b.acquire(Slot::User(u2), u2, Duration::from_secs(2))
     );
     assert!(x.is_ok() != y.is_ok(), "exactly one user got the container");
     let named = [w.lease(u1).await, w.lease(u2).await]
@@ -237,7 +283,12 @@ async fn while_the_launcher_starts_another_build_a_waiting_request_launches_once
     w.launcher
         .set_runner(stub_runner("0.2.0", true, w.control.clone()));
     let f = w.fleet(BUILD, true, |_| {});
-    let e = f.acquire(user(), Duration::from_secs(4)).await.unwrap_err();
+    let e = {
+        let u = user();
+        f.acquire(Slot::User(u), u, Duration::from_secs(4))
+    }
+    .await
+    .unwrap_err();
     assert_eq!(e.code, Code::Unavailable);
     // The first launch shows the other build; after it, one launch in the minute.
     let launched = w.launcher.handles().len();
@@ -251,7 +302,10 @@ async fn waiting_requests_share_one_listing_of_the_container_records() {
     // No container comes: every request looks again every 250 ms for 2 seconds.
     w.launcher.refuse.store(true, Ordering::Relaxed);
     let before = w.flaky.queries.load(Ordering::Relaxed);
-    let waits = (0..20).map(|_| f.acquire(user(), Duration::from_secs(2)));
+    let waits = (0..20).map(|_| {
+        let u = user();
+        f.acquire(Slot::User(u), u, Duration::from_secs(2))
+    });
     for r in futures_util::future::join_all(waits).await {
         assert_eq!(r.unwrap_err().code, Code::Unavailable);
     }
@@ -267,7 +321,7 @@ async fn a_failed_claim_marks_the_container_gone_and_does_not_count_against_the_
     w.control.refuse_claim.store(true, Ordering::Relaxed);
     let u = user();
     let e = f
-        .acquire(u, Duration::from_millis(1_500))
+        .acquire(Slot::User(u), u, Duration::from_millis(1_500))
         .await
         .unwrap_err();
     assert_eq!(e.code, Code::Unavailable);
@@ -289,7 +343,7 @@ async fn a_claim_after_the_generation_was_set_back_still_rises_above_the_clock()
     let mut back = Lease::default();
     back.generation = 3;
     w.leases()
-        .put(u, &back, knoggin_state::Cond::Absent)
+        .put(Slot::User(u), &back, knoggin_state::Cond::Absent)
         .await
         .unwrap();
     warm(&f, u).await;
@@ -310,7 +364,10 @@ async fn three_abnormal_ends_pause_the_user_and_the_pause_ends_by_itself() {
             Marked::Gone
         );
     }
-    let e = f.acquire(u, Duration::from_secs(1)).await.unwrap_err();
+    let e = f
+        .acquire(Slot::User(u), u, Duration::from_secs(1))
+        .await
+        .unwrap_err();
     assert_eq!(
         (e.code, e.reason, e.retry_after),
         (Code::Unavailable, Some("out_of_memory"), Some(60))
@@ -351,7 +408,10 @@ async fn a_container_that_parks_after_every_request_caps_its_user_at_the_seventh
         f.finish_parked(id).await.unwrap();
         assert_eq!(w.lease(u).await.state, LeaseState::Parked);
     }
-    let e = f.acquire(u, Duration::from_secs(1)).await.unwrap_err();
+    let e = f
+        .acquire(Slot::User(u), u, Duration::from_secs(1))
+        .await
+        .unwrap_err();
     assert_eq!(
         (e.code, e.reason, e.retry_after),
         (Code::Unavailable, Some("crashed"), Some(60))
@@ -405,10 +465,13 @@ async fn reconcile_resolves_stuck_claims_and_leaves_a_launch_in_progress_alone()
     let u = user();
     let id = warm(&f, u).await;
     // A router that died after the claim call: the lease stays claiming.
-    let read = w.leases().get(u).await.unwrap().unwrap();
+    let read = w.leases().get(Slot::User(u)).await.unwrap().unwrap();
     let mut stuck = read.value.clone();
     stuck.set_state(LeaseState::Claiming, w.clock.now());
-    w.leases().put(u, &stuck, read.cond()).await.unwrap();
+    w.leases()
+        .put(Slot::User(u), &stuck, read.cond())
+        .await
+        .unwrap();
     // A launch in progress: a starting record of a moment ago.
     let starting = knoggin_state::record::Container::starting(
         Uuid::now_v7(),
@@ -475,7 +538,10 @@ async fn a_starting_record_whose_launch_never_happened_ends_and_claims_go_on() {
         .await
         .unwrap();
     let u = user();
-    let e = f.acquire(u, Duration::from_millis(600)).await.unwrap_err();
+    let e = f
+        .acquire(Slot::User(u), u, Duration::from_millis(600))
+        .await
+        .unwrap_err();
     assert_eq!(e.code, Code::Unavailable, "claims wait for the start");
     let mut r = Reconciler::default();
     assert!(f.take_leadership().await.unwrap());
@@ -566,11 +632,14 @@ async fn a_stuck_claim_whose_container_reports_another_generation_is_marked_gone
     let u = user();
     let id = warm(&f, u).await;
     // The lease names a later claim than the one the container took, a minute ago.
-    let read = w.leases().get(u).await.unwrap().unwrap();
+    let read = w.leases().get(Slot::User(u)).await.unwrap().unwrap();
     let mut stuck = read.value.clone();
     stuck.set_state(LeaseState::Claiming, w.clock.now() - 61_000);
     stuck.generation += 1;
-    w.leases().put(u, &stuck, read.cond()).await.unwrap();
+    w.leases()
+        .put(Slot::User(u), &stuck, read.cond())
+        .await
+        .unwrap();
     let mut r = Reconciler::default();
     assert!(f.take_leadership().await.unwrap());
     f.pass(&mut r).await.unwrap();
@@ -594,7 +663,9 @@ async fn a_container_that_ignores_park_is_stopped_after_two_hours() {
     let f = w.fleet(BUILD, true, |_| {});
     let u = user();
     let id = warm(&f, u).await;
-    f.request_park(u, ParkReason::Restore).await.unwrap();
+    f.request_park(Slot::User(u), ParkReason::Restore)
+        .await
+        .unwrap();
     let mut r = Reconciler::default();
     assert!(f.take_leadership().await.unwrap());
     f.pass(&mut r).await.unwrap();
@@ -1067,6 +1138,20 @@ fn ctx(user: UserId) -> RequestContext {
 }
 
 async fn send(f: &Arc<Fleet>, user: UserId, request: Request) -> Response {
+    let serving = Serving {
+        slot: Slot::User(user),
+        owner: user,
+    };
+    send_as(f, ctx(user), serving, request).await
+}
+
+/// A request with its own context and the store record's slot and owner.
+async fn send_as(
+    f: &Arc<Fleet>,
+    ctx: RequestContext,
+    serving: Serving,
+    request: Request,
+) -> Response {
     let timing = Timing {
         silence: Duration::from_millis(500),
         events_silence: Duration::from_millis(500),
@@ -1074,7 +1159,8 @@ async fn send(f: &Arc<Fleet>, user: UserId, request: Request) -> Response {
         ..Timing::default()
     };
     let mut request = request;
-    request.extensions_mut().insert(ctx(user));
+    request.extensions_mut().insert(ctx);
+    request.extensions_mut().insert(serving);
     forwarder(
         f.clone(),
         Duration::from_secs(if timeout_short(&request) { 2 } else { 20 }),
@@ -1334,4 +1420,275 @@ async fn every_store_route_pattern_is_one_the_store_layer_serves() {
         .await
         .unwrap();
     assert_eq!(r.status(), StatusCode::NOT_FOUND);
+}
+
+// ---- Slots and the containers per user --------------------------------------------------
+
+fn ctx_for(user: UserId, store: StoreId) -> RequestContext {
+    RequestContext {
+        store_id: store,
+        ..ctx(user)
+    }
+}
+
+fn serving(record: &knoggin_state::record::StoreRecord) -> Serving {
+    Serving {
+        slot: record.slot(),
+        owner: record.user_id,
+    }
+}
+
+async fn echoed_container(r: Response) -> String {
+    assert_eq!(r.status(), StatusCode::OK);
+    body_json(r).await["container"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn normal_stores_share_the_users_container() {
+    let w = World::new().await;
+    let f = w.fleet(BUILD, true, |_| {});
+    let u = user();
+    let personal = StoreId::from_uuid(Uuid::now_v7());
+    let normal = w.app(u, false, false).await;
+    assert_eq!(normal.slot(), Slot::User(u));
+    let mut seen = Vec::new();
+    for store in [personal, normal.id] {
+        let r = send_as(
+            &f,
+            ctx_for(u, store),
+            Serving {
+                slot: Slot::User(u),
+                owner: u,
+            },
+            Request::get("/v1/memories").body(Body::empty()).unwrap(),
+        )
+        .await;
+        seen.push(echoed_container(r).await);
+    }
+    assert_eq!(seen[0], seen[1], "one container serves both");
+    assert_eq!(w.count(ContainerState::Claimed).await, 1);
+    let c = w.containers().list().await.unwrap();
+    let claimed = c
+        .iter()
+        .find(|c| c.value.state == ContainerState::Claimed)
+        .unwrap();
+    assert_eq!(claimed.value.slot, Some(Slot::User(u)));
+    assert_eq!(claimed.value.charged_to, Some(u));
+    assert_eq!(claimed.value.claimed_ms, Some(w.clock.now()));
+}
+
+#[tokio::test]
+async fn requests_from_two_people_for_one_shared_app_reach_one_container() {
+    let w = World::new().await;
+    let f = w.fleet(BUILD, true, |_| {});
+    let owner = user();
+    let shared = w.app(owner, false, true).await;
+    assert_eq!(shared.slot(), Slot::Store(shared.id));
+    let (p1, p2) = (user(), user());
+    let mut seen = Vec::new();
+    for person in [p1, p2] {
+        let r = send_as(
+            &f,
+            ctx_for(person, shared.id),
+            serving(&shared),
+            Request::get("/v1/memories").body(Body::empty()).unwrap(),
+        )
+        .await;
+        seen.push(echoed_container(r).await);
+    }
+    assert_eq!(seen[0], seen[1], "both reach the app's own container");
+    let claimed: Vec<_> = w
+        .containers()
+        .list()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|c| c.value.state == ContainerState::Claimed)
+        .collect();
+    assert_eq!(claimed.len(), 1, "no person's own container was claimed");
+    assert_eq!(claimed[0].value.slot, Some(Slot::Store(shared.id)));
+    assert_eq!(
+        claimed[0].value.charged_to,
+        Some(owner),
+        "charged to the owner"
+    );
+    for u in [owner, p1, p2] {
+        assert_eq!(w.lease(u).await.state, LeaseState::Parked);
+    }
+    assert_eq!(
+        w.lease_of(Slot::Store(shared.id)).await.state,
+        LeaseState::Warm
+    );
+}
+
+#[tokio::test]
+async fn the_per_user_cap_refuses_one_more_isolated_app() {
+    let metrics = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .install_recorder()
+        .unwrap();
+    let w = World::new().await;
+    // At most 3 containers for one user: their own and 2 apps.
+    let f = w.fleet(BUILD, true, |c| c.containers.max_per_user = 3);
+    let owner = user();
+    let apps = [
+        w.app(owner, true, false).await,
+        w.app(owner, false, true).await,
+        w.app(owner, true, false).await,
+    ];
+    for app in &apps[..2] {
+        f.acquire(app.slot(), owner, Duration::from_secs(8))
+            .await
+            .unwrap();
+    }
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let e = f
+        .acquire(apps[2].slot(), owner, Duration::from_secs(8))
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (e.code, e.reason, e.retry_after),
+        (Code::RateLimited, Some("containers_per_user"), Some(30))
+    );
+    assert_eq!(
+        w.lease_of(apps[2].slot()).await.state,
+        LeaseState::Parked,
+        "nothing was claimed for it"
+    );
+    // The user's own container is never refused by it, also when it must be claimed now.
+    assert_eq!(w.lease(owner).await.state, LeaseState::Parked);
+    let r = send(
+        &f,
+        owner,
+        Request::get("/v1/memories").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    // Another owner's apps are counted for that owner.
+    let other = user();
+    let theirs = w.app(other, true, false).await;
+    f.acquire(theirs.slot(), other, Duration::from_secs(8))
+        .await
+        .unwrap();
+    // A forwarded request to the refused app answers the same refusal.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let r = send_as(
+        &f,
+        ctx_for(owner, apps[2].id),
+        serving(&apps[2]),
+        Request::get("/v1/memories").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(r.headers().get(header::RETRY_AFTER).unwrap(), "30");
+    assert_eq!(body_json(r).await["error"]["reason"], "containers_per_user");
+    assert_eq!(
+        claims_counted(&metrics.render(), "user_cap"),
+        Some(2),
+        "each refusal is counted"
+    );
+    // With no bound, one more is served.
+    let open = w.fleet(BUILD, true, |c| c.containers.max_per_user = 0);
+    open.acquire(apps[2].slot(), owner, Duration::from_secs(8))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn claim_churn_is_bounded_per_user() {
+    let metrics = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .install_recorder()
+        .unwrap();
+    let w = World::new().await;
+    // One app container at a time; at most max(6, 3) app claims in 10 minutes.
+    let routers = [
+        w.fleet(BUILD, true, |c| c.containers.max_per_user = 2),
+        w.fleet(BUILD, true, |c| c.containers.max_per_user = 2),
+    ];
+    let owner = user();
+    let claim_and_end = |f: Arc<Fleet>, slot: Slot| async move {
+        let lease = f.acquire(slot, owner, Duration::from_secs(8)).await?;
+        let id = lease.value.container_id.unwrap();
+        assert_eq!(
+            f.mark_gone(id, Some(StopReason::Lifetime), Caller::Request)
+                .await
+                .unwrap(),
+            Marked::Gone
+        );
+        Ok::<_, knoggin_http::ApiError>(())
+    };
+    for i in 0..6 {
+        let app = w.app(owner, true, false).await;
+        // Each router reads the records afresh: past its 250 ms reuse.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        claim_and_end(routers[i % 2].clone(), app.slot())
+            .await
+            .unwrap();
+    }
+    let app = w.app(owner, true, false).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    for f in &routers {
+        let e = f
+            .acquire(app.slot(), owner, Duration::from_secs(8))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            (e.code, e.reason, e.retry_after),
+            (Code::RateLimited, Some("containers_per_user"), Some(60))
+        );
+    }
+    assert_eq!(claims_counted(&metrics.render(), "user_churn"), Some(2));
+    assert_eq!(claims_counted(&metrics.render(), "user_cap"), None);
+    // The user's own container is not bounded by it.
+    warm(&routers[0], owner).await;
+    // Ten minutes later the old claims no longer count.
+    w.clock.advance(10 * 60 * 1000 + 1);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    claim_and_end(routers[1].clone(), app.slot()).await.unwrap();
+}
+
+/// The value of `knoggin_claims_total{outcome="<outcome>"}` in a Prometheus rendering.
+fn claims_counted(text: &str, outcome: &str) -> Option<u64> {
+    let name = format!("knoggin_claims_total{{outcome=\"{outcome}\"}} ");
+    text.lines()
+        .find_map(|l| l.strip_prefix(&name))
+        .map(|v| v.trim().parse().unwrap())
+}
+
+/// A store that moves makes its new container's opens ask the old one to park, again and
+/// again while the client retries; the old container gets one `park` from them however
+/// long that goes on. Sending it again is the reconcile loop's.
+#[tokio::test]
+async fn repeated_asks_to_park_during_a_move_send_one_park() {
+    let w = World::new().await;
+    w.control.exit_on_park.store(false, Ordering::Relaxed);
+    let f = w.fleet(BUILD, true, |_| {});
+    let u = user();
+    warm(&f, u).await;
+    let parks_after = |n: usize| {
+        let w = &w;
+        async move {
+            for _ in 0..50 {
+                if w.control.parks.load(Ordering::SeqCst) >= n {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            // Room for a late extra call to show up.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            w.control.parks.load(Ordering::SeqCst)
+        }
+    };
+    for _ in 0..5 {
+        f.ask_park(Slot::User(u), ParkReason::Moved).await;
+    }
+    assert_eq!(parks_after(1).await, 1);
+    assert_eq!(w.lease(u).await.park_requested(), Some(ParkReason::Moved));
+    // Retries over a long time behind a container that does not park send nothing more.
+    for step in [10_000, 60_000, 3_600_000] {
+        w.clock.advance(step);
+        for _ in 0..3 {
+            f.ask_park(Slot::User(u), ParkReason::Moved).await;
+        }
+    }
+    assert_eq!(parks_after(2).await, 1, "one park from all the asks");
 }
