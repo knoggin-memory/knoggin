@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Checks every adapter job makes of its framework's dependency group."""
+
+from __future__ import annotations
+
+import socket
+import subprocess
+import sys
+from importlib.metadata import requires, version
+
+import pytest
+from packaging.requirements import Requirement
+
+
+def check_group(extra: str, module: str) -> None:
+    """The group installs what the extra asks for, and `import knoggin` still imports none of it."""
+    wanted = [
+        r for r in map(Requirement, requires("knoggin") or []) if r.marker and r.marker.evaluate({"extra": extra})
+    ]
+    assert wanted, f"the package has no extra {extra!r}"
+    for r in wanted:
+        assert r.specifier.contains(version(r.name), prereleases=True), f"{r.name} {version(r.name)} is not {r}"
+    __import__(module)
+    probe = f"import sys, knoggin; sys.exit({module!r} in sys.modules)"
+    assert subprocess.run([sys.executable, "-c", probe], check=False).returncode == 0, (
+        f"`import knoggin` imports {module}"
+    )
+
+
+def check_no_network() -> None:
+    """The guard of `conftest.py` refuses an outside address before anything is sent."""
+    with pytest.raises(ConnectionRefusedError, match="reach no network"):
+        socket.create_connection(("192.0.2.1", 443), timeout=1)

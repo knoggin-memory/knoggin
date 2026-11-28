@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Pyright for one adapter job: the settings of pyproject.toml, without its exclude list.
+// uv run --locked --group <framework> pyright -p pyright-adapters.json <module> tests/adapters/*.py tests/adapters/<framework>
+{
+  "extends": "pyproject.toml",
+  "exclude": []
+}
