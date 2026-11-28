@@ -941,7 +941,7 @@ run "bucket_policy_denies_destroying_snapshots" {
     condition = { for s in jsondecode(aws_s3_bucket_policy.snapshots.policy).Statement : s.Sid => jsonencode([s.Principal, s.Action, s.Condition]) } == {
       DenyRouterDestroy = jsonencode(["*", [
         "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObjectRetention", "s3:PutObjectLegalHold", "s3:BypassGovernanceRetention",
-        "s3:PutObjectAcl", "s3:PutObjectVersionAcl", "s3:PutObjectTagging", "s3:GetObjectVersion",
+        "s3:PutObjectAcl", "s3:PutObjectVersionAcl", "s3:PutObjectTagging", "s3:PutObjectVersionTagging", "s3:GetObjectVersion",
       ], { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn } }])
       DenyRouterUnconditionalPut = jsonencode(["*", "s3:PutObject", {
         ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn }
@@ -949,11 +949,13 @@ run "bucket_policy_denies_destroying_snapshots" {
       }])
       DenyLifecyclePurge = jsonencode(["*", [
         "s3:DeleteObjectVersion", "s3:BypassGovernanceRetention", "s3:PutObject", "s3:GetObject", "s3:GetObjectVersion",
+        "s3:PutObjectVersionTagging",
       ], { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.lifecycle.arn } }])
       DenyAppBucketConfig = jsonencode(["*", [
         "s3:PutBucketVersioning", "s3:PutLifecycleConfiguration", "s3:PutBucketPolicy", "s3:DeleteBucketPolicy",
         "s3:PutBucketObjectLockConfiguration", "s3:PutBucketAcl", "s3:PutBucketOwnershipControls",
-        "s3:PutReplicationConfiguration", "s3:DeleteBucket",
+        "s3:PutReplicationConfiguration", "s3:PutBucketPublicAccessBlock", "s3:PutEncryptionConfiguration",
+        "s3:PutBucketNotification", "s3:PutIntelligentTieringConfiguration", "s3:DeleteBucket",
       ], { ArnEquals = { "aws:PrincipalArn" = [aws_iam_role.router.arn, aws_iam_role.lifecycle.arn] } }])
     }
     error_message = "The bucket policy denies each listed action to the router's role, the lifecycle task's role or both, and nothing else."
@@ -1027,6 +1029,24 @@ run "fargate_bucket_policy_denies_destroying_snapshots" {
     error_message = "By default versioning is off and the bucket has no lifecycle configuration."
   }
   assert {
+    condition = [
+      for s in jsondecode(aws_vpc_endpoint.s3.policy).Statement : jsonencode([s.Effect, s.Action, s.Resource, s.Condition])
+      if contains(flatten([s.Resource]), aws_s3_bucket.snapshots.arn)
+      ] == [
+      jsonencode(["Allow", ["s3:ListBucket", "s3:GetObject", "s3:PutObject"], [aws_s3_bucket.snapshots.arn, "${aws_s3_bucket.snapshots.arn}/*"],
+      { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn } }]),
+      jsonencode(["Allow", ["s3:ListBucket", "s3:DeleteObject"], [aws_s3_bucket.snapshots.arn, "${aws_s3_bucket.snapshots.arn}/*"],
+      { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.lifecycle.arn } }]),
+    ]
+    error_message = "Only the router's role (list, read, upload) and the lifecycle task's role (list, delete) reach the bucket."
+  }
+  assert {
+    condition = [
+      for s in jsondecode(aws_vpc_endpoint.s3.policy).Statement : s.Condition.ArnEquals["aws:PrincipalArn"] if contains(flatten([s.Action]), "s3:DeleteObject")
+    ] == [aws_iam_role.lifecycle.arn]
+    error_message = "Through the endpoint only the lifecycle task's role may delete."
+  }
+  assert {
     condition     = alltrue([for s in jsondecode(aws_s3_bucket_policy.snapshots.policy).Statement : s.Effect == "Deny"])
     error_message = "The bucket policy has no Allow."
   }
@@ -1034,7 +1054,7 @@ run "fargate_bucket_policy_denies_destroying_snapshots" {
     condition = { for s in jsondecode(aws_s3_bucket_policy.snapshots.policy).Statement : s.Sid => jsonencode([s.Principal, s.Action, s.Condition]) } == {
       DenyRouterDestroy = jsonencode(["*", [
         "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:PutObjectRetention", "s3:PutObjectLegalHold", "s3:BypassGovernanceRetention",
-        "s3:PutObjectAcl", "s3:PutObjectVersionAcl", "s3:PutObjectTagging", "s3:GetObjectVersion",
+        "s3:PutObjectAcl", "s3:PutObjectVersionAcl", "s3:PutObjectTagging", "s3:PutObjectVersionTagging", "s3:GetObjectVersion",
       ], { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn } }])
       DenyRouterUnconditionalPut = jsonencode(["*", "s3:PutObject", {
         ArnEquals = { "aws:PrincipalArn" = aws_iam_role.router.arn }
@@ -1042,11 +1062,13 @@ run "fargate_bucket_policy_denies_destroying_snapshots" {
       }])
       DenyLifecyclePurge = jsonencode(["*", [
         "s3:DeleteObjectVersion", "s3:BypassGovernanceRetention", "s3:PutObject", "s3:GetObject", "s3:GetObjectVersion",
+        "s3:PutObjectVersionTagging",
       ], { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.lifecycle.arn } }])
       DenyAppBucketConfig = jsonencode(["*", [
         "s3:PutBucketVersioning", "s3:PutLifecycleConfiguration", "s3:PutBucketPolicy", "s3:DeleteBucketPolicy",
         "s3:PutBucketObjectLockConfiguration", "s3:PutBucketAcl", "s3:PutBucketOwnershipControls",
-        "s3:PutReplicationConfiguration", "s3:DeleteBucket",
+        "s3:PutReplicationConfiguration", "s3:PutBucketPublicAccessBlock", "s3:PutEncryptionConfiguration",
+        "s3:PutBucketNotification", "s3:PutIntelligentTieringConfiguration", "s3:DeleteBucket",
       ], { ArnEquals = { "aws:PrincipalArn" = [aws_iam_role.router.arn, aws_iam_role.lifecycle.arn] } }])
     }
     error_message = "The bucket policy denies each listed action to the router's role, the lifecycle task's role or both, and nothing else."

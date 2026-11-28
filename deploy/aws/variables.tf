@@ -161,7 +161,7 @@ variable "allowed_email_domains" {
 }
 
 variable "undelete_days" {
-  description = "Days the bucket itself keeps a deleted snapshot, on top of Knoggin's 24-hour undo window. 0 turns this off. Above 0, a forgotten memory and an erased store stay in the bucket that many more days (plus up to a day, because S3 expires on its own schedule), readable only with operator credentials. S3 cannot return a bucket to unversioned, so this cannot be set back to 0 once it was above 0; set it to 1 instead."
+  description = "Days the bucket itself keeps a deleted snapshot, on top of Knoggin's 24-hour undo window. 0 turns this off. Above 0, a forgotten memory and an erased store stay in the bucket that many more days (plus up to a day, because S3 expires on its own schedule), readable only with operator credentials. S3 cannot return a bucket to unversioned: once this was above 0, an apply with 0 fails and also removes the rule that expires old versions, so they stay for good until an apply with 1 or more puts the rule back. Use 1, not 0, to shorten it."
   type        = number
   default     = 0
   nullable    = false

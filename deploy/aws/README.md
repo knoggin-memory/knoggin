@@ -53,11 +53,13 @@ the first apply; switching later is a planned outage (`docs/deploy-aws.md`).
   registry's layer bucket. Nothing in this VPC can reach any other bucket.
 - **The bucket policy holds denies only.** The router can never delete or overwrite a
   snapshot, the lifecycle task can never read, upload or touch old versions, and neither
-  can change the bucket's versioning, lifecycle rules, policy or ACLs, whatever their IAM
-  policies say.
+  can change the bucket's versioning, lifecycle rules, policy, ACLs, public access block,
+  encryption or notifications, whatever their IAM policies say.
 - **`undelete_days`** (0 to 30, default 0) turns on bucket versioning: a deleted snapshot
-  stays as an old version for about that many days to one more. Once above 0 it cannot
-  go back to 0, because S3 cannot return a bucket to unversioned; set it to 1 instead.
+  stays as an old version for about that many days to one more. S3 cannot return a
+  bucket to unversioned: once it was above 0, an apply with 0 fails and also removes the
+  rule that expires old versions, so they stay for good. Apply 1 or more at once to put
+  the rule back; use 1, not 0, to shorten it.
 - **The account setting `awsvpcTrunking`** is set as the account's default in the region
   on `ec2`.
 - **On `fargate`, the interface endpoints for ECR and CloudWatch Logs have private DNS.**

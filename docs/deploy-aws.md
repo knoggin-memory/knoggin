@@ -158,7 +158,7 @@ Replace `["admin","selftest"]` with the command you need. The output is in the r
 
 **The bucket** has versioning off by default: Knoggin's own 24-hour window is the undo, and an erased store must stay erased. Snapshots are the backup. A bucket policy of denies only keeps the router from deleting or overwriting a snapshot and keeps both Knoggin roles from changing the bucket's rules.
 
-For a second safety net, set `undelete_days` (1 to 30). The bucket then keeps a deleted snapshot as an old version for about that many days to one more (S3 expires on its own schedule), readable only with operator credentials; a forgotten memory or an erased store stays there that long too. [Operations](operations.md#bring-a-deleted-snapshot-back-from-bucket-versions) shows how to bring one back. S3 cannot return a bucket to unversioned, so once `undelete_days` was above 0, setting it to 0 fails at apply; set it to 1 instead.
+For a second safety net, set `undelete_days` (1 to 30). The bucket then keeps a deleted snapshot as an old version for about that many days to one more (S3 expires on its own schedule), readable only with operator credentials; a forgotten memory or an erased store stays there that long too. [Operations](operations.md#bring-a-deleted-snapshot-back-from-bucket-versions) shows how to bring one back. S3 cannot return a bucket to unversioned: once `undelete_days` was above 0, an apply with 0 fails and also removes the rule that expires old versions, so they stay in the bucket for good. If that happens, apply 1 or more at once to put the rule back. To shorten the window, use 1, not 0.
 
 ## The source offer
 

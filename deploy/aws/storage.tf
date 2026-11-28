@@ -71,6 +71,7 @@ resource "aws_s3_bucket_policy" "snapshots" {
           "s3:PutObjectAcl",
           "s3:PutObjectVersionAcl",
           "s3:PutObjectTagging",
+          "s3:PutObjectVersionTagging",
           "s3:GetObjectVersion",
         ]
         Resource  = local.bucket_and_objects
@@ -97,6 +98,7 @@ resource "aws_s3_bucket_policy" "snapshots" {
           "s3:PutObject",
           "s3:GetObject",
           "s3:GetObjectVersion",
+          "s3:PutObjectVersionTagging",
         ]
         Resource  = local.bucket_and_objects
         Condition = { ArnEquals = { "aws:PrincipalArn" = aws_iam_role.lifecycle.arn } }
@@ -114,6 +116,10 @@ resource "aws_s3_bucket_policy" "snapshots" {
           "s3:PutBucketAcl",
           "s3:PutBucketOwnershipControls",
           "s3:PutReplicationConfiguration",
+          "s3:PutBucketPublicAccessBlock",
+          "s3:PutEncryptionConfiguration",
+          "s3:PutBucketNotification",
+          "s3:PutIntelligentTieringConfiguration",
           "s3:DeleteBucket",
         ]
         Resource  = local.bucket_and_objects
