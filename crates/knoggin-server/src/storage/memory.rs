@@ -5,7 +5,8 @@
 //! (`X-Amz-Algorithm` to `X-Amz-Signature`, and `x-id`), so the code that downloads and
 //! uploads, and the one-host blob route, treat it as they treat a real bucket. It refuses
 //! to overwrite, checks every signed header, and has switches that make it fail, stall or
-//! go away.
+//! go away. `without_delete` gives a second handle on the same bucket whose deletes are
+//! refused, as a router's key is.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -81,6 +82,8 @@ pub enum Weakness {
     NoExpiry,
     /// A listing does not show any object yet.
     StaleListing,
+    /// A handle made by `without_delete` may delete after all.
+    RouterMayDelete,
 }
 
 /// One request it received, for tests that check what reached the bucket.
@@ -118,10 +121,12 @@ impl Shared {
     }
 }
 
-/// The in-memory bucket and its loopback server. The server stops when this is dropped.
+/// The in-memory bucket and its loopback server. The server stops when the last handle
+/// is dropped.
 pub struct MemoryStorage {
     shared: Arc<Shared>,
-    server: Mutex<Option<JoinHandle<()>>>,
+    server: Arc<Mutex<Option<JoinHandle<()>>>>,
+    may_delete: bool,
 }
 
 impl fmt::Debug for MemoryStorage {
@@ -135,6 +140,9 @@ impl fmt::Debug for MemoryStorage {
 
 impl Drop for MemoryStorage {
     fn drop(&mut self) {
+        if Arc::strong_count(&self.server) > 1 {
+            return;
+        }
         if let Some(task) = lock(&self.server).take() {
             task.abort();
         }
@@ -162,8 +170,19 @@ impl MemoryStorage {
         let server = tokio::spawn(serve(listener, shared.clone()));
         Ok(Self {
             shared,
-            server: Mutex::new(Some(server)),
+            server: Arc::new(Mutex::new(Some(server))),
+            may_delete: true,
         })
+    }
+
+    /// Another handle on the same bucket and server whose `delete` is refused with
+    /// `AccessDenied`, as with a router's bucket key. Router-side tests use it.
+    pub fn without_delete(&self) -> Self {
+        Self {
+            shared: self.shared.clone(),
+            server: self.server.clone(),
+            may_delete: false,
+        }
     }
 
     /// `http://127.0.0.1:<port>`: the `storage.endpoint_url` that points at it.
@@ -351,6 +370,9 @@ impl ObjectStorage for MemoryStorage {
 
     async fn delete(&self, keys: &[String]) -> Result<(), StorageError> {
         self.admit().await?;
+        if !self.may_delete && !self.shared.weak(Weakness::RouterMayDelete) {
+            return Err(StorageError::Refused("AccessDenied".into()));
+        }
         let mut objects = lock(&self.shared.objects);
         for key in keys {
             objects.remove(key);

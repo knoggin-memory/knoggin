@@ -26,7 +26,9 @@ use knoggin_crypto::source::{FileRule, create_key_file, read_key_file};
 use knoggin_server::admin::{
     Admin, BucketStep, RestoreOutcome, RetireBefore, bucket_selftest, rotate_master_key, selftest,
 };
-use knoggin_server::storage::{Fault, MemoryStorage, Weakness, names};
+use knoggin_server::storage::{
+    Fault, MemoryStorage, ObjectInfo, ObjectStorage, SignedRequest, StorageError, Weakness, names,
+};
 use knoggin_state::record::{BuildSpec, LeaseState, ParkReason};
 use knoggin_state::testing::TestClock;
 use knoggin_state::{LocalFileDb, Meta, NewStore, NewUser, StateDb, Stores, Users};
@@ -46,7 +48,7 @@ fn admin_of(rig: &Rig) -> Admin {
     Admin::new(
         rig.db.clone(),
         Arc::new(knoggin_state::testing::test_field_keys()),
-        rig.storage.clone(),
+        Arc::new(rig.storage.without_delete()),
         rig.clock.clock(),
     )
 }
@@ -65,8 +67,12 @@ fn summaries(body: &[u8]) -> Vec<String> {
 async fn the_bucket_self_test_passes_and_fails_at_each_broken_property() {
     let clock = TestClock::new();
     let storage = MemoryStorage::start(clock.clock()).await.unwrap();
+    // The router's handle: its deletes are refused.
+    let router = storage.without_delete();
     let now = || Timestamp::from_millis(clock.now());
-    bucket_selftest(&storage, &http(), now()).await.unwrap();
+    bucket_selftest(&router, &http(), now(), false)
+        .await
+        .unwrap();
     // A run leaves only its own uploads, under `selftest/`.
     assert!(
         storage
@@ -78,7 +84,7 @@ async fn the_bucket_self_test_passes_and_fails_at_each_broken_property() {
 
     storage.set_fault(Fault::Fail).await.unwrap();
     assert_eq!(
-        bucket_selftest(&storage, &http(), now())
+        bucket_selftest(&router, &http(), now(), false)
             .await
             .unwrap_err()
             .step,
@@ -90,26 +96,125 @@ async fn the_bucket_self_test_passes_and_fails_at_each_broken_property() {
         (Weakness::Unsigned, BucketStep::Signed),
         (Weakness::NoExpiry, BucketStep::Expiry),
         (Weakness::StaleListing, BucketStep::Listing),
+        (Weakness::RouterMayDelete, BucketStep::NoDelete),
     ] {
         storage.weaken(Some(weakness));
-        let failure = bucket_selftest(&storage, &http(), now()).await.unwrap_err();
+        let failure = bucket_selftest(&router, &http(), now(), false)
+            .await
+            .unwrap_err();
         assert_eq!(failure.step, step, "{weakness:?}: {failure}");
         storage.weaken(None);
     }
-    bucket_selftest(&storage, &http(), now()).await.unwrap();
+    bucket_selftest(&router, &http(), now(), false)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_router_key_that_can_delete_fails_the_bucket_self_test() {
+    let clock = TestClock::new();
+    let storage = MemoryStorage::start(clock.clock()).await.unwrap();
+    let now = Timestamp::from_millis(clock.now());
+    let failure = bucket_selftest(&storage, &http(), now, false)
+        .await
+        .unwrap_err();
+    assert_eq!(failure.step, BucketStep::NoDelete);
+    assert_eq!(
+        failure.to_string(),
+        "bucket check no_delete failed: the router's bucket key may delete objects: give it \
+         read, list and create-only upload, and nothing else"
+    );
+}
+
+#[tokio::test]
+async fn an_outage_at_the_delete_check_fails_the_bucket_self_test() {
+    /// The stand-in bucket, whose delete call finds the bucket unreachable.
+    struct DeleteOutage(MemoryStorage);
+    #[async_trait::async_trait]
+    impl ObjectStorage for DeleteOutage {
+        async fn list(&self, prefix: &str) -> Result<Vec<ObjectInfo>, StorageError> {
+            self.0.list(prefix).await
+        }
+        async fn presign_get(
+            &self,
+            key: &str,
+            ttl: Duration,
+            now: Timestamp,
+        ) -> Result<SignedRequest, StorageError> {
+            self.0.presign_get(key, ttl, now).await
+        }
+        async fn presign_put_new(
+            &self,
+            key: &str,
+            len: u64,
+            ttl: Duration,
+            now: Timestamp,
+        ) -> Result<SignedRequest, StorageError> {
+            self.0.presign_put_new(key, len, ttl, now).await
+        }
+        async fn delete(&self, _: &[String]) -> Result<(), StorageError> {
+            Err(StorageError::Unavailable)
+        }
+    }
+    let clock = TestClock::new();
+    let storage = DeleteOutage(MemoryStorage::start(clock.clock()).await.unwrap());
+    let now = Timestamp::from_millis(clock.now());
+    let failure = bucket_selftest(&storage, &http(), now, false)
+        .await
+        .unwrap_err();
+    assert_eq!(
+        (failure.step, failure.reason.as_str()),
+        (BucketStep::NoDelete, "the bucket cannot be reached")
+    );
+}
+
+#[tokio::test]
+async fn the_override_lets_a_router_key_that_can_delete_pass_with_a_warning() {
+    #[derive(Clone, Default)]
+    struct Sink(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Sink {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let sink = Sink::default();
+    let writer = sink.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+
+    let clock = TestClock::new();
+    let storage = MemoryStorage::start(clock.clock()).await.unwrap();
+    let now = Timestamp::from_millis(clock.now());
+    bucket_selftest(&storage, &http(), now, true).await.unwrap();
+    // Nothing was deleted: the check does not run under the override.
+    assert_eq!(storage.keys().len(), 1);
+    let log = String::from_utf8(sink.0.lock().unwrap().clone()).unwrap();
+    let warnings: Vec<_> = log
+        .lines()
+        .filter(|l| l.contains("WARN") && l.contains("storage.router_may_delete"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{log}");
 }
 
 #[tokio::test]
 async fn the_admin_self_test_checks_the_database_the_key_provider_and_the_bucket() {
     let clock = TestClock::new();
     let storage = MemoryStorage::start(clock.clock()).await.unwrap();
+    let router = storage.without_delete();
     let db: Arc<dyn StateDb> = Arc::new(LocalFileDb::in_memory(clock.clock()));
     let keys = knoggin_crypto::testing::test_provider();
     let now = Timestamp::from_millis(clock.now());
-    let report = selftest(db.clone(), &keys, &storage, &http(), now).await;
+    let report = selftest(db.clone(), &keys, &router, &http(), now, false).await;
     assert!(report.passed(), "{report:?}");
     storage.weaken(Some(Weakness::NoExpiry));
-    let report = selftest(db, &keys, &storage, &http(), now).await;
+    let report = selftest(db, &keys, &router, &http(), now, false).await;
     assert!(!report.passed());
     assert!(report.database.is_ok() && report.key_provider.is_ok());
     assert_eq!(report.bucket.unwrap_err().step, BucketStep::Expiry);

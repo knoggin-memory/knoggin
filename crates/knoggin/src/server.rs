@@ -209,6 +209,7 @@ pub(crate) fn storage_settings(config: &Config) -> anyhow::Result<StorageSetting
         force_path_style: s.force_path_style,
         credentials_file: s.credentials_file.clone(),
         link_ttl_seconds: s.link_ttl_seconds,
+        router_may_delete: s.router_may_delete,
     })
 }
 
@@ -477,6 +478,7 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
     // launcher's `attach`.
     let before_rollout = {
         let (bucket, clock) = (bucket.clone(), clock.clone());
+        let router_may_delete = settings.storage.router_may_delete;
         Box::pin(async move {
             let http = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -486,6 +488,7 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
                 &*bucket,
                 &http,
                 Timestamp::from_millis(clock()),
+                router_may_delete,
             )
             .await
             .map_err(|e| e.to_string())?;

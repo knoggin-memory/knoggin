@@ -129,6 +129,10 @@ pub struct StorageSettings {
     /// `storage.link_ttl_seconds` (300).
     #[serde(default = "default_link_ttl")]
     pub link_ttl_seconds: u64,
+    /// `storage.router_may_delete` (false): lets the router start with a bucket key that can
+    /// delete, for providers whose keys cannot separate writing from deleting.
+    #[serde(default)]
+    pub router_may_delete: bool,
 }
 
 fn default_link_ttl() -> u64 {

@@ -336,7 +336,7 @@ impl Deployment {
             },
             db: self.db.clone(),
             keys: self.keys.clone(),
-            storage: self.storage.clone(),
+            storage: Arc::new(self.storage.without_delete()),
             launcher: self.launcher.clone(),
             clock: self.clock.clone(),
             listeners: Listeners {
@@ -411,7 +411,7 @@ impl Deployment {
             self.db.clone(),
             Arc::new(fields),
             self.launcher.clone(),
-            self.storage.clone(),
+            Arc::new(self.storage.without_delete()),
             self.clock.clone(),
         )
         .unwrap()

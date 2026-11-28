@@ -216,12 +216,15 @@ pub async fn run(
 mod tests {
     use std::path::Path;
 
-    /// Only this module calls `ObjectStorage::delete`. Every other `.delete(` in the
-    /// crate's code must be on a receiver that is not the bucket.
+    /// Only the lifecycle task deletes; the bucket self-test proves the router cannot, with
+    /// the one call allowed below. Every other `.delete(` in the crate's code must be on a
+    /// receiver that is not the bucket.
     #[test]
     fn nothing_else_deletes_objects() {
+        const SELFTEST_CALL: &str = "storage.delete(std::slice::from_ref(&key))";
         let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut offenders = Vec::new();
+        let mut selftest_calls = 0;
         let mut stack = vec![src.clone()];
         while let Some(dir) = stack.pop() {
             for entry in std::fs::read_dir(&dir).unwrap() {
@@ -241,7 +244,9 @@ mod tests {
                 }
                 let text = std::fs::read_to_string(&path).unwrap();
                 for (n, line) in text.lines().enumerate() {
-                    let allowed = line.contains("containers.delete(");
+                    let selftest = rel == "admin.rs" && line.contains(SELFTEST_CALL);
+                    selftest_calls += usize::from(selftest);
+                    let allowed = line.contains("containers.delete(") || selftest;
                     if (line.contains(".delete(") && !allowed)
                         || line.contains("ObjectStorage::delete")
                         || line.contains("delete_objects")
@@ -252,5 +257,6 @@ mod tests {
             }
         }
         assert!(offenders.is_empty(), "{offenders:#?}");
+        assert_eq!(selftest_calls, 1, "exactly one self-test delete");
     }
 }

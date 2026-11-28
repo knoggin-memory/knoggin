@@ -411,6 +411,7 @@ pub(crate) struct Storage {
     pub(crate) force_path_style: bool,
     pub(crate) credentials_file: Option<PathBuf>,
     pub(crate) link_ttl_seconds: u64,
+    pub(crate) router_may_delete: bool,
 }
 
 impl Default for Storage {
@@ -422,6 +423,7 @@ impl Default for Storage {
             force_path_style: false,
             credentials_file: None,
             link_ttl_seconds: 300,
+            router_may_delete: false,
         }
     }
 }
@@ -624,6 +626,7 @@ const KEYS: &[(&str, Kind)] = {
         ("storage.force_path_style", Bool),
         ("storage.credentials_file", Str),
         ("storage.link_ttl_seconds", Int),
+        ("storage.router_may_delete", Bool),
         ("retention.days", Int),
         ("retention.soft_delete_days", Int),
         ("keys.provider", Str),
@@ -1093,6 +1096,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(c.source_url, "https://x.example/src");
+    }
+
+    #[test]
+    fn the_router_may_delete_only_when_the_setting_says_so() {
+        let d = tempfile::tempdir().unwrap();
+        let f = Flags::default();
+        let c = load(d.path(), "", &[], &f).unwrap();
+        assert!(!c.storage.router_may_delete);
+        let vars = [("KNOGGIN_STORAGE__ROUTER_MAY_DELETE", "true")];
+        assert!(
+            load(d.path(), "", &vars, &f)
+                .unwrap()
+                .storage
+                .router_may_delete
+        );
+        let c = load(d.path(), "[storage]\nrouter_may_delete = true\n", &[], &f).unwrap();
+        assert!(c.storage.router_may_delete);
     }
 
     #[test]

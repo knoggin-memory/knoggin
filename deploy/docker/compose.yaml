@@ -55,6 +55,9 @@ services:
     environment:
       KNOGGIN_SERVER__PUBLIC_URL: https://${KNOGGIN_DOMAIN:-}
       KNOGGIN_SERVER__TRUSTED_PROXIES: ${KNOGGIN_NET_PREFIX:-10.200}.0.2/32
+      # The bundled SeaweedFS cannot give the router a key without delete rights. With your
+      # own bucket and a router key that cannot delete, remove this line.
+      KNOGGIN_STORAGE__ROUTER_MAY_DELETE: "true"
     networks: [edge, back, store, ctl]
     secrets:
       - postgres_url

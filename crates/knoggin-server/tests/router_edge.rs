@@ -130,7 +130,7 @@ async fn app(per_address: Rate, per_user: Rate) -> App {
         db.clone(),
         fields.clone(),
         launcher.clone(),
-        storage.clone(),
+        Arc::new(storage.without_delete()),
         clock.clock(),
     )
     .unwrap();

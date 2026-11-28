@@ -563,6 +563,7 @@ async fn admin(ctx: &Ctx<'_>, config: &Config, c: AdminCommand) -> anyhow::Resul
             &*storage,
             &http,
             knoggin_core::Timestamp::from_millis(clock()),
+            storage_settings.router_may_delete,
         )
         .await;
         let show = |r: Result<(), String>| r.err().unwrap_or_else(|| "ok".into());

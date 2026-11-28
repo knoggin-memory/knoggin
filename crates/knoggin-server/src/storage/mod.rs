@@ -41,8 +41,8 @@ pub trait ObjectStorage: Send + Sync {
         ttl: Duration,
         now: Timestamp,
     ) -> Result<SignedRequest, StorageError>;
-    /// Deletes these objects; a key that is already gone is no error. The lifecycle task
-    /// alone calls it.
+    /// Deletes these objects; a key that is already gone is no error. Only the lifecycle
+    /// task deletes; the bucket self-test calls it once to prove the router cannot.
     async fn delete(&self, keys: &[String]) -> Result<(), StorageError>;
 }
 
