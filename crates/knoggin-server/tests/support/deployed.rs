@@ -4,9 +4,10 @@
 //! starts the one-host stack.
 //!
 //! The AWS run adds a network probe that ECS allows: a one-off task of the pinned
-//! `busybox`, copied by digest into the deployment's ECR repository, run on the user hosts
-//! with the EC2 launch type, `awsvpc` mode, the user security group and subnets and no
-//! role. Its exit code is the result, so it needs no log group: 0 when every check holds,
+//! `busybox`, copied by digest into the deployment's ECR repository, run where the user
+//! containers run (the user hosts with the EC2 launch type, or Fargate with the user execution
+//! role to pull the image), in `awsvpc` mode, with the user security group and subnets and no
+//! task role. Its exit code is the result, so it needs no log group: 0 when every check holds,
 //! otherwise the number of the first check that failed.
 //!
 //! The AWS calls use the SDK's default chain with the `.cargo/config.toml` settings (no
@@ -313,7 +314,11 @@ pub async fn network_probe(c: &Credentials) {
         .send()
         .await
         .unwrap();
-    let user_image = user_def.task_definition().unwrap().container_definitions()[0]
+    let user_def = user_def.task_definition().unwrap();
+    let fargate = user_def
+        .requires_compatibilities()
+        .contains(&Compatibility::Fargate);
+    let user_image = user_def.container_definitions()[0]
         .image()
         .unwrap()
         .to_owned();
@@ -394,11 +399,19 @@ pub async fn network_probe(c: &Credentials) {
     let script = script(&checks, &upload);
 
     let family = format!("{}-isolation-probe", c.name);
-    let registered = ecs
+    let mut register = ecs
         .register_task_definition()
         .family(&family)
         .network_mode(NetworkMode::Awsvpc)
-        .requires_compatibilities(Compatibility::Ec2)
+        .set_requires_compatibilities(Some(user_def.requires_compatibilities().to_vec()))
+        .set_runtime_platform(user_def.runtime_platform().cloned());
+    if fargate {
+        register = register
+            .cpu("256")
+            .memory("512")
+            .set_execution_role_arn(user_def.execution_role_arn().map(str::to_owned));
+    }
+    let registered = register
         .container_definitions(
             ContainerDefinition::builder()
                 .name("probe")
@@ -427,7 +440,11 @@ pub async fn network_probe(c: &Credentials) {
         .run_task()
         .cluster(&cluster)
         .task_definition(&definition)
-        .launch_type(LaunchType::Ec2)
+        .launch_type(if fargate {
+            LaunchType::Fargate
+        } else {
+            LaunchType::Ec2
+        })
         .count(1)
         .started_by("knoggin-isolation-test")
         .network_configuration(
