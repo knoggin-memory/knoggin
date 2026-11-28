@@ -477,3 +477,70 @@ async fn a_restore_parks_only_that_slot() {
     );
     assert_eq!(rig.lease_of(Slot::Store(x)).await.park_requested(), None);
 }
+
+/// A store in the middle of a slot change: the restore parks the container that serves it
+/// and the one that still holds it, and is done only once both are.
+#[tokio::test]
+async fn a_restore_in_the_middle_of_a_move_parks_the_holder_too() {
+    use knoggin_state::record::{Holder, Slot};
+    let rig = Rig::start(Options::default()).await;
+    let admin = admin_of(&rig);
+    let a = rig.account().await;
+    let x = rig.app(a.user, "moving").await;
+    let g = rig.generation();
+    rig.storage.insert(
+        &names::snapshot_key(x, SnapshotName::new(g, 1).unwrap()),
+        bytes::Bytes::from_static(b"s"),
+        Timestamp::from_millis(rig.clock.now()),
+    );
+    warm(&rig, a.slot()).await;
+    warm(&rig, Slot::Store(x)).await;
+    // Opened by the user's container, then made isolated.
+    let generation = rig.lease_of(a.slot()).await.generation;
+    rig.stores
+        .update(a.user, x, |r| {
+            r.holder = Some(Holder {
+                slot: Slot::User(a.user),
+                generation,
+            });
+            r.isolated = true;
+            Ok::<_, knoggin_state::StateError>(())
+        })
+        .await
+        .unwrap();
+    let name = SnapshotName::new(g, 1).unwrap();
+    let short = Duration::from_millis(10);
+    assert_eq!(
+        admin.restore(x, name, short).await.unwrap(),
+        RestoreOutcome::Waiting
+    );
+    for slot in [Slot::Store(x), a.slot()] {
+        assert_eq!(
+            rig.lease_of(slot).await.park_requested(),
+            Some(ParkReason::Restore),
+            "{slot}"
+        );
+    }
+    let park = |slot| {
+        let rig = &rig;
+        async move {
+            let mut l = rig.lease_of(slot).await;
+            l.set_state(LeaseState::Parked, rig.clock.now());
+            rig.leases
+                .put(slot, &l, knoggin_state::Cond::Any)
+                .await
+                .unwrap();
+        }
+    };
+    // The app's own container parked; the holder has not: not done yet.
+    park(Slot::Store(x)).await;
+    assert_eq!(
+        admin.restore(x, name, short).await.unwrap(),
+        RestoreOutcome::Waiting
+    );
+    park(a.slot()).await;
+    assert_eq!(
+        admin.restore(x, name, short).await.unwrap(),
+        RestoreOutcome::Parked
+    );
+}

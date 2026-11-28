@@ -32,7 +32,7 @@ Route labels are route patterns, never real paths, so no ID reaches a metric.
 
 A user's own container serves their personal store and every app of theirs. An isolated or shared app gets a container of its own, which can reach only that app's key, and counts toward its owner's limit.
 
-`containers.max_per_user` (6) is the most containers one user may have at once, their own included, so at most 5 isolated or shared apps of one owner run at a time. One user can therefore hold 6 times `containers.memory_mib`; size the host or `max_hosts` for that. `0` turns the limit off.
+`containers.max_per_user` (6) is the most containers one user may have at once, their own included, so at most 5 isolated or shared apps of one owner run at a time. One user can therefore hold 6 times `containers.memory_mib`; size the host or `max_hosts` for that. `0` turns the limit off; the smallest limit is 2 (a user's own container and one app), so 1 is refused at start.
 
 When an owner's apps would pass it, a request to one more app is refused with 429 `rate_limited`, reason `containers_per_user`, and `Retry-After: 30`. The personal store and normal apps are never refused by it. An app container is counted again each time it is claimed: more than `max(6, 3 × (max_per_user − 1))` claims for one owner's apps in 10 minutes are refused the same way with `Retry-After: 60`. The limit is checked by each router from the container records, so two routers that claim at the same moment can each pass it by one.
 

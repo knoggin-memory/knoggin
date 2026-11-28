@@ -55,6 +55,9 @@ use crate::storage::ObjectStorage;
 /// The reason of a claim refused for the bounds per user on app containers.
 pub const CONTAINERS_PER_USER: &str = "containers_per_user";
 
+/// How old a recorded park request must be before `ask_park` sends `park` again.
+pub const PARK_AGAIN_MS: i64 = 5_000;
+
 /// How long a request waits between two looks at a lease that is not ready.
 pub const POLL: Duration = Duration::from_millis(250);
 
@@ -642,19 +645,24 @@ impl Fleet {
 
     /// Records a park request on the slot's lease (it keeps one that is already there).
     pub async fn request_park(&self, slot: Slot, reason: ParkReason) -> Result<(), StateError> {
+        self.record_park(slot, reason).await.map(|_| ())
+    }
+
+    /// `request_park`, and whether this call recorded the request.
+    async fn record_park(&self, slot: Slot, reason: ParkReason) -> Result<bool, StateError> {
         for _ in 0..5 {
             let Some(read) = self.leases.get(slot).await? else {
-                return Ok(());
+                return Ok(false);
             };
             if read.value.state == LeaseState::Parked {
-                return Ok(());
+                return Ok(false);
             }
             let mut next = read.value.clone();
             if !next.request_park(reason, self.now()) {
-                return Ok(());
+                return Ok(false);
             }
             match self.leases.put(slot, &next, read.cond()).await {
-                Ok(()) => return Ok(()),
+                Ok(()) => return Ok(true),
                 Err(StateError::Conflict) => {}
                 Err(e) => return Err(e),
             }
@@ -664,17 +672,28 @@ impl Fleet {
 
     /// The broker's way to ask a slot's container to park: records the request on the
     /// lease, then sends `park` to the container at once as one of the router's own tasks
-    /// (a recorded request alone reaches it only at the reconcile loop's next pass).
+    /// (a recorded request alone reaches it only at the reconcile loop's next pass). An
+    /// open retried while a store moves asks again each time: `park` is sent when this
+    /// call recorded the request, or when the recorded one is [`PARK_AGAIN_MS`] old.
     pub async fn ask_park(self: &Arc<Self>, slot: Slot, reason: ParkReason) {
-        if let Err(e) = self.request_park(slot, reason).await {
-            tracing::warn!(kind = "lease", slot = %slot, error = %e, "a park request was not recorded");
-            return;
-        }
+        let recorded = match self.record_park(slot, reason).await {
+            Ok(recorded) => recorded,
+            Err(e) => {
+                tracing::warn!(kind = "lease", slot = %slot, error = %e, "a park request was not recorded");
+                return;
+            }
+        };
         let Ok(Some(lease)) = self.leases.get(slot).await else {
             return;
         };
         let l = &lease.value;
         if l.state == LeaseState::Parked {
+            return;
+        }
+        let stale = l
+            .park_requested_ms()
+            .is_some_and(|t| self.now() - t >= PARK_AGAIN_MS);
+        if !(recorded || stale) {
             return;
         }
         if let (Some(id), Some(peer)) = (

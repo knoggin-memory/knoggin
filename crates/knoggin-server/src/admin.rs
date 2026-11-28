@@ -13,7 +13,7 @@ use knoggin_core::snapshot::{SnapshotName, SnapshotObject, thin};
 use knoggin_core::{StoreId, Timestamp};
 use knoggin_crypto::source::{FileRule, read_key_file, replace_key_file};
 use knoggin_crypto::{KeyProvider, LocalKeyProvider};
-use knoggin_state::record::{LeaseState, ParkReason, StoreRecord};
+use knoggin_state::record::{LeaseState, ParkReason, Slot, StoreRecord};
 use knoggin_state::{Clock, FieldKeys, Leases, Meta, StateDb, StateError, Stores};
 use serde_json::{Value, json};
 
@@ -160,8 +160,19 @@ impl Admin {
             )));
         }
         let user = record.user_id;
-        // Only the container that serves the store parks.
-        let slot = record.slot();
+        // Only the container that serves the store parks, and, in the middle of a slot
+        // change, the one that still holds it. The holder's is done once its lease is
+        // parked or has moved on to another generation.
+        let leases = Leases::new(self.db.clone());
+        let mut targets: Vec<(Slot, Option<u64>)> = vec![(record.slot(), None)];
+        if let Some(holder) = record.holder
+            && holder.slot != record.slot()
+            && let Some(lease) = leases.get(holder.slot).await?
+            && lease.value.state != LeaseState::Parked
+            && lease.value.generation == holder.generation
+        {
+            targets.push((holder.slot, Some(holder.generation)));
+        }
         let name = snapshot.to_string();
         self.stores
             .update(user, store, |r| {
@@ -169,30 +180,35 @@ impl Admin {
                 Ok::<_, StateError>(())
             })
             .await?;
-        let leases = Leases::new(self.db.clone());
-        for _ in 0..5 {
-            let Some(read) = leases.get(slot).await? else {
-                break;
-            };
-            if read.value.state == LeaseState::Parked {
-                break;
-            }
-            let mut next = read.value.clone();
-            if !next.request_park(ParkReason::Restore, self.now()) {
-                break;
-            }
-            match leases.put(slot, &next, read.cond()).await {
-                Ok(()) => break,
-                Err(StateError::Conflict) => {}
-                Err(e) => return Err(e.into()),
+        for &(slot, _) in &targets {
+            for _ in 0..5 {
+                let Some(read) = leases.get(slot).await? else {
+                    break;
+                };
+                if read.value.state == LeaseState::Parked {
+                    break;
+                }
+                let mut next = read.value.clone();
+                if !next.request_park(ParkReason::Restore, self.now()) {
+                    break;
+                }
+                match leases.put(slot, &next, read.cond()).await {
+                    Ok(()) => break,
+                    Err(StateError::Conflict) => {}
+                    Err(e) => return Err(e.into()),
+                }
             }
         }
         let deadline = tokio::time::Instant::now() + wait;
         loop {
-            let parked = leases
-                .get(slot)
-                .await?
-                .is_none_or(|l| l.value.state == LeaseState::Parked);
+            let mut parked = true;
+            for &(slot, generation) in &targets {
+                let done = leases.get(slot).await?.is_none_or(|l| {
+                    l.value.state == LeaseState::Parked
+                        || generation.is_some_and(|g| l.value.generation != g)
+                });
+                parked &= done;
+            }
             if parked {
                 return Ok(RestoreOutcome::Parked);
             }

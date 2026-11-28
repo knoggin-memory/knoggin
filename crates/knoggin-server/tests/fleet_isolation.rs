@@ -746,6 +746,18 @@ async fn turning_isolation_on_loses_no_write() {
         })
         .await
         .unwrap();
+    // The first write after the change waits for the user's container to park: the
+    // client is told to try again in 2 seconds.
+    let waiting = r
+        .req(reqwest::Method::POST, "/v1/memories")
+        .bearer_auth(&key)
+        .json(&json!({ "summary": "refused" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(waiting.status(), 503);
+    assert_eq!(waiting.headers()["retry-after"], "2");
+    assert_eq!(json(waiting).await.1["error"]["code"], "unavailable");
     // Writes go on through the move; one that is refused for the wait is sent again.
     for i in 0..3 {
         let text = format!("during{i}");

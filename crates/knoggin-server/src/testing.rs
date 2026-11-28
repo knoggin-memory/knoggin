@@ -456,6 +456,8 @@ pub struct StubControl {
     pub hang_park: AtomicBool,
     /// Bytes of hostile `status` bodies handed to the connection so far.
     pub status_sent: Arc<AtomicUsize>,
+    /// `park` calls with the router token, so far.
+    pub parks: AtomicUsize,
 }
 
 impl Default for StubControl {
@@ -467,6 +469,7 @@ impl Default for StubControl {
             exit_on_park: AtomicBool::new(true),
             hang_park: AtomicBool::new(false),
             status_sent: Arc::new(AtomicUsize::new(0)),
+            parks: AtomicUsize::new(0),
         }
     }
 }
@@ -549,6 +552,7 @@ async fn park(State(s): State<Stub>, headers: HeaderMap) -> Response {
     if verify_router_call(&s.launch.router_token(), &headers).is_err() {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    s.control.parks.fetch_add(1, Ordering::SeqCst);
     if s.control.hang_park.load(Ordering::Relaxed) {
         std::future::pending::<()>().await;
     }

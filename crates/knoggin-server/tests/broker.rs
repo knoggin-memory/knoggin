@@ -1222,9 +1222,10 @@ async fn a_store_that_changes_slot_waits_for_its_old_container() {
         (StatusCode::NOT_FOUND, "not_found")
     );
     // The old container itself is gone from the lease.
+    let (status, body) = commit_as(&rig, old, a.slot(), app, (g, 3)).await;
     assert_eq!(
-        commit_as(&rig, old, a.slot(), app, (g, 3)).await.0,
-        StatusCode::CONFLICT
+        (status, code(&body).0.as_str()),
+        (StatusCode::CONFLICT, "lease_lost")
     );
     assert_eq!(
         open_as(&rig, again, a.slot(), a.store).await.0,

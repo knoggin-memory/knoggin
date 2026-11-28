@@ -1523,6 +1523,9 @@ async fn requests_from_two_people_for_one_shared_app_reach_one_container() {
 
 #[tokio::test]
 async fn the_per_user_cap_refuses_one_more_isolated_app() {
+    let metrics = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .install_recorder()
+        .unwrap();
     let w = World::new().await;
     // At most 3 containers for one user: their own and 2 apps.
     let f = w.fleet(BUILD, true, |c| c.containers.max_per_user = 3);
@@ -1578,6 +1581,11 @@ async fn the_per_user_cap_refuses_one_more_isolated_app() {
     assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(r.headers().get(header::RETRY_AFTER).unwrap(), "30");
     assert_eq!(body_json(r).await["error"]["reason"], "containers_per_user");
+    assert_eq!(
+        claims_counted(&metrics.render(), "user_cap"),
+        Some(2),
+        "each refusal is counted"
+    );
     // With no bound, one more is served.
     let open = w.fleet(BUILD, true, |c| c.containers.max_per_user = 0);
     open.acquire(apps[2].slot(), owner, Duration::from_secs(8))
@@ -1587,6 +1595,9 @@ async fn the_per_user_cap_refuses_one_more_isolated_app() {
 
 #[tokio::test]
 async fn claim_churn_is_bounded_per_user() {
+    let metrics = metrics_exporter_prometheus::PrometheusBuilder::new()
+        .install_recorder()
+        .unwrap();
     let w = World::new().await;
     // One app container at a time; at most max(6, 3) app claims in 10 minutes.
     let routers = [
@@ -1625,10 +1636,54 @@ async fn claim_churn_is_bounded_per_user() {
             (Code::RateLimited, Some("containers_per_user"), Some(60))
         );
     }
+    assert_eq!(claims_counted(&metrics.render(), "user_churn"), Some(2));
+    assert_eq!(claims_counted(&metrics.render(), "user_cap"), None);
     // The user's own container is not bounded by it.
     warm(&routers[0], owner).await;
     // Ten minutes later the old claims no longer count.
     w.clock.advance(10 * 60 * 1000 + 1);
     tokio::time::sleep(Duration::from_millis(300)).await;
     claim_and_end(routers[1].clone(), app.slot()).await.unwrap();
+}
+
+/// The value of `knoggin_claims_total{outcome="<outcome>"}` in a Prometheus rendering.
+fn claims_counted(text: &str, outcome: &str) -> Option<u64> {
+    let name = format!("knoggin_claims_total{{outcome=\"{outcome}\"}} ");
+    text.lines()
+        .find_map(|l| l.strip_prefix(&name))
+        .map(|v| v.trim().parse().unwrap())
+}
+
+/// A store that moves makes its new container's opens ask the old one to park, again and
+/// again while the client retries; the old container gets one `park`, and another only
+/// once the request is a few seconds old.
+#[tokio::test]
+async fn repeated_asks_to_park_during_a_move_send_one_park() {
+    let w = World::new().await;
+    w.control.exit_on_park.store(false, Ordering::Relaxed);
+    let f = w.fleet(BUILD, true, |_| {});
+    let u = user();
+    warm(&f, u).await;
+    for _ in 0..5 {
+        f.ask_park(Slot::User(u), ParkReason::Moved).await;
+    }
+    let one = |n: usize| {
+        let w = &w;
+        async move {
+            for _ in 0..50 {
+                if w.control.parks.load(Ordering::SeqCst) >= n {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            // Room for a late extra call to show up.
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            w.control.parks.load(Ordering::SeqCst)
+        }
+    };
+    assert_eq!(one(1).await, 1);
+    assert_eq!(w.lease(u).await.park_requested(), Some(ParkReason::Moved));
+    w.clock.advance(knoggin_server::lease::PARK_AGAIN_MS);
+    f.ask_park(Slot::User(u), ParkReason::Moved).await;
+    assert_eq!(one(2).await, 2, "sent again once the request is old");
 }
