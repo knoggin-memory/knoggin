@@ -425,10 +425,28 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
+  # Code, comments, docs and commit messages stand alone. Pull request text: pr-text.yml.
+  wording:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - if: github.event_name == 'pull_request'
+        run: scripts/check-wording.sh
+        env:
+          WORDING_RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+      - if: github.event_name != 'pull_request'
+        run: scripts/check-wording.sh
+
   # The one required check. Skipped jobs (deps and dco on a push) count as passed.
   ci-ok:
     if: always()
-    needs: [fmt, clippy, test, stack, budgets, doc, deny, machete, openapi, workflows, web, web-e2e, sdk, deploy, deps, dco]
+    needs: [fmt, clippy, test, stack, budgets, doc, deny, machete, openapi, workflows, web, web-e2e, sdk, deploy, deps, dco, wording]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}

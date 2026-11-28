@@ -1,0 +1,7 @@
+# <path>:<text> excuses the fixed <text> on lines of <path>; the rest of the line is still checked.
+ui/src/lib/components/Icon.svelte:<path d="M
+docs/maintainers.md:Apple M5 Max
+crates/knoggin-bench/src/llm.rs:llm.judge_answer("Q
+crates/knoggin-bench/src/llm.rs:u0.contains("Question: Q1")
+crates/knoggin-server/src/launcher/docker.rs:the spec is empty on one host
+crates/knoggin-server/src/launcher/ecs.rs:the revision of the spec, one task
