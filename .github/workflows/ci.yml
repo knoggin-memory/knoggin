@@ -260,6 +260,11 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    # Neither tool may find a credential of the runner.
+    env:
+      AWS_CONFIG_FILE: /dev/null
+      AWS_SHARED_CREDENTIALS_FILE: /dev/null
+      AWS_EC2_METADATA_DISABLED: "true"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

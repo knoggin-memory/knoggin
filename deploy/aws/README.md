@@ -1,9 +1,9 @@
 # Knoggin on AWS
 
-One OpenTofu module (OpenTofu 1.13, provider `hashicorp/aws` 6.73.0) that builds the
-Knoggin server in one region: routers on Fargate behind a load balancer, user containers
-as ECS tasks on shared Graviton4 hosts or on Fargate, DynamoDB for the state database, a KMS key for the master
-key and an S3 bucket for encrypted snapshots. `docs/deploy-aws.md` is the guide: it
+One module for OpenTofu 1.13 or Terraform 1.13 (provider `hashicorp/aws` 6.73.0) that
+builds the Knoggin server in one region: routers on Fargate behind a load balancer, user
+containers as ECS tasks on shared Graviton4 hosts or on Fargate, DynamoDB for the state
+database, a KMS key for the master key and an S3 bucket for encrypted snapshots. `docs/deploy-aws.md` is the guide: it
 copies the release image into your ECR repository, fills the four Secrets Manager
 entries and applies `examples/complete`.
 
@@ -69,5 +69,8 @@ tofu init -backend=false -lockfile=readonly && tofu validate && tofu test
 (cd examples/complete && tofu init -backend=false -lockfile=readonly && tofu validate)
 ```
 
-`tofu test` applies the module against a mock provider: it sends nothing to AWS and needs
-no credentials.
+With Terraform: `terraform init -backend=false && terraform validate && terraform test`.
+The committed lock file is OpenTofu's, so Terraform adds its own entry.
+
+The tests apply the module against a mock provider: they send nothing to AWS and need no
+credentials.

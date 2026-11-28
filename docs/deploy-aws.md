@@ -101,16 +101,16 @@ When it is done, point your host name at the output `load_balancer_dns_name`, op
 The variable `user_compute` chooses where every user container runs. There is one choice for all of them.
 
 - **`ec2` (default):** shared Graviton4 hosts in an Auto Scaling group. Each container has its own network interface and a share of the host's CPU. Cheapest per container.
-- **`fargate`:** one Fargate task per container, each in its own microVM, so no two containers share a kernel. Its CPU is a hard cap, `user_task_cpu` (256, 512 or 1024 units; 1024 is one vCPU). Set `max_containers` (it becomes `containers.max`) and a `container_memory_mib` that Fargate offers for `user_task_cpu`: 512 to 2048 for 256; 1024 to 4096 in steps of 1024 for 512; 2048 to 8192 in steps of 1024 for 1024. 2048 is recommended, so the default 1536 is refused. The module adds a user execution role, which pulls the image and writes the logs, and interface endpoints for ECR and CloudWatch Logs, so the user containers still reach nothing outside the VPC.
+- **`fargate`:** one Fargate task per container, each in its own microVM, so no two containers share a kernel. Its CPU is a hard cap, `user_task_cpu` (256, 512 or 1024 units; 1024 is one vCPU). Set `max_containers` (it becomes `containers.max`) and a `container_memory_mib` that Fargate offers for `user_task_cpu`. The module allows 512, 1024 or 2048 with 256; 1024, 2048, 3072 or 4096 with 512; and 2048, 3072, 4096, 5120, 6144, 7168 or 8192 with 1024. 2048 is recommended, so the default 1536 is refused. The module adds a user execution role, which pulls the image and writes the logs, and interface endpoints for ECR and CloudWatch Logs, so the user containers still reach nothing outside the VPC.
 
 A combination that does not fit, such as `max_containers` on `ec2`, fails at plan with a message that names the fix.
 
 **Choose at the first apply.** Switching a running deployment is a planned outage:
 
-1. Run `admin retire-before now` ([Admin commands](#admin-commands)) until no container is active (`knoggin_containers`).
-2. Set the router service's desired count to 0.
-3. Change `user_compute` and its variables, and run `tofu apply`.
-4. Bring the routers back to their count.
+1. Set `pool_target = 0` and run `tofu apply`. The new routers keep no ready containers and stop those left in the pool.
+2. In a quiet hour, run `admin retire-before now` ([Admin commands](#admin-commands)). It parks the active containers in batches and prints how many leases are still active. Run it again until it prints 0 and `knoggin_containers` is 0 for `claimed`, `ready` and `starting`. A user who sends a request meanwhile gets a new container, which the next run parks.
+3. Stop the routers: `aws ecs update-service --cluster <name> --service router --desired-count 0`. Check that `aws ecs list-tasks --cluster <name> --family <name>-user` lists no task; if one is listed, set the count back to 2 and repeat step 2.
+4. Change `user_compute` and its variables, set `pool_target` back, and run `tofu apply`. The module sets the router service's count to 2, so this apply also brings the routers back.
 
 ## Sizing
 

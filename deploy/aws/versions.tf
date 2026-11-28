@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # AWS: one module, one region. It has not yet been applied to a real account: it is
-# checked with `tofu validate` and `tofu test` against mock providers.
+# checked with `validate` and `test` of OpenTofu and of Terraform against mock providers.
 
 terraform {
   required_version = "~> 1.13.0"

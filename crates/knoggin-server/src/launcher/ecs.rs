@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 //! `EcsLauncher`: user containers as ECS tasks of the family `knoggin-user`. `launch` is one
-//! `RunTask` with the capacity provider, `binpack` on memory (except on Fargate, which places each
-//! task on its own), the user subnets and security groups without a public address, `startedBy` `knoggin-pool`, the tag `knoggin:container-id` and a
-//! container override that sets the five environment values and nothing else. No user identifier
+//! `RunTask` with the capacity provider, `binpack` on memory (except on Fargate, which places
+//! each task on its own), the user subnets and security groups without a public address,
+//! `startedBy` `knoggin-pool`, the tag `knoggin:container-id` and a container override that
+//! sets the five environment values and nothing else. No user identifier
 //! goes into a tag, an override or `startedBy`: those show in the console and in CloudTrail.
 //! `describe` and `list` read `DescribeTasks` (with tags) and mark the tasks whose host is
 //! `DRAINING` (`DescribeContainerInstances`); a task the API does not know is left out, so the
@@ -502,7 +503,7 @@ mod tests {
     /// capacity provider, binpack on memory, the network without a public address,
     /// `startedBy`, the ID tag, and an override of the five environment values only.
     #[tokio::test]
-    async fn run_task_carries_the_tabs_fields_and_nothing_of_the_user() {
+    async fn run_task_carries_the_launch_fields_and_nothing_of_the_user() {
         let (server, ecs) = stub().await;
         let arn = "arn:aws:ecs:eu-west-1:111122223333:task/knoggin/abc";
         Mock::given(header("x-amz-target", target("RunTask").as_str()))
