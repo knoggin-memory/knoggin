@@ -40,8 +40,8 @@ pub(crate) enum Sink {
     Stderr,
     /// Only the log file: a detached daemon, whose standard error is that same file.
     FileOnly,
-    /// Standard output: the server roles.
-    #[allow(dead_code, reason = "unused: every role logs to stderr")]
+    /// Standard output: the server roles. Nothing else is printed there, so every line is
+    /// a log line.
     Stdout,
 }
 

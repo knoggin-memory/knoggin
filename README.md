@@ -2,8 +2,6 @@
 
 Knoggin is a memory server for AI agents. It stores short text memories and finds them again by meaning, with recall that weighs how recent, how strong and how connected each memory is. Agents reach it over MCP or REST, and the same engine runs as a local single-user daemon or as a multi-user server.
 
-> Knoggin is being built. No release exists yet, so the commands below describe the first release.
-
 ## Run it
 
 **On your own machine.** One command installs the binary and connects the agents it finds (Claude Code, Codex, Cursor, VS Code, Zed, opencode). It shows each change and asks before making it:

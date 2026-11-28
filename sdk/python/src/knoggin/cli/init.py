@@ -82,10 +82,31 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None  # pyright: ignore[reportUnknownVariableType]
 
 
+def _table(data: dict[str, Any], key: str, create: bool = False) -> dict[str, Any] | None:
+    """The table at a dotted `key` such as `mcp.servers`; with `create`, missing tables are added."""
+    for part in key.split("."):
+        inner = data.get(part)
+        if not isinstance(inner, dict):
+            if not create:
+                return None
+            inner = {}
+            data[part] = inner
+        data = cast(dict[str, Any], inner)
+    return data
+
+
 def _current(data: dict[str, Any] | None, key: str) -> Any:
     """The `<key>.knoggin` entry of a config file's data, or None."""
-    servers = data.get(key) if data else None
-    return servers.get(NAME) if isinstance(servers, dict) else None  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+    servers = _table(data, key) if data else None
+    return servers.get(NAME) if servers is not None else None
+
+
+def _nest(key: str, entry: Any) -> dict[str, Any]:
+    """`{"a": {"b": {"knoggin": entry}}}` for the key `a.b`."""
+    out: dict[str, Any] = {NAME: entry}
+    for part in reversed(key.split(".")):
+        out = {part: out}
+    return out
 
 
 def _matches(current: Any, wanted: dict[str, Any]) -> bool:
@@ -125,34 +146,43 @@ def write_file(path: Path, text: str, backups: list[Path]) -> None:
         raise
 
 
-def _json_change(agent: str, path: Path, key: str, entry: dict[str, Any] | None) -> Change | None:
-    """Sets (or with `entry` None removes) `<key>.knoggin` in a JSON file. None when there is nothing to do."""
+def _json_change(
+    agent: str, path: Path, key: str, entry: dict[str, Any] | None, old_key: str | None = None
+) -> Change | None:
+    """Sets (or with `entry` None removes) `<key>.knoggin` in a JSON file. None when there is nothing to do.
+
+    `key` may be dotted (`mcp.servers`). An entry under `old_key`, the agent's older layout, is removed.
+    """
     data = _read_json(path)
     if data is None:
-        snippet = json.dumps({key: {NAME: entry}}) if entry else f'the "{NAME}" entry under "{key}"'
+        snippet = json.dumps(_nest(key, entry)) if entry else f'the "{NAME}" entry under "{key}"'
         return Change(
             agent, f"{path} is not plain JSON, so it is left alone", f"Change it by hand: {snippet}", lambda: "skipped"
         )
     current = _current(data, key)
-    if current == entry:
+    old = _current(data, old_key) if old_key else None
+    if current == entry and old is None:
         return None
     if entry is None:
         what = f"remove the {NAME} entry from {path}"
+        detail = " and ".join(f'delete "{k}.{NAME}"' for k, v in ((key, current), (old_key, old)) if v is not None)
     else:
-        what = f"{'replace' if current else 'add'} the {NAME} entry in {path}"
-    change = Change(agent, what, json.dumps({key: {NAME: entry}}) if entry else f'delete "{key}.{NAME}"', lambda: "")
+        what = f"{'replace' if current or old else 'add'} the {NAME} entry in {path}"
+        detail = json.dumps(_nest(key, entry))
+        if old is not None:
+            detail += f' (the older "{old_key}.{NAME}" is deleted)'
+    change = Change(agent, what, detail, lambda: "")
 
     def apply() -> str:
         fresh = _read_json(path)
         if fresh is None:
             return f"skipped: {path} changed and is no longer plain JSON"
-        table = fresh.get(key)
-        if not isinstance(table, dict):
-            table = {}
-            fresh[key] = table
-        if entry is None:
-            table.pop(NAME, None)  # pyright: ignore[reportUnknownMemberType]
-        else:
+        if old_key and (stale := _table(fresh, old_key)) is not None:
+            stale.pop(NAME, None)
+        table = _table(fresh, key, create=entry is not None)
+        if table is not None and entry is None:
+            table.pop(NAME, None)
+        elif table is not None:
             table[NAME] = entry
         write_file(path, json.dumps(fresh, indent=2) + "\n", change.backups)
         return "done"
@@ -285,14 +315,16 @@ def _zed(target: Target | None) -> Change | None:
 
 
 def _opencode(target: Target | None) -> Change | None:
+    # opencode keeps its servers under `mcp.servers`; an entry directly under `mcp` is the older layout.
+    entry: dict[str, Any] | None
     if target is None:
         entry = None
     elif target.url:
-        entry = {"type": "remote", "url": target.url, "enabled": True}
+        entry = {"type": "remote", "url": target.url}
     else:
         s = target.stdio()
-        entry = {"type": "local", "command": [s["command"], *s["args"]], "enabled": True}
-    return _json_change("opencode", _config_dir() / "opencode" / "opencode.json", "mcp", entry)
+        entry = {"type": "local", "command": [s["command"], *s["args"]]}
+    return _json_change("opencode", _config_dir() / "opencode" / "opencode.json", "mcp.servers", entry, old_key="mcp")
 
 
 AGENTS = [
