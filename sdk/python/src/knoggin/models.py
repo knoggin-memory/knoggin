@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Pydantic models of the REST shapes, with snake-case fields and camel-case aliases.
 
 Class names are the schema names of `docs/openapi.json`; `tests/test_openapi.py` checks the fields.

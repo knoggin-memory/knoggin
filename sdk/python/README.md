@@ -95,4 +95,4 @@ The contract tests start `knoggin daemon` in test mode in a temporary home, from
 repository's `target/debug/knoggin` (`cargo build -p knoggin`), and skip without one. With
 `KNOGGIN_TEST_URL` and `KNOGGIN_TEST_API_KEY` they run against that address instead.
 
-Licensed under AGPL-3.0-only.
+The Python SDK is licensed under the Apache License 2.0 (`Apache-2.0`); the rest of Knoggin is `AGPL-3.0-only`.

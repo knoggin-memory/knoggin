@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """Knoggin: long-term memory for AI agents. `Client` and `AsyncClient` talk to a local daemon or a server."""
 
 from ._async_client import AsyncClient

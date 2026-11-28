@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """The SDK's part of the sign-in and credential tests: API keys, the local socket, and "not running".
 
 These need a daemon this run started, because they make, revoke and rotate keys and delete stores

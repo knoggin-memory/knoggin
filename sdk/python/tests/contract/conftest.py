@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: AGPL-3.0-only
+# SPDX-License-Identifier: Apache-2.0
 """The contract tests run against a live Knoggin.
 
 With `KNOGGIN_TEST_URL` (and `KNOGGIN_TEST_API_KEY`) they use that address, which is how `stack_sdk.rs`

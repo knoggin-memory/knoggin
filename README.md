@@ -66,6 +66,6 @@ cosign verify ghcr.io/knoggin-memory/knoggin@sha256:<digest> \
 
 ## Licence
 
-Knoggin is licensed under the [GNU Affero General Public License, version 3](LICENSE) (`AGPL-3.0-only`).
+Knoggin is licensed under the [GNU Affero General Public License, version 3](LICENSE) (`AGPL-3.0-only`). The Python SDK in `sdk/python` is licensed under the [Apache License 2.0](sdk/python/LICENSE) (`Apache-2.0`).
 
 The AGPL gives the users of a network service the right to its source. Every deployment links to its source: the setting `source_url` (default `https://github.com/knoggin-memory/knoggin`) appears in the web UI, the session route and the MCP server instructions. **If you deploy a changed version, point `source_url` at your changed source.**
