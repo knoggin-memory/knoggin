@@ -9,7 +9,12 @@
   "homepage": "https://github.com/knoggin-memory/knoggin",
   "repository": "https://github.com/knoggin-memory/knoggin",
   "license": "AGPL-3.0-only",
-  "keywords": ["memory", "long-term memory", "mcp", "knoggin"],
+  "keywords": [
+    "memory",
+    "long-term memory",
+    "mcp",
+    "knoggin"
+  ],
   "skills": "./skills/",
   "mcpServers": "./mcp.json",
   "interface": {
@@ -18,7 +23,10 @@
     "longDescription": "Knoggin keeps short text memories and finds them again by meaning. The plugin recalls without changing anything. It saves what you ask it to keep and what is worth keeping, and tells you what it saved. To stop it from saving, connect it with a read-only key.",
     "developerName": "Knoggin",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "defaultPrompt": [
       "What do you remember about this project?",
       "Recall my preferences for this kind of task.",

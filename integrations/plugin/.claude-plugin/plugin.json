@@ -9,5 +9,10 @@
   "homepage": "https://github.com/knoggin-memory/knoggin",
   "repository": "https://github.com/knoggin-memory/knoggin",
   "license": "AGPL-3.0-only",
-  "keywords": ["memory", "long-term memory", "mcp", "knoggin"]
+  "keywords": [
+    "memory",
+    "long-term memory",
+    "mcp",
+    "knoggin"
+  ]
 }
