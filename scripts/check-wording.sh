@@ -91,7 +91,7 @@ if ! $pr_only; then
     git grep --no-color -I -l -z -e '' -- . ":(exclude)$ALLOW" \
         ':(exclude,glob)**/*.lock' ':(exclude,glob)**/*.lock.hcl' ':(exclude,glob)**/pnpm-lock.yaml' \
         >"$files"
-    xargs -0 perl -e "$scanner" <"$files" >>"$hits"
+    xargs -0 perl -e "$scanner" -- <"$files" >>"$hits"
 
     if [ -n "$range" ]; then
         # A pull request always holds at least one commit, so an empty range means a wrong range.

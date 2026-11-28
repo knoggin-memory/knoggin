@@ -1,4 +1,4 @@
-# <path>:<text> skips hits in <path> on lines containing the fixed <text>.
+# <path>:<text> excuses the fixed <text> on lines of <path>; the rest of the line is still checked.
 ui/src/lib/components/Icon.svelte:<path d="M
 docs/maintainers.md:Apple M5 Max
 crates/knoggin-bench/src/llm.rs:llm.judge_answer("Q

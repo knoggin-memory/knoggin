@@ -425,7 +425,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
-  # Code, comments, docs, commit messages and pull request text stand alone.
+  # Code, comments, docs and commit messages stand alone. Pull request text: pr-text.yml.
   wording:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -440,8 +440,6 @@ jobs:
         run: scripts/check-wording.sh
         env:
           WORDING_RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
       - if: github.event_name != 'pull_request'
         run: scripts/check-wording.sh
 
