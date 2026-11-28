@@ -6,6 +6,25 @@
 //!
 //! Both sign-in modes: the local socket, local web sessions, API keys, and with `oauth`
 //! access tokens, web sign-in and cookie sessions (`oauth`, `signin`).
+//!
+//! Every request passes these steps in order; comments in this module and in `check`
+//! name them by number:
+//!
+//! 1. The address buckets: the router's fixed ceiling per client address counts every
+//!    request; the daemon's fixed bucket and the router's bucket per address count a
+//!    request without a credential or with a refused one.
+//! 2. The browser checks (`browser`).
+//! 3. A malformed `Authorization` header (two of them, or no `Bearer` token) is refused.
+//! 4. The local socket: the install's own user.
+//! 5. A local web session, only on the daemon's local web listener.
+//! 6. An API key: its form, then an active key record.
+//! 7. An access token, in mode `oauth` only.
+//! 8. The session cookie, in mode `oauth` only.
+//! 9. On a server with sign-in off, a request without a credential.
+//! 10. A deleted account: refused, except on the routes a deleted account may still use.
+//! 11. The store: an API key's store must be live, and a store route selects its store.
+//! 12. The bucket per credential and, on the router, the bucket per user.
+//! 13. Control routes need the socket, a session, or sign-in off.
 
 mod browser;
 mod check;

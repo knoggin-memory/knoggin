@@ -473,7 +473,8 @@ pub(crate) async fn router(config: &Config, env: &Env) -> anyhow::Result<u8> {
             )
         }
     };
-    // Start-up steps 7 and 8: the bucket self-test, then on one host the launcher's `attach`.
+    // After discovery, before the rollout record: the bucket self-test, then on one host the
+    // launcher's `attach`.
     let before_rollout = {
         let (bucket, clock) = (bucket.clone(), clock.clone());
         Box::pin(async move {

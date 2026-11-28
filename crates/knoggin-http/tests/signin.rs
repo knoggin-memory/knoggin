@@ -804,8 +804,8 @@ async fn web_sign_in_sessions_and_their_cookies() {
     assert_eq!(r.json["signedOutReason"], "expired");
 }
 
-/// Step 1 on the daemon's fixed listener: a request to a sign-in route is charged to the
-/// bucket of requests without a credential whatever cookies it carries, before its code
+/// The address bucket on the daemon's fixed listener: a request to a sign-in route is charged
+/// to the bucket of requests without a credential whatever cookies it carries, before its code
 /// exchange, so one login cookie and its `state` cannot drive a flood of token requests.
 /// A callback that signs in gives its token back.
 #[tokio::test]

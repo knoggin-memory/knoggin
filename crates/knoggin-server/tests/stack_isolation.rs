@@ -663,7 +663,8 @@ fn network_probes(s: &Stack, a: &stack::UserContainer, b: &stack::UserContainer)
     }
 }
 
-/// Network isolation: what the launcher's fixed description sets for safety (steps 2, 3 and 5),
+/// Network isolation: what the launcher's fixed description sets for safety (read-only root,
+/// no mounts, a non-root user, no capabilities, limits, one network),
 /// and no Compose service with NET_RAW.
 fn container_description(s: &Stack, c: &stack::UserContainer) {
     let v: Value = serde_json::from_str(&docker_ok(&["inspect", &c.docker_id])).unwrap();

@@ -172,8 +172,8 @@ pub fn guarded(app: Router) -> Router {
 
 /// The broker on the router's internal listener, over the fleet's leases, stores and
 /// per-address counts. `one_host` is the router's address as containers reach it, which
-/// turns the blob route on. A container's `parked` runs "Mark gone" steps 2 to 4 and a
-/// stop ([`Fleet::finish_parked`]).
+/// turns the blob route on. A container's `parked` writes the records "Mark gone" writes
+/// once a container has ended, then stops it ([`Fleet::finish_parked`]).
 pub fn broker(
     fleet: &Arc<Fleet>,
     keys: Arc<dyn KeyProvider>,
@@ -312,8 +312,9 @@ pub struct RouterStart {
     pub listeners: Listeners,
     /// The metrics router, for `listeners.metrics`.
     pub metrics: Option<Router>,
-    /// Start-up steps 7 and 8, which the binary owns: the bucket self-test and, on one
-    /// host, `DockerLauncher::attach`. An error stops the start.
+    /// The start-up steps the binary owns, run after discovery and before the rollout
+    /// record: the bucket self-test and, on one host, `DockerLauncher::attach`. An error
+    /// stops the start.
     pub before_rollout: Option<BoxFuture<'static, Result<(), String>>>,
     /// For the admin status.
     pub backends: Backends,

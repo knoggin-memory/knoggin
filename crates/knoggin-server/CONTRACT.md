@@ -64,15 +64,15 @@ let code: i32 = router::run_router(RouterStart {
     spec,                      // launcher.ecs.task_definition, or "" on one host
     db,                        // already connected (60 s of tries) and, on Postgres, migrated
     keys, storage, launcher, clock,
-    listeners: Listeners { public, internal, metrics },  // router::reserve(addr) each: bound by main, listening only at step 10
+    listeners: Listeners { public, internal, metrics },  // router::reserve(addr) each: bound by main, listening only after every other start-up step
     metrics: Some(edge::metrics_router(handle)),
-    before_rollout: Some(Box::pin(async { self_test().await?; attach().await })), // steps 7, 8
+    before_rollout: Some(Box::pin(async { self_test().await?; attach().await })), // after discovery, before the rollout record
     backends: Backends { state_db, key_provider, launcher },
     timing: Timing::default(),
 }, shutdown_signal).await;
 ```
 
-`run_router` runs start-up steps 1, 3 to 6, 9 and 10 (config guards with the one-host checks, schema,
+`run_router` runs the start-up steps it owns, in order (config guards with the one-host checks, schema,
 field key, the mode-`none` users check and the local user, discovery (60 s), the rollout record, listen), then
 serves the public API, the broker on the internal listener and the reconcile loop until `stop`,
 and returns 1 when a step refuses, 0 after a stop (on one host it first parks its containers and
@@ -93,7 +93,7 @@ ServeConfig, stop) -> ServeEnd` on `container::runtime()`; `main` exits with `en
   one-host `user_net_cidr` check first), takes the broker's failed tokens, and is cleared when an
   address passes to a new container.
 - **The broker** is built by `router::broker` over the fleet; its `parked` runs
-  `Fleet::finish_parked` ("Mark gone" steps 2 to 4 and a stop).
+  `Fleet::finish_parked` (the records "Mark gone" writes once the container has ended, then a stop).
 - **The fake launcher** runs each container on a Tokio runtime of its own thread, so `kill` ends
   it with every task it spawned. A `Runner` gets the environment, a listener bound to the
   container's `127.0.0.x` (127.0.0.1 off Linux) and the stop; it returns the exit code, and
@@ -143,7 +143,7 @@ serve_tls(listener, tls, router, move |peer| {
 }, shutdown).await;
 ```
 
-- `on_parked` is the router's "Mark gone" steps 2 to 4 for that container plus a stop; the
+- `on_parked` writes the records "Mark gone" writes once that container has ended, plus a stop; the
   broker has already checked the caller's token, lease (`claiming` or `warm`, names it) and IP.
 - `PeerLimits::clear(ip)` when a new container is recorded at an address.
 - The broker's bodies are `broker::api` (`OpenAnswer`, `UploadLink`, `CommitRequest`, ...);

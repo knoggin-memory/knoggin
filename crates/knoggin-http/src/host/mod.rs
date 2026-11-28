@@ -537,7 +537,7 @@ impl StoreHost {
 
     /// Ends every event stream at once, and answers later ones with 204: a stream never
     /// ends by itself, so a stop or a park calls this first, before it waits for the
-    /// requests in flight (step 1 of a park).
+    /// requests in flight.
     pub fn end_event_streams(&self) {
         self.streams_end.send_replace(true);
     }

@@ -54,7 +54,8 @@ const MAX_COUNT: u64 = 1_000_000_000;
 /// The longest `lastWriteClient` a commit may carry, in characters.
 const MAX_CLIENT_CHARS: usize = 64;
 
-/// What the router runs when a container reports `parked`: steps 2 to 4 of "Mark gone"
+/// What the router runs when a container reports `parked`: "Mark gone" without its stop
+/// (how the container ended, then the record `gone` and the lease parked in one write)
 /// for that container, then a stop in case it lingers. It belongs to the router's lease
 /// code; the broker has checked the caller and its lease first.
 pub type OnParked = Arc<

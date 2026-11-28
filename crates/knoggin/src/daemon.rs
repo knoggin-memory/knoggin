@@ -68,7 +68,7 @@ pub(crate) fn is_running(home: &Home) -> bool {
     }
 }
 
-/// The checks of start-up step 3 on the settings alone.
+/// The start-up checks of the settings alone.
 pub(crate) fn check_settings(config: &Config, test_mode: bool) -> anyhow::Result<()> {
     let bind = config.bind();
     if !bind.ip().is_loopback() {
@@ -136,7 +136,7 @@ pub(crate) fn check_settings(config: &Config, test_mode: bool) -> anyhow::Result
     Ok(())
 }
 
-/// Step 3's rule for an existing key file: this user's own
+/// The start-up rule for an existing key file: this user's own
 /// regular file, with no permission bit for group or others.
 fn check_key_file(path: &Path) -> anyhow::Result<()> {
     use std::os::unix::fs::MetadataExt;
@@ -217,7 +217,7 @@ impl std::fmt::Debug for Unlocked {
     }
 }
 
-/// Steps 5 and 6: the key source and the state file, or the reason the install is locked.
+/// At start-up: the key source and the state file, or the reason the install is locked.
 pub(crate) async fn open_install(
     config: &Config,
     home: &Home,
@@ -299,7 +299,7 @@ fn now_ms() -> i64 {
     (system_clock())()
 }
 
-/// Step 4: removes what an earlier run left in `run/`.
+/// Removes what an earlier run left in `run/`.
 fn clean_run_dir(run: &Path) -> std::io::Result<()> {
     for entry in std::fs::read_dir(run)? {
         let entry = entry?;
@@ -589,7 +589,7 @@ pub(crate) async fn run(config: Config, env: &Env) -> anyhow::Result<u8> {
             "test mode is on: the fake embedding model is used"
         );
     }
-    // Step 2: the lock, held for the daemon's life.
+    // The lock, held for the daemon's life.
     make_private_dir(home.root())?;
     let run_dir = local::prepare_run_dir(home.root())?;
     let lock = OpenOptions::new()
@@ -606,7 +606,7 @@ pub(crate) async fn run(config: Config, env: &Env) -> anyhow::Result<u8> {
         Err(std::fs::TryLockError::Error(e)) => return Err(e).context("taking the daemon lock"),
     }
     lock.set_len(0)?;
-    // Step 3.
+    // The settings, the folders and the key file.
     check_settings(&config, env.test_mode)?;
     if home.socket().as_os_str().len() > local::MAX_SOCKET_PATH {
         bail!(
@@ -625,12 +625,12 @@ pub(crate) async fn run(config: Config, env: &Env) -> anyhow::Result<u8> {
         local::check_private_dir(dir)?;
     }
     check_key_file(&config.local.master_key_file)?;
-    // Step 4.
+    // What an earlier run left behind.
     clean_run_dir(&run_dir)?;
-    // Steps 5 and 6.
+    // The key source and the state file.
     let opened = open_install(&config, &home).await?;
 
-    // Step 8: the listeners.
+    // The listeners.
     let fixed = bind_fixed(config.bind())?;
     let fixed_addr = fixed
         .first()
@@ -1051,7 +1051,7 @@ mod tests {
     }
 
     #[test]
-    fn start_up_refuses_what_step_3_refuses() {
+    fn check_settings_refuses_unsafe_settings() {
         assert!(check_settings(&config(&[]), false).is_ok());
         for mode in ["none", "oauth"] {
             let c = config(&[

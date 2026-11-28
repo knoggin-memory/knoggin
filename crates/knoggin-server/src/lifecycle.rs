@@ -103,7 +103,7 @@ impl Lifecycle {
         Ok(report)
     }
 
-    /// Step 1: for every store that is not deleted, deletes the snapshots `thin` gives
+    /// Thinning: for every store that is not deleted, deletes the snapshots `thin` gives
     /// no label. Objects under the folder that are not snapshot names are left alone.
     async fn thin_all(
         &self,

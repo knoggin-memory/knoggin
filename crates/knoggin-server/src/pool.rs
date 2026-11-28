@@ -108,7 +108,7 @@ impl Fleet {
         now.saturating_add(life).saturating_sub(spread)
     }
 
-    /// Steps 2 to 5 of a launch.
+    /// The rest of a launch after the `starting` write: the handle, the address, `hello`, `ready`.
     async fn run_launch(self: Arc<Self>, id: Uuid, spec: String) {
         let deadline = Instant::now() + START_LIMIT;
         match tokio::time::timeout_at(deadline, self.start(id, spec)).await {
@@ -161,7 +161,7 @@ impl Fleet {
         self.update(id, |c| c.handle = Some(handle.0.clone()))
             .await
             .map_err(|_| Failed::Bad)?;
-        // Step 3: wait for the launcher to report it running with an address.
+        // Wait for the launcher to report it running with an address.
         let info = loop {
             match self.launcher.describe(std::slice::from_ref(&handle)).await {
                 Ok(list) => match list.into_iter().find(|i| i.handle == handle) {
@@ -180,7 +180,7 @@ impl Fleet {
         self.record_address(id, address, &info)
             .await
             .map_err(|_| Failed::Bad)?;
-        // Step 4: `hello` every second until it answers.
+        // `hello` every second until it answers.
         let (answer, pin) = loop {
             match self.hello(id, address).await {
                 Hello::Answer(a, pin) => break (*a, pin),
@@ -305,7 +305,7 @@ impl Fleet {
         Hello::Answer(Box::new(answer), CertPin::of(&reply.cert_der))
     }
 
-    /// Stops a running container that no record explains (reconcile step 3).
+    /// Stops a running container that no record explains (the reconcile loop's strays).
     pub(crate) async fn stop_stray(&self, handle: &LaunchHandle) {
         if let Err(e) = self.launcher.stop(handle, "stray").await {
             tracing::warn!(kind = "stop", error = %e, "a stray container was not stopped");

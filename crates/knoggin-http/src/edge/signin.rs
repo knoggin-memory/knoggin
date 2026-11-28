@@ -223,7 +223,7 @@ async fn callback(
     match finish_sign_in(&edge, o, request.uri(), request.headers()).await {
         Ok((session, to)) => {
             // Only a callback that does not sign in counts against the fixed listener's
-            // bucket (step 1), which charged every callback before its code exchange.
+            // bucket, which charged every callback before its code exchange.
             edge.give_back_address(&arrival, client);
             redirect(
                 &to,

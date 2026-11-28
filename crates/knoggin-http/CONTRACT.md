@@ -36,7 +36,7 @@ Lifecycle: `close(store)` (save, then drop; stays open if the save fails), `drop
 (deleted: no save), `save_all()` (park, shutdown; returns the failures, the role retries),
 `shutdown()` (stop tasks, refuse requests), `lease_lost()` (a watch the container waits on),
 `end_event_streams()` (ends every event stream at once and answers new ones 204; call it
-first on a stop and at step 1 of a park, before waiting for requests in flight).
+first on a stop and when a park starts, before waiting for requests in flight).
 Status: `store_status(store)` (also retries a stale lock in the background), `report()` (the
 container's `status` answer: open stores, opening, locks), `counters`, `model_state()`.
 

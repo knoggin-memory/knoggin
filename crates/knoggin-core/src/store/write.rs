@@ -171,9 +171,9 @@ impl Store {
         ctx: &WriteContext,
         now: Timestamp,
     ) -> Result<StoredMemory, EngineError> {
-        // Steps 1 to 6.
+        // The checks that need no store.
         let tags = validate_content(args.content, now)?;
-        // Step 7: the namespace (a supersede takes the old memory's).
+        // The namespace (a supersede takes the old memory's).
         let namespace = match args.supersedes {
             Some(old) => self
                 .memories
@@ -183,7 +183,7 @@ impl Store {
                 .ok_or_else(|| EngineError::NotFound(format!("memory {old} not found")))?,
             None => self.resolve_namespace(args.namespace)?.id,
         };
-        // Step 8: the parent.
+        // The parent.
         if let Some(parent) = args.parent
             && !self
                 .memories

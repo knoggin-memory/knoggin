@@ -300,13 +300,13 @@ pub async fn ensure_from(
         return Ok(dir);
     }
 
-    // Step 1: one downloader at a time. The lock goes when `_lock` drops.
+    // One downloader at a time. The lock goes when `_lock` drops.
     make_dir(root).await?;
     let _lock = lock(root.join(".lock")).await?;
     make_dir(&dir).await?;
     let trusted = trusted_dir(root).await && trusted_dir(&dir).await;
 
-    // Step 2.
+    // The files already there.
     let mut missing = Vec::new();
     let mut done = 0;
     for file in &source.files {
@@ -330,7 +330,7 @@ pub async fn ensure_from(
         return Ok(dir);
     }
 
-    // Step 3.
+    // Enough free space before any download.
     let free = (source.free_space)(&dir).map_err(io_err("read the free space of", &dir))?;
     if free < MIN_FREE_BYTES {
         return Err(ModelError::DiskFull {
@@ -340,7 +340,7 @@ pub async fn ensure_from(
         });
     }
 
-    // Steps 4 to 8.
+    // Each missing file, smallest first.
     let client = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .read_timeout(Duration::from_secs(30))
@@ -367,7 +367,7 @@ enum Check {
     Wrong { actual: String },
 }
 
-/// Step 2 for one file. Changes nothing on disk.
+/// Checks one file already on disk. Changes nothing on disk.
 async fn check(dir: &Path, file: &SourceFile, trusted: bool) -> Result<Check, ModelError> {
     let path = dir.join(&file.name);
     let meta = match tokio::fs::symlink_metadata(&path).await {
@@ -405,7 +405,7 @@ fn kind(meta: &fs::Metadata) -> &'static str {
     }
 }
 
-/// Steps 4 to 7 for one file: every source in order until one gives the right bytes.
+/// Downloads one file: every source in order until one gives the right bytes.
 async fn fetch_file(
     client: &reqwest::Client,
     dir: &Path,
@@ -430,7 +430,7 @@ async fn fetch_file(
                 continue;
             }
         }
-        // Step 6.
+        // The hash.
         let actual = sha256_file(part.clone()).await?;
         if actual != file.sha256 {
             remove(&part).await?;
@@ -469,8 +469,8 @@ fn failed(step: &'static str, detail: impl ToString) -> Fetch {
     }
 }
 
-/// Step 5 and the back-off of step 7: brings `part` to the full size from one address,
-/// synced. It does not check the hash.
+/// Brings `part` to the full size from one address, resuming it and backing off between
+/// tries, synced. It does not check the hash.
 async fn fetch_part(
     client: &reqwest::Client,
     url: &str,

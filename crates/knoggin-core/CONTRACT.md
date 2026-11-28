@@ -11,7 +11,7 @@ What each module holds, and the rules the store code keeps.
 | `sensitive` | `Sensitive<T>`. In a derived utoipa schema mark the field `#[schema(inline)]` |
 | `error` | `EngineError` (six variants), `ErrorCode`. `Debug` prints code and field only |
 | `model` | `Memory`, `Namespace`, `NamespacePolicy`, `PhaseThresholds`, `Edge`, `EdgeKey`, `EdgeType`, `Tag`, `Labels`, `Phase`, `EmbeddingState`, `AccessEvent`, `AccessKind`, `tag_terms` |
-| `model::limits` | Every limit, default and engine constant; `validate_content` (save steps 1 to 6), `validate_tags`, `validate_labels`, `validate_namespace_name`, `validate_created_at`, `truncate_summary` |
+| `model::limits` | Every limit, default and engine constant; `validate_content` (the checks of a save that need no store), `validate_tags`, `validate_labels`, `validate_namespace_name`, `validate_created_at`, `truncate_summary` |
 | `model::markup` | `scan_client_markup`, `reject_client_markup` |
 | `ops` | Request and result types of every operation (see the file header for the rules) |
 | `embed` | `EmbeddingProvider`, `ModelIdentity`, `EmbedError`, `document_text`, `document_text_from_parts`, `QUERY_PREFIX`, `query_text` |

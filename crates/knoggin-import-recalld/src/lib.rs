@@ -312,7 +312,7 @@ struct InheritedDecay {
 fn read_meta(path: &Path) -> Result<Meta, ImportError> {
     let db = open_db(path)?;
     let tx = db.begin_read().map_err(db_error)?;
-    // Step 3 before reading: the row `state` with `controlSchemaVersion` 2.
+    // Before reading, under the locks: the row `state` with `controlSchemaVersion` 2.
     let control = match tx.open_table(CONTROL) {
         Ok(table) => table
             .get("state")

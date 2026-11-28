@@ -4,6 +4,12 @@
 //! generation rule and the cap on new containers), waits for a container within the request's
 //! deadline, finishes a claim as an owned task, and runs "Mark gone".
 //!
+//! A claim runs in four steps: (1) pick a ready container of the claim build; (2) write the
+//! lease `claiming` and the container `claimed` in one write; (3) send the container its
+//! claim; (4) set the lease `warm`. "Mark gone" also runs in four: (1) stop the container
+//! if it still runs, after writing why; (2) decide how it ended; then in one write (3) the
+//! container record `gone` and (4) the lease that names it parked.
+//!
 //! Every lease change is a conditional write on the record's version, and every write
 //! that ties a lease to a container changes both records in one write.
 
@@ -105,7 +111,7 @@ pub struct Fleet {
     pub(crate) buffered: Mutex<(u64, HashMap<UserId, u64>)>,
     /// The last read of the container records for claims, and when it was made.
     claim_records: Mutex<Option<(Instant, Records)>>,
-    /// The totals each claimed container last reported (reconcile step 12).
+    /// The totals each claimed container last reported (the reconcile loop's counters).
     pub(crate) reported: Mutex<crate::reconcile::Reported>,
 }
 
@@ -153,7 +159,7 @@ pub enum Caller {
     },
 }
 
-/// How a container ended (step 2 of "Mark gone").
+/// How a container ended, which "Mark gone" decides before it writes the records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum End {
     /// It parked itself (exit code 0).
@@ -535,8 +541,8 @@ impl Fleet {
         }
     }
 
-    /// Claim step 4 (and reconcile step 5): the lease becomes `warm` and records the
-    /// claim, if it is still `claiming` with this generation and this container.
+    /// Claim step 4 (and the reconcile loop's stuck claims): the lease becomes `warm` and
+    /// records the claim, if it is still `claiming` with this generation and this container.
     pub(crate) async fn set_warm(
         &self,
         user: UserId,

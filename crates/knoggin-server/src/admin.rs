@@ -137,7 +137,7 @@ impl Admin {
             .value)
     }
 
-    /// `admin restore --store <id> --snapshot <name>`, steps 1 to 3 of a restore:
+    /// `admin restore --store <id> --snapshot <name>`, the operator's part of a restore:
     /// checks the object exists, writes `restore_from`, asks the owner's
     /// container to park, and waits up to `wait` for the lease to be parked.
     pub async fn restore(

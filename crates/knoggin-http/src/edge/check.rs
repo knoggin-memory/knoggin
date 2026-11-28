@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-//! The credential check, steps 3 to 13 in order, the store selection of the store routes,
-//! the per-credential bucket, the per-user caps, the bookkeeping writes, and the 60-second
-//! re-check of long transfers.
+//! The credential check (steps 3 to 13 of the list in `edge`), the store selection of the
+//! store routes, the per-credential bucket, the per-user caps, the bookkeeping writes, and
+//! the 60-second re-check of long transfers.
 
 use std::sync::Arc;
 use std::time::Duration;
